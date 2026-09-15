@@ -1,0 +1,98 @@
+/**
+ * The shapes that flow through the whole app: one capture, one set of answers,
+ * one scored record. Nothing here imports Electron or React — core/ is plain
+ * TypeScript so the rules can be unit-tested without a window or a camera.
+ */
+
+/**
+ * Vitals from a single SmartSpectra measurement, flattened from the SDK's
+ * time-series into the summary values a check-in actually stores.
+ *
+ * The SDK returns each metric as a series of samples with per-sample
+ * confidence (`cardio.pulseRate[]`, `cardio.hrv[]`, `breathing.rate[]`); the
+ * capture layer reduces those to the values below. A metric the SDK never
+ * reported with usable confidence stays `null` rather than defaulting to a
+ * number — a missing reading and a reading of zero must not look alike to the
+ * rules.
+ */
+export interface Vitals {
+  /** Beats per minute. */
+  pulseRateBpm: number | null
+  /** Breaths per minute. */
+  breathingRateBrpm: number | null
+  /** HRV, root mean square of successive differences, in milliseconds. */
+  hrvRmssdMs: number | null
+  /** HRV, standard deviation of NN intervals, in milliseconds. */
+  hrvSdnnMs: number | null
+  /** Mean of the SDK's own confidence across the capture, 0..1. */
+  confidence: number
+  /** Whether the SDK reported the measurement as settled (`hrv[].stable`). */
+  stable: boolean
+  /** Seconds of usable capture. Short captures are not scored. */
+  durationSec: number
+}
+
+export type MoodAnswer = 'good' | 'ok' | 'low'
+export type SleepAnswer = 'well' | 'ok' | 'poorly'
+
+/** The four questions asked after the capture. Deliberately short. */
+export interface CheckInAnswers {
+  mood: MoodAnswer
+  sleep: SleepAnswer
+  eatenToday: boolean
+  painReported: boolean
+  /** Free text, only collected when painReported is true. */
+  painNote?: string
+}
+
+/** One rule that fired, in the words the caregiver reads. */
+export interface FiredRule {
+  /** Stable identifier, e.g. `hrv-drop`. Used in tests and in the trend view. */
+  id: string
+  /** Short label, e.g. "HRV below usual". */
+  title: string
+  /** One plain-language sentence naming the actual numbers. */
+  explanation: string
+  /**
+   * How much this contributes to the flag, 0..1. Severities sum; see
+   * core/scoring for the threshold. Not a probability and not a risk score —
+   * it exists only to order and combine rules.
+   */
+  severity: number
+}
+
+export type Flag =
+  /** Nothing stood out against this person's own baseline. */
+  | 'normal'
+  /** At least one rule fired hard enough to be worth a caregiver's attention. */
+  | 'elevated'
+  /** Not enough usable signal, or not enough history, to say either way. */
+  | 'insufficient-signal'
+
+export interface Assessment {
+  flag: Flag
+  /** Every rule that fired, highest severity first. Never summarised away. */
+  firedRules: FiredRule[]
+  /** One sentence for the top of the card. */
+  summary: string
+  /** How many past sessions the baseline was computed from. */
+  baselineSessions: number
+}
+
+export interface SessionRecord {
+  id: string
+  /** Which cared-for person this check-in belongs to. */
+  personId: string
+  /** ISO-8601 timestamp of the capture. */
+  capturedAt: string
+  vitals: Vitals
+  answers: CheckInAnswers
+  /** Written by the scorer; absent until the session has been scored. */
+  assessment?: Assessment
+  /**
+   * True for the pre-seeded demo history (KV-8). The dashboard labels these
+   * rather than hiding them — a demo persona's history is not real data and
+   * the UI should not imply that it is.
+   */
+  seeded?: boolean
+}

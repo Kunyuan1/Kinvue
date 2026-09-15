@@ -1,0 +1,19 @@
+@import 'tailwindcss';
+
+@theme {
+  --color-ground: #0f1115;
+  --color-raised: #171a21;
+  --color-line: #262b36;
+  --color-ink: #e8eaed;
+  --color-muted: #9aa3b2;
+
+  /* Flag colours. Amber, not red: this is an early flag, not an emergency. */
+  --color-normal: #4ade80;
+  --color-elevated: #fbbf24;
+  --color-unknown: #64748b;
+}
+
+body {
+  background: var(--color-ground);
+  color: var(--color-ink);
+}

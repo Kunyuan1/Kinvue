@@ -1,0 +1,29 @@
+#!/bin/sh
+# Runs exactly what .github/workflows/ci.yml runs, so a finding here is a
+# finding in CI. Enable once per clone:
+#
+#   git config core.hooksPath .hooks
+#
+# Nothing wires this up for you. Skip a run with: git commit --no-verify
+set -e
+
+if [ ! -d node_modules ]; then
+  echo "pre-commit: node_modules is missing — run 'npm install' first." >&2
+  exit 1
+fi
+
+echo "pre-commit: lint"
+npm run lint
+
+echo "pre-commit: typecheck"
+npm run typecheck
+
+echo "pre-commit: test"
+npm test
+
+# main, preload and renderer bundle separately with different externals, so an
+# import can typecheck cleanly and still fail to build. Slowest step, ~3s.
+echo "pre-commit: build"
+npm run build
+
+echo "pre-commit: ok"

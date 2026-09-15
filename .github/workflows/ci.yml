@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  checks:
+    name: Checks (lint + typecheck + test + build)
+    runs-on: ubuntu-latest
+    env:
+      # CI builds the bundles but never launches the app, and the Electron
+      # binary is ~100 MB. Skipping the download takes the install from minutes
+      # to seconds. Remove this the moment a job actually runs Electron.
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      # `npm ci` pulls all four @smartspectra platform runtimes regardless of
+      # host, because the SDK declares them as hard dependencies rather than
+      # optional ones. Nothing to do about it here; it is why install is large.
+      - run: npm ci
+
+      - run: npm run lint
+      - run: npm run typecheck
+
+      # No camera and no API key needed: core/ is free of Electron and React
+      # imports, so the rules run in a plain node environment.
+      - run: npm test
+
+      # Kept in the check set on purpose. main/preload/renderer build as
+      # separate bundles with different externals, so an import can typecheck
+      # cleanly and still fail to build.
+      - run: npm run build
