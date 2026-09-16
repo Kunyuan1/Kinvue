@@ -1,0 +1,25 @@
+version: 2
+updates:
+  # Electron ships security fixes often, and once the app talks to a network an
+  # unpatched Electron is a real exposure rather than a theoretical one.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["chore"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Routine bumps arrive as one PR. Majors arrive one at a time, because a
+      # major Electron, Vite or React release is a change to review, not a chore.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels: ["ci"]
+    commit-message:
+      prefix: "ci(deps)"

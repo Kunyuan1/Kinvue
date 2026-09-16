@@ -225,11 +225,26 @@ them checkable:
 
 Branches + PRs only, never commit to `main` (the initial scaffold commit aside).
 
+- **Tickets** are GitHub issues, and a ticket's `KV-##` number *is* its issue number —
+  KV-25 is #25. Issues and pull requests share GitHub's number sequence, so a number taken
+  by a PR simply has no ticket.
+- **Phases** are GitHub milestones. Labels carry the area (`vitals`, `scoring`, `ui`,
+  `docs`, `ci`, `chore`) and the kind of work (`remote`, `decision`, `privacy`,
+  `security`). `backlog` marks a ticket whose phase has not started; `dormant` marks one
+  shut on purpose — read it before reopening.
+- **New tickets** use the issue forms: *Ticket* for work, *Decision* for a judgement call,
+  which closes when `ARCHITECTURE.md` records the outcome rather than when code merges.
 - **Branch naming**: `category/KV-##-short-description`. Categories in use: `vitals`,
-  `scoring`, `ui`, `docs`, `ci`, `chore`, `fix`.
+  `scoring`, `ui`, `docs`, `ci`, `chore`, `fix`, `security`, `remote`.
 - **PR title**: `type(scope): KV-## description`.
+- **PR body** carries a bare `Closes #<issue-number>`. `KV-##` alone is plain text to
+  GitHub and closes nothing.
 - **PRs** use the template (`.github/pull_request_template.md`). One ticket ≈ one PR.
 - **CI** (`.github/workflows/ci.yml`) runs on every PR: lint, typecheck, test, build.
+- **Dependabot** (`.github/dependabot.yml`) opens dependency PRs — weekly for npm, with
+  minor and patch bumps grouped into one. They are the one exception to the ticket rule: no
+  KV number and no `Closes` line. Major versions arrive separately and are reviewed like
+  any other change.
 
 ---
 

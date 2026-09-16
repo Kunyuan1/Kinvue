@@ -1,0 +1,44 @@
+name: Decision
+description: A judgement call that changes what the product is. Closes when the outcome is written into ARCHITECTURE.md.
+title: "KV-##: Decide: "
+labels: ["decision"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A decision ticket does not close when code merges. It closes when `ARCHITECTURE.md`
+        records what was decided, the options not taken, and why.
+
+        Replace `##` in the title with this issue's number after submitting.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: The question
+      description: One question, stated so that someone could disagree with an answer to it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Options, and what each costs
+      description: >
+        Include the option you would rather not take, and be honest about what the preferred one
+        makes harder. An options list with no costs is a recommendation wearing a disguise.
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints any answer must meet
+      description: >
+        For example: not a diagnosis, not an emergency alert, consent before anything leaves the
+        device, never invent a vital.
+
+  - type: textarea
+    id: blocks
+    attributes:
+      label: What this blocks
+      description: "Tickets that cannot start until this closes, as #N."

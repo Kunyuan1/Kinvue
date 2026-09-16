@@ -1,0 +1,47 @@
+name: Ticket
+description: A unit of work. One ticket is roughly one PR.
+title: "KV-##: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A ticket's KV number **is** its issue number, which GitHub assigns when you submit.
+        Replace `##` in the title with that number afterwards — KV-31 is #31.
+
+        Set the milestone to the phase this belongs to. Add `backlog` if its phase has not started.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What and why
+      description: >
+        The problem, with the evidence — a file and line, or the numbers from actually running it.
+        "This seems wrong" is not yet a ticket.
+    validations:
+      required: true
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Done when
+      description: Outcomes a reviewer can tick. If it cannot be checked, it cannot be closed.
+      value: |
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: depends
+    attributes:
+      label: Depends on
+      description: "Other tickets as #N, and why. Leave blank if none."
+
+  - type: checkboxes
+    id: claims
+    attributes:
+      label: Does this change what the app claims?
+      description: Any of these means README.md and ARCHITECTURE.md need checking in the PR.
+      options:
+        - label: Changes when a session is flagged, or what a flag means
+        - label: Changes what is stored, or what leaves the device
+        - label: Changes wording the caregiver or the cared-for person reads
