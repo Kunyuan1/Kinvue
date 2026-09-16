@@ -159,14 +159,87 @@ team; one who is told about a disclosed one has learned the constraint was under
 
 ---
 
+## Planning for remote access
+
+Everything above describes an app used at one machine. The product it is for is not: the
+caregiver it exists to help is often not in the room. A caregiver seeing check-ins from
+their own device is therefore a certain part of the product's future — and it is the
+single change most able to undo the decisions in this file by accident.
+
+It is not being built yet. It is being planned now, because several of its requirements
+are cheap to honour today and expensive to retrofit once real check-ins exist.
+
+### What is settled
+
+- **Scoring stays on the check-in device.** A server, when there is one, carries results;
+  it never scores and never needs raw data to do its job. `core/` runs where the camera
+  is.
+- **Consent comes first.** Nothing leaves the device without the cared-for person's
+  agreement, and they can see who has access and take it back. Remote visibility of
+  someone's daily physiology without their say is surveillance, however well meant.
+- **What leaves the device is decided in one place** — a single tested function in
+  `core/`, with every field of a session explicitly classified. Sync code sends what it
+  returns and nothing else. (#37)
+- **A calm daily summary, never a real-time alert.** A notification the moment a flag
+  fires would turn the app into the emergency alarm it is designed not to be, and a lock
+  screen far away cannot carry the difference between "worth a look" and "drive over".
+  (#43)
+- **No secondary use.** The data exists for that person's care. No analytics on it and no
+  aggregation across people.
+- **`core/` stays framework-free**, because it will be imported by more than one app.
+  (#15, #38)
+
+### What applies from today
+
+These hold now, before any remote code exists, so that the records being written today
+are ones remote access can use:
+
+- **Records are immutable, append-only and globally unique.** Sessions are already never
+  edited in place, which is exactly the property sync needs. Ids must not come from a
+  local clock. (#25, #30)
+- **Vitals originate in the main process and nowhere else.** Once records are read far
+  away, the boundary that stops invented numbers has to be the process boundary, not the
+  capture code. (#25)
+- **Every record knows its local time zone.** `capturedAt` is UTC; a caregiver in another
+  zone needs the cared-for person's *today*, and a UTC timestamp recorded without its zone
+  can never be placed on the right local day afterwards. (#28)
+
+### What is deliberately still open
+
+Each of these is a real decision with its own ticket, and each must be closed and written
+into this file before remote code is written:
+
+| Question | Ticket |
+|---|---|
+| Who consents, and how is access withdrawn — including for someone who cannot consent | #31 |
+| What leaves the device: verdict, explanation, vitals, answers, the pain note | #32 |
+| Can the server read what it carries, and how are keys managed and recovered | #33 |
+| What the caregiver's client is | #34 |
+| What legal and regulatory obligations sending health data brings | #35 |
+| What is being protected, from whom — including a viewer who is the danger | #36 |
+
+End-to-end encryption, so the relay cannot read what it carries, is the preferred
+direction because it keeps most of the privacy guarantees in `README.md` true. It is not
+assumed: lost-device recovery and revocation are genuinely harder under it, and #33 has
+to weigh that honestly.
+
+When remote access ships, the privacy section of `README.md` is rewritten in the same
+change. The docs must never describe a device that sends nothing after it starts sending
+something.
+
+---
+
 ## What this architecture is bad at
 
 - **One person per install.** `personId` exists throughout, but nothing manages multiple
-  cared-for people, and a home-care aide with six clients is the obvious real user.
-- **No remote access.** The caregiver has to be at the same machine as the camera, which
-  is precisely backwards for the family-member-at-a-distance case the pitch describes.
-  Fixing it properly means a backend and a real authorization story — which is also where
-  most of the privacy guarantees above would have to be renegotiated.
+  cared-for people, and a home-care aide with six clients is the obvious real user. Remote
+  access makes it many-to-many — a parent with three children who each want to see — so
+  the relationship should be modelled that way from the start. (#18)
+- **No remote access yet.** The caregiver has to be at the same machine as the camera,
+  which is precisely backwards for the family-member-at-a-distance case the product is
+  for. Fixing it means a backend and a real authorization story, and it renegotiates the
+  privacy guarantees — which is why it is planned deliberately above rather than
+  discovered later.
 - **Severity weights are unvalidated.** They are ordered sensibly and tested for the
   behaviour we want, but no number in `rules.ts` is calibrated against an outcome.
 - **A single daily sample is a weak signal.** Time of day, having just walked upstairs,

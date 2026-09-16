@@ -219,6 +219,12 @@ them checkable:
 - **Opt-in by design.** Capture runs only when someone presses the button. There is no
   background monitoring and no always-on camera.
 
+These describe the app **as it is today**. Remote access — a caregiver seeing check-ins
+from their own device — is planned, and it will change some of them. When it does, it will
+be through documented decisions (see *Planning for remote access* in `ARCHITECTURE.md`),
+consent from the person being checked on will come first, and this section will be
+rewritten in the same change that makes it untrue — not after.
+
 ---
 
 ## Conventions & Workflow
