@@ -1,8 +1,10 @@
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { scoreSession } from '@core/scoring'
 import { createJsonSessionStore } from '@core/session/store'
-import type { CheckInAnswers, SessionRecord, Vitals } from '@core/session/types'
+import type { CaptureResult, SessionRecord, Vitals } from '@core/session/types'
+import { parseCheckInAnswers, parsePersonId } from '@core/session/validate'
 import { DEMO_PERSON_ID, seedDemoHistory } from '@core/seed/persona'
 import { captureVitals } from './vitals'
 
@@ -46,37 +48,82 @@ function createWindow(): BrowserWindow {
 function registerIpc(): void {
   const store = createJsonSessionStore(storePath())
 
-  ipcMain.handle('sessions:list', async (_e, personId: string): Promise<SessionRecord[]> => {
-    return await store.list(personId)
+  // The latest capture, held here until its answers arrive. Vitals never make
+  // the round trip through the renderer: a renderer that could submit vitals
+  // could submit numbers no camera produced. See ARCHITECTURE.md.
+  let pending: { captureId: string; capturedAt: string; vitals: Vitals } | null = null
+  let capturing = false
+
+  ipcMain.handle('sessions:list', async (_e, personId: unknown): Promise<SessionRecord[]> => {
+    const id = parsePersonId(personId)
+    if (id === null) throw new Error('sessions:list needs a person id.')
+    return await store.list(id)
   })
 
-  ipcMain.handle('checkin:capture', async (event): Promise<Vitals> => {
-    return await captureVitals({
-      onProgress: (elapsedSec) => {
-        // Progress is best-effort: a closed window must not fail the capture.
-        if (!event.sender.isDestroyed()) {
-          event.sender.send('checkin:progress', elapsedSec)
-        }
-      },
-    })
+  ipcMain.handle('checkin:capture', async (event): Promise<CaptureResult> => {
+    // One camera, one capture. A second SDK instance on the same device is not
+    // a second reading, it is two broken ones.
+    if (capturing) throw new Error('A capture is already running.')
+    capturing = true
+    // A new capture supersedes any unsubmitted one, so a stale id cannot be
+    // submitted against answers given after a newer reading.
+    pending = null
+    const capturedAt = new Date().toISOString()
+    try {
+      const vitals = await captureVitals({
+        onProgress: (elapsedSec) => {
+          // Progress is best-effort: a closed window must not fail the capture.
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('checkin:progress', elapsedSec)
+          }
+        },
+      })
+      const captureId = randomUUID()
+      pending = { captureId, capturedAt, vitals }
+      return { captureId, vitals }
+    } finally {
+      capturing = false
+    }
   })
 
   ipcMain.handle(
     'checkin:submit',
-    async (_e, personId: string, vitals: Vitals, answers: CheckInAnswers): Promise<SessionRecord> => {
-      const history = await store.list(personId)
-      const session: SessionRecord = {
-        id: `s-${Date.now()}`,
-        personId,
-        capturedAt: new Date().toISOString(),
-        vitals,
-        answers,
+    async (_e, personId: unknown, captureId: unknown, answers: unknown): Promise<SessionRecord> => {
+      const id = parsePersonId(personId)
+      if (id === null) throw new Error('checkin:submit needs a person id.')
+      const parsed = parseCheckInAnswers(answers)
+      if (parsed === null) throw new Error('checkin:submit received malformed answers.')
+      if (pending === null || pending.captureId !== captureId) {
+        throw new Error(
+          'No matching capture to submit — it was already submitted, or a newer capture replaced it.',
+        )
       }
-      // Scored against prior sessions only — the new one must not be in its
-      // own baseline. See core/baseline.
-      session.assessment = scoreSession(session, history)
-      await store.append(session)
-      return session
+
+      // Taken before any await, so a double submit cannot store the capture twice.
+      const capture = pending
+      pending = null
+
+      try {
+        const history = await store.list(id)
+        const session: SessionRecord = {
+          // Not derived from the clock: ids must stay unique once records from
+          // more than one device meet.
+          id: randomUUID(),
+          personId: id,
+          capturedAt: capture.capturedAt,
+          vitals: capture.vitals,
+          answers: parsed,
+        }
+        // Scored against prior sessions only — the new one must not be in its
+        // own baseline. See core/baseline.
+        session.assessment = scoreSession(session, history)
+        await store.append(session)
+        return session
+      } catch (err) {
+        // Nothing was stored, so the reading is still theirs to submit.
+        pending ??= capture
+        throw err
+      }
     },
   )
 

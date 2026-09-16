@@ -32,6 +32,16 @@ export interface Vitals {
   durationSec: number
 }
 
+/**
+ * What the renderer gets back from a capture. The vitals are for display only:
+ * `submit` takes the `captureId`, never the vitals, so the numbers that are
+ * scored and stored can only be the ones the main process measured.
+ */
+export interface CaptureResult {
+  captureId: string
+  vitals: Vitals
+}
+
 export type MoodAnswer = 'good' | 'ok' | 'low'
 export type SleepAnswer = 'well' | 'ok' | 'poorly'
 

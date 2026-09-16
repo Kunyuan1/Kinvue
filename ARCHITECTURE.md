@@ -128,6 +128,14 @@ The renderer additionally runs under a `default-src 'self'` CSP, so it cannot lo
 code or call out to a remote origin. Combined with `enableTelemetry: false` on the SDK,
 the claim "this app makes no network calls of its own" is meant literally.
 
+**Vitals originate in the main process and nowhere else.** `capture` returns the reading
+for display along with a `captureId`; `submit` takes that id, never the numbers. The
+renderer can show a measurement but cannot hand one back, so a renderer bug cannot score
+and store vitals that no camera produced. Everything else the renderer sends is validated
+at runtime in `core/session/validate.ts` and rejected rather than repaired, because
+whatever gets past that line is written into the permanent history — and, once remote
+access exists, into someone else's view of it.
+
 ---
 
 ## Why a JSON file and not SQLite
