@@ -6,7 +6,7 @@ import type { SessionRecord } from './types'
  * MAIN PROCESS ONLY — this module imports node:fs. The renderer reaches
  * sessions over IPC (see app/preload), never by importing this file.
  *
- * A JSON file, not SQLite, is a deliberate hackathon choice: a check-in is one
+ * A JSON file, not SQLite, is a deliberate choice: a check-in is one
  * small record a day, so a single file is correct at this size and costs no
  * native rebuild against Electron's ABI. The interface below is the seam to
  * swap if that stops being true. See README "Known Limitations".
