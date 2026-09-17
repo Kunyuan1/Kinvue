@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         A ticket's KV number **is** its issue number, which GitHub assigns when you submit.
-        Replace `##` in the title with that number afterwards — KV-31 is #31.
+        Leave `KV-##` in the title: it is filled in with that number automatically — KV-31 is #31.
 
         Set the milestone to the phase this belongs to. Add `backlog` if its phase has not started.
 
@@ -25,8 +25,10 @@ body:
     attributes:
       label: Done when
       description: Outcomes a reviewer can tick. If it cannot be checked, it cannot be closed.
-      value: |
-        - [ ]
+      # A placeholder, not a value: GitHub counts a pre-filled value as an answer,
+      # which would let `required` pass on an untouched field.
+      placeholder: |
+        - [ ] An outcome a reviewer can check
     validations:
       required: true
 
@@ -36,12 +38,17 @@ body:
       label: Depends on
       description: "Other tickets as #N, and why. Leave blank if none."
 
+  # Mirrors "Does this change what the app claims?" in
+  # .github/pull_request_template.md. Change both together.
   - type: checkboxes
     id: claims
     attributes:
       label: Does this change what the app claims?
-      description: Any of these means README.md and ARCHITECTURE.md need checking in the PR.
+      description: Any of these means the PR has to answer for it. The PR template says what each one needs.
       options:
         - label: Changes when a session is flagged, or what a flag means
-        - label: Changes what is stored, or what leaves the device
+        - label: Changes a tuned constant (threshold, window, severity weight)
+        - label: Touches the privacy surface — telemetry, the preload bridge, where the API key lives
+        - label: Changes what leaves the device, or what could once remote access exists
+        - label: Changes the shape of a stored record
         - label: Changes wording the caregiver or the cared-for person reads

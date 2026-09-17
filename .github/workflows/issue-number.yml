@@ -1,0 +1,27 @@
+name: Issue number
+
+# The issue forms file a ticket as "KV-##: ...", because its KV number is the
+# issue number and GitHub only assigns that on submit. This fills it in, so a
+# title nobody remembered to rename cannot drift from the number it stands for.
+
+on:
+  issues:
+    types: [opened]
+
+permissions: {}
+
+jobs:
+  kv-number:
+    if: contains(github.event.issue.title, 'KV-##')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      # The title goes through env, never into the script text, so nothing
+      # typed into it can run as shell.
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NUMBER: ${{ github.event.issue.number }}
+          TITLE: ${{ github.event.issue.title }}
+        run: gh issue edit "$NUMBER" --title "${TITLE/"KV-##"/KV-$NUMBER}"

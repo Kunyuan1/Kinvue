@@ -9,7 +9,7 @@ body:
         A decision ticket does not close when code merges. It closes when `ARCHITECTURE.md`
         records what was decided, the options not taken, and why.
 
-        Replace `##` in the title with this issue's number after submitting.
+        Leave `KV-##` in the title: it is filled in with this issue's number automatically.
 
   - type: textarea
     id: question

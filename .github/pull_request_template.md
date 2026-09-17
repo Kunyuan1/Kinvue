@@ -28,13 +28,15 @@ Closes #
 
 - [ ] Changes when a session is flagged, or what a flag means
 - [ ] Changes a tuned constant (threshold, window, severity weight)
-- [ ] Touches the privacy surface — network, telemetry, stored data, the preload bridge
+- [ ] Touches the privacy surface — telemetry, the preload bridge, where the API key lives
 - [ ] Changes what leaves the device, or what could once remote access exists
-- [ ] Changes the shape of a stored record — existing records must still load
+- [ ] Changes the shape of a stored record — a test shows a record written before it still loads
 - [ ] Changes wording the caregiver or the cared-for person reads
 
 <!-- If any are checked: say what the new claim is, and confirm README.md and
-     ARCHITECTURE.md still describe it accurately. -->
+     ARCHITECTURE.md still describe it accurately. A record-shape change needs
+     the test as well; a docs check does not cover it. The same list is in
+     .github/ISSUE_TEMPLATE/ticket.yml — change both together. -->
 
 ## Anything risky or follow-up needed?
 
