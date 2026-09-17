@@ -1,0 +1,33 @@
+version: 2
+updates:
+  # Scheduled version updates only. Responding to a published advisory is
+  # Dependabot alerts and security updates, which are repository settings and
+  # not something this file can turn on.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels: ["chore"]
+    commit-message:
+      prefix: "chore(deps)"
+    groups:
+      # Routine bumps arrive as one PR. Majors arrive one at a time, because a
+      # major Electron, Vite or React release is a change to review, not a chore.
+      #
+      # Electron and the SDK are left out, so each of their bumps arrives alone:
+      # an Electron security patch cannot be held up by an unrelated failure in
+      # the group, and an SDK release, which can change what the capture sends
+      # over the network, is never hidden inside a chore. Neither is proven by a
+      # green CI run — see README "Conventions & Workflow".
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+        exclude-patterns: ["electron", "@smartspectra/*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels: ["ci"]
+    commit-message:
+      prefix: "ci(deps)"

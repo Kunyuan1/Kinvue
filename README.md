@@ -232,13 +232,37 @@ rewritten in the same change that makes it untrue — not after.
 
 ## Conventions & Workflow
 
-Branches + PRs only, never commit to `main` (the initial scaffold commit aside).
+Branches + PRs only, never commit to `main` (the initial scaffold commit aside). The
+repository settings do not enforce this or squash-only merging yet (KV-54).
 
+- **Tickets** are GitHub issues, and a ticket's `KV-##` number *is* its issue number —
+  KV-25 is #25. Issues and pull requests share GitHub's number sequence, so a number taken
+  by a PR simply has no ticket.
+- **Phases** are GitHub milestones. Labels carry the area (`vitals`, `scoring`, `ui`,
+  `docs`, `ci`, `chore`, and `bug` for a `fix/` branch) and the kind of work (`remote`,
+  `decision`, `privacy`, `security`). `backlog` marks a ticket whose phase has not
+  started; `dormant` marks one shut on purpose — read it before reopening.
+- **New tickets** take the shape of the issue forms: *Ticket* for work, *Decision* for a
+  judgement call, which closes when `ARCHITECTURE.md` records the outcome rather than when
+  code merges. The forms are the default, not a gate — blank issues stay enabled, and a
+  ticket filed with `gh` or the API skips the forms whatever that setting says, so it
+  follows the same sections by hand. A title filed as `KV-##: …` has its number filled in
+  on open (`.github/workflows/issue-number.yml`).
 - **Branch naming**: `category/KV-##-short-description`. Categories in use: `vitals`,
-  `scoring`, `ui`, `docs`, `ci`, `chore`, `fix`.
+  `scoring`, `ui`, `docs`, `ci`, `chore`, `fix`, `security`, `remote`.
 - **PR title**: `type(scope): KV-## description`.
+- **PR body** carries a bare `Closes #<issue-number>`. `KV-##` alone is plain text to
+  GitHub and closes nothing.
 - **PRs** use the template (`.github/pull_request_template.md`). One ticket ≈ one PR.
 - **CI** (`.github/workflows/ci.yml`) runs on every PR: lint, typecheck, test, build.
+- **Dependabot** (`.github/dependabot.yml`) opens dependency PRs — weekly for npm, with
+  minor and patch bumps grouped into one. They are the one exception to the ticket,
+  branch-naming and PR-title rules: no KV number and no `Closes` line. Major versions,
+  Electron and `@smartspectra/*` each arrive in their own PR.
+- **A green Dependabot PR has not been run.** CI never launches Electron, and Dependabot
+  PRs skip the template's *Ran the app* box. An Electron bump needs `npm run dev` before
+  merging, and an SDK bump needs a real capture too, checked for new network behaviour
+  against the privacy claims above.
 
 ---
 
