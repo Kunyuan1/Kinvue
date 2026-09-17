@@ -197,23 +197,24 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
 
 ### What must hold before real check-ins are stored
 
-None of these is true of the code yet. Each is owned by a Phase 1 ticket that has to land
-before the check-in flow (#2) stores real sessions, because a record written without them
-cannot be repaired afterwards:
+Each is owned by a Phase 1 ticket that has to land before the check-in flow (#2) stores
+real sessions, because a record written without them cannot be repaired afterwards. Two
+hold today; the third does not:
 
-- **Records are never edited in place, and have globally unique ids.** The first half
-  already holds, and it is the property sync needs. The second does not: ids come from
-  the local clock (`s-${Date.now()}`), which two devices, or two submits in the same
-  millisecond, can repeat. (#25) Seeded ids are the same on every install, which is
+- **Records are never edited in place, and have globally unique ids.** Both hold.
+  Sessions are only ever appended, which is the property sync needs, and an id is a UUID
+  rather than the local clock, so two devices — or two submits in the same millisecond —
+  cannot produce the same one (#25). Seeded ids repeat across installs, which is
   acceptable only because seeded records never leave the device (#37). When a record is
   removed — by deletion, or by whatever retention #21 settles on — sync must carry that
   as a tombstone, not as silence. (#45)
-- **Vitals originate in the main process and nowhere else.** Today `submit` still takes
-  vitals from the renderer. #25 changes that, and records the rule under *Why the API key
-  lives in the main process*.
-- **Every record knows its local time zone.** No record has one yet. `capturedAt` is UTC;
-  a caregiver in another zone needs the cared-for person's *today*, and a UTC timestamp
-  recorded without its zone can never be placed on the right local day afterwards. (#28)
+- **Vitals originate in the main process and nowhere else.** This holds: `submit` takes
+  the id of a capture main is holding, never the numbers. The rule, and what else that
+  held capture is pinned to, is under *Why the API key lives in the main process*. (#25)
+- **Every record knows its local time zone.** This does not hold yet — no record has one.
+  `capturedAt` is UTC; a caregiver in another zone needs the cared-for person's *today*,
+  and a UTC timestamp recorded without its zone can never be placed on the right local
+  day afterwards. (#28)
 
 ### What is deliberately still open
 
