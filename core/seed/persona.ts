@@ -14,8 +14,8 @@ import type { SessionRecord, SleepAnswer, MoodAnswer } from '../session/types'
  * The disclosure has a known gap. The dashboard records every capture against
  * DEMO_PERSON_ID and the baseline does not exclude seeded records, so a real
  * capture taken after seeding is scored against this invented history, and its
- * verdict is not labelled as depending on it. See ARCHITECTURE.md, "Why the
- * demo history is seeded".
+ * verdict is not labelled as depending on it (KV-53). See ARCHITECTURE.md,
+ * "Why the demo history is seeded".
  */
 
 export const DEMO_PERSON_ID = 'demo-margaret'

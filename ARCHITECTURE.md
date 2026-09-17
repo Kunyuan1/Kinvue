@@ -163,7 +163,7 @@ real capture taken after seeding is scored against the invented fortnight — wh
 `MIN_BASELINE_SESSIONS` on its own. That card's vitals are real, but its verdict and
 explanation ("HRV is N% below their usual") compare them with numbers nobody measured,
 and it carries no label saying so. Until the scorer either leaves seeded records out of a
-real session's baseline or marks the result, treat any verdict on the demo persona as a
+real session's baseline or marks the result (KV-53), treat any verdict on the demo persona as a
 demonstration of the dashboard, not a reading of anyone.
 
 Seeding does not solve the underlying problem, which is that a genuine install says "not
