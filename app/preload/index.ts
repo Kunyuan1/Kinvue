@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CheckInAnswers, SessionRecord, Vitals } from '@core/session/types'
+import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
 
 /**
  * The entire surface the renderer gets. Everything is a named call — no generic
@@ -10,10 +10,13 @@ const api = {
   listSessions: (personId: string): Promise<SessionRecord[]> =>
     ipcRenderer.invoke('sessions:list', personId),
 
-  capture: (): Promise<Vitals> => ipcRenderer.invoke('checkin:capture'),
+  /** The reading is held in main for this person; `submit` must name the same one. */
+  capture: (personId: string): Promise<CaptureResult> =>
+    ipcRenderer.invoke('checkin:capture', personId),
 
-  submit: (personId: string, vitals: Vitals, answers: CheckInAnswers): Promise<SessionRecord> =>
-    ipcRenderer.invoke('checkin:submit', personId, vitals, answers),
+  /** Takes the id from `capture`, never the vitals — see core/session/checkin.ts. */
+  submit: (personId: string, captureId: string, answers: CheckInAnswers): Promise<SessionRecord> =>
+    ipcRenderer.invoke('checkin:submit', personId, captureId, answers),
 
   seedDemo: (): Promise<number> => ipcRenderer.invoke('demo:seed'),
 

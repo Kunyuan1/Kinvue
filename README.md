@@ -95,13 +95,15 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
   session/
     types.ts             Vitals, CheckInAnswers, FiredRule, Assessment, SessionRecord
     store.ts             JSON session store (MAIN PROCESS ONLY — imports node:fs)
+    validate.ts          runtime checks on everything the renderer sends to main
+    checkin.ts           holds a capture until its answers arrive, then scores and stores it
   baseline/index.ts      per-person trailing baseline + MIN_BASELINE_SESSIONS
   scoring/
     rules.ts             every rule, each independently testable
     index.ts             the engine: severity sum → flag + explanation
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
 
-tests/                   Vitest. Covers baseline and scoring; run with `npm test`.
+tests/                   Vitest. Covers baseline, scoring, validation and check-in state.
 ```
 
 ---
@@ -185,6 +187,7 @@ Tuned constants live in code, not env, because changing one changes what the app
 | `MIN_BASELINE_SESSIONS` | `core/baseline` | `3` — below this the verdict is withheld |
 | `BASELINE_WINDOW_SESSIONS` | `core/baseline` | `14` — trailing sessions in the baseline |
 | `HRV_DROP_FIRES_AT` | `core/scoring/rules.ts` | `0.25` — fractional drop from baseline HRV |
+| `PENDING_CAPTURE_TTL_MS` | `core/session/checkin.ts` | `15 min` — past this, a reading cannot be submitted with answers given now |
 
 ---
 

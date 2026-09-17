@@ -1,8 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { scoreSession } from '@core/scoring'
 import { createJsonSessionStore } from '@core/session/store'
-import type { CheckInAnswers, SessionRecord, Vitals } from '@core/session/types'
+import { createCheckIn } from '@core/session/checkin'
+import type { CaptureResult, SessionRecord } from '@core/session/types'
+import { parseCheckInAnswers, parsePersonId } from '@core/session/validate'
 import { DEMO_PERSON_ID, seedDemoHistory } from '@core/seed/persona'
 import { captureVitals } from './vitals'
 
@@ -45,38 +48,45 @@ function createWindow(): BrowserWindow {
 
 function registerIpc(): void {
   const store = createJsonSessionStore(storePath())
-
-  ipcMain.handle('sessions:list', async (_e, personId: string): Promise<SessionRecord[]> => {
-    return await store.list(personId)
+  // Holds each capture until its answers arrive; the rules live in core so they
+  // are tested. Everything the renderer sends is validated here first.
+  const checkIn = createCheckIn({
+    store,
+    score: scoreSession,
+    now: () => new Date(),
+    newId: randomUUID,
   })
 
-  ipcMain.handle('checkin:capture', async (event): Promise<Vitals> => {
-    return await captureVitals({
-      onProgress: (elapsedSec) => {
-        // Progress is best-effort: a closed window must not fail the capture.
-        if (!event.sender.isDestroyed()) {
-          event.sender.send('checkin:progress', elapsedSec)
-        }
-      },
-    })
+  ipcMain.handle('sessions:list', async (_e, personId: unknown): Promise<SessionRecord[]> => {
+    const id = parsePersonId(personId)
+    if (id === null) throw new Error('sessions:list needs a person id.')
+    return await store.list(id)
+  })
+
+  ipcMain.handle('checkin:capture', async (event, personId: unknown): Promise<CaptureResult> => {
+    const id = parsePersonId(personId)
+    if (id === null) throw new Error('checkin:capture needs a person id.')
+    return await checkIn.capture(id, () =>
+      captureVitals({
+        onProgress: (elapsedSec) => {
+          // Progress is best-effort: a closed window must not fail the capture.
+          if (!event.sender.isDestroyed()) {
+            event.sender.send('checkin:progress', elapsedSec)
+          }
+        },
+      }),
+    )
   })
 
   ipcMain.handle(
     'checkin:submit',
-    async (_e, personId: string, vitals: Vitals, answers: CheckInAnswers): Promise<SessionRecord> => {
-      const history = await store.list(personId)
-      const session: SessionRecord = {
-        id: `s-${Date.now()}`,
-        personId,
-        capturedAt: new Date().toISOString(),
-        vitals,
-        answers,
-      }
-      // Scored against prior sessions only — the new one must not be in its
-      // own baseline. See core/baseline.
-      session.assessment = scoreSession(session, history)
-      await store.append(session)
-      return session
+    async (_e, personId: unknown, captureId: unknown, answers: unknown): Promise<SessionRecord> => {
+      const id = parsePersonId(personId)
+      if (id === null) throw new Error('checkin:submit needs a person id.')
+      if (typeof captureId !== 'string') throw new Error('checkin:submit needs a capture id.')
+      const parsed = parseCheckInAnswers(answers)
+      if (parsed === null) throw new Error('checkin:submit received malformed answers.')
+      return await checkIn.submit(id, captureId, parsed)
     },
   )
 
