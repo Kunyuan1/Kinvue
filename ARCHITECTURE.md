@@ -136,6 +136,13 @@ at runtime in `core/session/validate.ts` and rejected rather than repaired, beca
 whatever gets past that line is written into the permanent history — and, once remote
 access exists, into someone else's view of it.
 
+The held reading carries two more things the renderer cannot talk main out of. It belongs
+to the person it was taken for, so a stale selection in the UI cannot file one person's
+reading against another's baseline. And it expires: answers describe how someone is now,
+so a reading left waiting past `PENDING_CAPTURE_TTL_MS` cannot be stored alongside answers
+given later. Both are enforced in `core/session/checkin.ts`, which holds that state and is
+tested without a camera or an Electron harness; `app/main` only wires it to IPC.
+
 ---
 
 ## Why a JSON file and not SQLite

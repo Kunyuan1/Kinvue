@@ -8,6 +8,14 @@ import type { CheckInAnswers, MoodAnswer, SleepAnswer } from './types'
  * something nobody said.
  */
 
+/**
+ * Generous caps, not product limits. Whatever passes is written to a file that
+ * is re-read and rewritten in full on every append, so a renderer bug that sends
+ * a pasted log should be rejected rather than stored.
+ */
+export const MAX_PAIN_NOTE_LENGTH = 2000
+export const MAX_PERSON_ID_LENGTH = 128
+
 const MOODS: readonly MoodAnswer[] = ['good', 'ok', 'low']
 const SLEEPS: readonly SleepAnswer[] = ['well', 'ok', 'poorly']
 
@@ -27,7 +35,12 @@ export function parseCheckInAnswers(input: unknown): CheckInAnswers | null {
 
   // The note is only collected when pain was reported. A note without pain is
   // a caller bug, and guessing which half is wrong would be inventing an answer.
-  if (painNote !== undefined && (typeof painNote !== 'string' || !painReported)) return null
+  // A blank note is rejected too: "no note" has one shape, an absent field, and
+  // trimming a blank one away would be repairing the input.
+  if (painNote !== undefined) {
+    if (typeof painNote !== 'string' || !painReported) return null
+    if (painNote.trim() === '' || painNote.length > MAX_PAIN_NOTE_LENGTH) return null
+  }
 
   // Rebuilt field by field so nothing the caller added rides along into the store.
   const answers: CheckInAnswers = { mood, sleep, eatenToday, painReported }
@@ -35,7 +48,13 @@ export function parseCheckInAnswers(input: unknown): CheckInAnswers | null {
   return answers
 }
 
-/** The person id, or null if the input is not a non-blank string. */
+/**
+ * The person id, or null if the input is not a non-blank string without
+ * surrounding whitespace. The store matches ids exactly, so `' demo-margaret'`
+ * would quietly become a second person with no history.
+ */
 export function parsePersonId(input: unknown): string | null {
-  return typeof input === 'string' && input.trim() !== '' ? input : null
+  if (typeof input !== 'string') return null
+  if (input === '' || input.trim() !== input || input.length > MAX_PERSON_ID_LENGTH) return null
+  return input
 }

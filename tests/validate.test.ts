@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { parseCheckInAnswers, parsePersonId } from '@core/session/validate'
+import {
+  MAX_PAIN_NOTE_LENGTH,
+  MAX_PERSON_ID_LENGTH,
+  parseCheckInAnswers,
+  parsePersonId,
+} from '@core/session/validate'
 
 const VALID = { mood: 'ok', sleep: 'well', eatenToday: true, painReported: false }
 
@@ -23,6 +28,12 @@ describe('parseCheckInAnswers', () => {
     ['a truthy string in place of a boolean', { ...VALID, eatenToday: 'yes' }],
     ['a non-string pain note', { ...VALID, painReported: true, painNote: 3 }],
     ['a pain note without pain reported', { ...VALID, painNote: 'left knee' }],
+    ['an empty pain note', { ...VALID, painReported: true, painNote: '' }],
+    ['a blank pain note', { ...VALID, painReported: true, painNote: '  ' }],
+    [
+      'an overlong pain note',
+      { ...VALID, painReported: true, painNote: 'x'.repeat(MAX_PAIN_NOTE_LENGTH + 1) },
+    ],
   ])('rejects %s', (_label, input) => {
     expect(parseCheckInAnswers(input)).toBeNull()
   })
@@ -48,6 +59,8 @@ describe('parsePersonId', () => {
   it.each([
     ['an empty string', ''],
     ['whitespace', '   '],
+    ['surrounding whitespace', ' demo-margaret'],
+    ['an overlong id', 'x'.repeat(MAX_PERSON_ID_LENGTH + 1)],
     ['a number', 42],
     ['undefined', undefined],
   ])('rejects %s', (_label, input) => {

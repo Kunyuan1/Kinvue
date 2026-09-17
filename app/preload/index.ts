@@ -10,9 +10,11 @@ const api = {
   listSessions: (personId: string): Promise<SessionRecord[]> =>
     ipcRenderer.invoke('sessions:list', personId),
 
-  capture: (): Promise<CaptureResult> => ipcRenderer.invoke('checkin:capture'),
+  /** The reading is held in main for this person; `submit` must name the same one. */
+  capture: (personId: string): Promise<CaptureResult> =>
+    ipcRenderer.invoke('checkin:capture', personId),
 
-  /** Takes the id from `capture`, never the vitals — see app/main/index.ts. */
+  /** Takes the id from `capture`, never the vitals — see core/session/checkin.ts. */
   submit: (personId: string, captureId: string, answers: CheckInAnswers): Promise<SessionRecord> =>
     ipcRenderer.invoke('checkin:submit', personId, captureId, answers),
 
