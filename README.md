@@ -178,10 +178,18 @@ Everything is env-driven and read in the main process only.
 |---|---|---|
 | `SMARTSPECTRA_API_KEY` | — | SmartSpectra SDK key. Free from the [Presage portal](https://physiology.presagetech.com/auth/register). Read in `app/main` and never exposed to the renderer. |
 
-`app/main/env.ts` loads `.env` into `process.env` at startup. A variable already set in
-the environment wins over the file, and a missing `.env` is normal — the app starts, and
-capture fails with `MissingApiKeyError` when it is asked for a reading. Packaged installs
-need somewhere other than a dotfile for the key; that is KV-19.
+`app/main/env.ts` loads `.env` into `process.env` at startup, **in development only** — a
+packaged app is launched from wherever its shortcut points, and reading whatever `.env`
+happens to sit there is not a route into the process that owns the camera and the key.
+Packaged installs therefore have no `.env` route at all yet; that is KV-19.
+
+A variable already set in the environment wins over the file. A missing `.env` is normal
+— the app starts, and capture fails with `MissingApiKeyError` when it is asked for a
+reading. A `.env` that cannot be read is reported at startup instead.
+
+**Quote a key containing `#`** (`SMARTSPECTRA_API_KEY="ab#cd"`). Node's `.env` parser
+treats an unquoted `#` as the start of a comment and drops the rest of the value
+silently, which then looks like a key the SDK rejects.
 
 **The key is deliberately unprefixed.** A `MAIN_VITE_` name would be replaced into
 `out/main` at build time, which writes the key into a built file in plain text.

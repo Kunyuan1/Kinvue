@@ -128,7 +128,8 @@ The renderer additionally runs under a `default-src 'self'` CSP, so it cannot lo
 code or call out to a remote origin. Combined with `enableTelemetry: false` on the SDK,
 the claim "this app makes no network calls of its own" is meant literally.
 
-The key reaches the main process from `.env`, read at startup by `app/main/env.ts`. It is
+The key reaches the main process from `.env`, read at startup by `app/main/env.ts` and
+only when the app is not packaged. It is
 deliberately not named with one of electron-vite's `VITE_` prefixes: prefixed variables
 are replaced into the bundle at build time, so the convenient-looking fix would write the
 key into `out/main` in plain text and ship it. Reading it at runtime keeps it out of every
