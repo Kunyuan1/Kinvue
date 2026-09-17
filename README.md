@@ -222,7 +222,7 @@ them checkable:
 These describe the app **as it is today**. Remote access — a caregiver seeing check-ins
 from their own device — is planned, and it will change some of them. When it does, it will
 be through documented decisions (see *Planning for remote access* in `ARCHITECTURE.md`),
-consent from the person being checked on will come first, and this section will be
+consent will be required before anything leaves the device, and this section will be
 rewritten in the same change that makes it untrue — not after.
 
 ---

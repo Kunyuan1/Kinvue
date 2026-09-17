@@ -163,8 +163,8 @@ team; one who is told about a disclosed one has learned the constraint was under
 
 Everything above describes an app used at one machine. The product it is for is not: the
 caregiver it exists to help is often not in the room. A caregiver seeing check-ins from
-their own device is therefore a certain part of the product's future — and it is the
-single change most able to undo the decisions in this file by accident.
+their own device will therefore be part of the product — and it is the single change most
+able to undo the decisions in this file by accident.
 
 It is not being built yet. It is being planned now, because several of its requirements
 are cheap to honour today and expensive to retrofit once real check-ins exist.
@@ -174,9 +174,11 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
 - **Scoring stays on the check-in device.** A server, when there is one, carries results;
   it never scores and never needs raw data to do its job. `core/` runs where the camera
   is.
-- **Consent comes first.** Nothing leaves the device without the cared-for person's
-  agreement, and they can see who has access and take it back. Remote visibility of
-  someone's daily physiology without their say is surveillance, however well meant.
+- **Consent comes before anything leaves the device.** Who has access is visible on the
+  check-in device, and access can be revoked from it. Remote visibility of someone's daily
+  physiology without consent is surveillance, however well meant. *Whose* consent that is
+  — the person's own, or a guardian's when they cannot give it — is not settled here.
+  (#31)
 - **What leaves the device is decided in one place** — a single tested function in
   `core/`, with every field of a session explicitly classified. Sync code sends what it
   returns and nothing else. (#37)
@@ -184,25 +186,34 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
   fires would turn the app into the emergency alarm it is designed not to be, and a lock
   screen far away cannot carry the difference between "worth a look" and "drive over".
   (#43)
-- **No secondary use.** The data exists for that person's care. No analytics on it and no
-  aggregation across people.
-- **`core/` stays framework-free**, because it will be imported by more than one app.
-  (#15, #38)
+- **No secondary use without its own consent.** The data exists for that person's care:
+  no analytics on it, and no aggregation across people. The one planned exception is
+  calibrating the rule thresholds (#22), which pools caregiver-confirmed outcomes (#47)
+  across people. That is opt-in, asked for separately from sharing with a caregiver, and
+  must clear #31 and #35 before any session is used for it.
+- **`core/` stays framework-free**, so that it can be imported by more than one app if
+  #34 chooses a TypeScript client. `core/session/store.ts` is already the exception — it
+  imports `node:fs` — and #38 decides where it lives when the repo is split. (#15, #38)
 
-### What applies from today
+### What must hold before real check-ins are stored
 
-These hold now, before any remote code exists, so that the records being written today
-are ones remote access can use:
+None of these is true of the code yet. Each is owned by a Phase 1 ticket that has to land
+before the check-in flow (#2) stores real sessions, because a record written without them
+cannot be repaired afterwards:
 
-- **Records are immutable, append-only and globally unique.** Sessions are already never
-  edited in place, which is exactly the property sync needs. Ids must not come from a
-  local clock. (#25, #30)
-- **Vitals originate in the main process and nowhere else.** Once records are read far
-  away, the boundary that stops invented numbers has to be the process boundary, not the
-  capture code. (#25)
-- **Every record knows its local time zone.** `capturedAt` is UTC; a caregiver in another
-  zone needs the cared-for person's *today*, and a UTC timestamp recorded without its zone
-  can never be placed on the right local day afterwards. (#28)
+- **Records are never edited in place, and have globally unique ids.** The first half
+  already holds, and it is the property sync needs. The second does not: ids come from
+  the local clock (`s-${Date.now()}`), which two devices, or two submits in the same
+  millisecond, can repeat. (#25) Seeded ids are the same on every install, which is
+  acceptable only because seeded records never leave the device (#37). When a record is
+  removed — by deletion, or by whatever retention #21 settles on — sync must carry that
+  as a tombstone, not as silence. (#45)
+- **Vitals originate in the main process and nowhere else.** Today `submit` still takes
+  vitals from the renderer. #25 changes that, and records the rule under *Why the API key
+  lives in the main process*.
+- **Every record knows its local time zone.** No record has one yet. `capturedAt` is UTC;
+  a caregiver in another zone needs the cared-for person's *today*, and a UTC timestamp
+  recorded without its zone can never be placed on the right local day afterwards. (#28)
 
 ### What is deliberately still open
 
@@ -219,9 +230,12 @@ into this file before remote code is written:
 | What is being protected, from whom — including a viewer who is the danger | #36 |
 
 End-to-end encryption, so the relay cannot read what it carries, is the preferred
-direction because it keeps most of the privacy guarantees in `README.md` true. It is not
-assumed: lost-device recovery and revocation are genuinely harder under it, and #33 has
-to weigh that honestly.
+direction. It does not keep the privacy guarantees in `README.md` true: any sync ends *no
+network* and *session data is local*, encrypted or not, and the other three are
+unaffected either way. What it adds is a new guarantee — neither the relay's operator nor
+anyone who compromises the relay can read a check-in (#36). It is not assumed:
+lost-device recovery and revocation are genuinely harder under it, and #33 has to weigh
+that honestly.
 
 When remote access ships, the privacy section of `README.md` is rewritten in the same
 change. The docs must never describe a device that sends nothing after it starts sending
