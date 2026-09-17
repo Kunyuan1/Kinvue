@@ -15,10 +15,11 @@ This document is the entry point for both humans onboarding and AI agents contri
 It should be enough to understand how the system fits together and where to make a change.
 
 > **Project status: early.** Kinvue is a personal project, developed in the open with no
-> deadline. The repository is scaffolded and the scoring engine and its tests are real, but
-> the app cannot yet record a check-in end to end (KV-2). The SmartSpectra capture (`app/main/vitals.ts`) is written against the
-> documented API but **has not yet been run against a webcam** — that is KV-1, and it is
-> the highest-risk dependency in the build. Nothing downstream should be treated as
+> deadline. The repository is scaffolded and the scoring engine and its tests are real,
+> but the app cannot yet record a check-in end to end (KV-1, KV-2). The SmartSpectra
+> capture (`app/main/vitals.ts`) is written against the documented API but **has not yet
+> been run against a webcam** — that is KV-1, and it is the highest-risk dependency in
+> the build. Nothing downstream should be treated as
 > validated end-to-end until it closes.
 
 ---
@@ -249,7 +250,8 @@ Branches + PRs only, never commit to `main` (the initial scaffold commit aside).
   dashboard can be developed and shown with a baseline behind it. Every seeded record
   carries `seeded: true` and the dashboard labels it. This is disclosed on purpose — in
   the UI and here. It does not help a real install, which still starts with no baseline
-  (KV-17).
+  (KV-17). One case is not yet labelled: a real capture taken after seeding is scored
+  against the invented history, and its card does not say so. See `ARCHITECTURE.md`.
 - **Severity weights are judgement, not evidence.** The numbers in `rules.ts` were chosen
   so that the combination the product exists to catch clears the threshold and a single
   soft signal does not. They are not calibrated against outcomes and should not be

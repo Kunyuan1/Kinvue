@@ -153,13 +153,23 @@ anyone — the app can seed an invented fortnight for one persona, with real cap
 stacked on top.
 
 This is a shortcut, and the response to a shortcut is to disclose it rather than disguise
-it. Every seeded record carries `seeded: true`, `SessionCard` renders that label, seeding
-only happens when someone asks for it, and the README says so. Anyone who finds a hidden
-fake baseline learns not to trust the real numbers either; a labelled one costs nothing.
+it. Every seeded record carries `seeded: true`, `SessionCard` renders that label, and
+seeding only happens when someone asks for it. Anyone who finds a hidden fake baseline
+learns not to trust the real numbers either.
+
+The label does not yet cover everything the shortcut touches. The dashboard always
+records against the demo persona, and `computeBaseline` does not look at `seeded`, so a
+real capture taken after seeding is scored against the invented fortnight — which clears
+`MIN_BASELINE_SESSIONS` on its own. That card's vitals are real, but its verdict and
+explanation ("HRV is N% below their usual") compare them with numbers nobody measured,
+and it carries no label saying so. Until the scorer either leaves seeded records out of a
+real session's baseline or marks the result, treat any verdict on the demo persona as a
+demonstration of the dashboard, not a reading of anyone.
 
 Seeding does not solve the underlying problem, which is that a genuine install says "not
 enough to say" for its first few check-ins. That is a product question (KV-17), and
-seeded data must never be the answer to it.
+seeded data must never be the answer to it — which is why the gap above is a defect to
+close rather than a convenience to keep.
 
 ---
 

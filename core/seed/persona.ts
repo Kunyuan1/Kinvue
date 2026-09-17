@@ -5,12 +5,17 @@ import type { SessionRecord, SleepAnswer, MoodAnswer } from '../session/types'
  *
  * This exists for one reason: the app compares a reading against a person's own
  * baseline, a baseline needs weeks of check-ins, and a new install has none. This
- * history lets the dashboard be developed and shown with a baseline behind it;
- * real captures stack on top of it.
+ * history lets the dashboard be developed and shown with a baseline behind it.
  *
  * This is disclosed, not hidden. Every record it produces carries
  * `seeded: true`, the dashboard labels them, and README.md and ARCHITECTURE.md
- * say so. Nothing here is presented as real measurement.
+ * say so.
+ *
+ * The disclosure has a known gap. The dashboard records every capture against
+ * DEMO_PERSON_ID and the baseline does not exclude seeded records, so a real
+ * capture taken after seeding is scored against this invented history, and its
+ * verdict is not labelled as depending on it. See ARCHITECTURE.md, "Why the
+ * demo history is seeded".
  */
 
 export const DEMO_PERSON_ID = 'demo-margaret'
@@ -44,8 +49,8 @@ function pick<T>(items: readonly T[], r: number): T {
 }
 
 /**
- * Build `days` of ordinary check-ins ending the day before `endingAt`, so a
- * real capture taken today is the newest record.
+ * Build `days` of ordinary check-ins ending the day before `endingAt`, so the
+ * history reads as the fortnight leading up to today.
  */
 export function seedDemoHistory(
   days = 12,
