@@ -4,12 +4,18 @@ import type { SessionRecord, SleepAnswer, MoodAnswer } from '../session/types'
  * A pre-seeded history for the demo persona (KV-8).
  *
  * This exists for one reason: the app compares a reading against a person's own
- * baseline, and a baseline needs weeks that a 36-hour build does not have. The
- * demo captures ONE real session live and stacks it on this invented history.
+ * baseline, a baseline needs weeks of check-ins, and a new install has none. This
+ * history lets the dashboard be developed and shown with a baseline behind it.
  *
  * This is disclosed, not hidden. Every record it produces carries
- * `seeded: true`, the dashboard labels them, and the writeup and demo script
- * say so out loud. Nothing here is presented as real measurement.
+ * `seeded: true`, the dashboard labels them, and README.md and ARCHITECTURE.md
+ * say so.
+ *
+ * The disclosure has a known gap. The dashboard records every capture against
+ * DEMO_PERSON_ID and the baseline does not exclude seeded records, so a real
+ * capture taken after seeding is scored against this invented history, and its
+ * verdict is not labelled as depending on it (KV-53). See ARCHITECTURE.md,
+ * "Why the demo history is seeded".
  */
 
 export const DEMO_PERSON_ID = 'demo-margaret'
@@ -44,7 +50,7 @@ function pick<T>(items: readonly T[], r: number): T {
 
 /**
  * Build `days` of ordinary check-ins ending the day before `endingAt`, so the
- * live demo session is the newest record.
+ * history reads as the fortnight leading up to today.
  */
 export function seedDemoHistory(
   days = 12,

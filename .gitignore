@@ -25,9 +25,11 @@ Thumbs.db
 *.log
 npm-debug.log*
 
-# Captured demo footage used as the live-demo fallback (KV-5). Kept out of git
-# on purpose: it is a recording of a real person's face. The demo script says
-# to disclose when it is used; committing it would also publish it.
+# Recorded capture footage, should any ever exist (KV-5, deliberately dormant).
+# Kept out of git on purpose: it is a recording of a real person's face, and
+# committing it would publish it. Replaying footage into capture is the closest
+# this codebase gets to inventing a vital: see KV-5 for the gate it needs before
+# anyone builds it.
 fallback/
 *.mp4
 *.webm
