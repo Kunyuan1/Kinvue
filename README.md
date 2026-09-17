@@ -83,6 +83,7 @@ The session being scored is **never** part of the baseline it is compared agains
 app/
   main/
     index.ts             Electron entry: window, IPC handlers, store wiring
+    env.ts               loads .env into process.env before anything reads it
     vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk
   preload/
     index.ts             contextBridge surface. The API key never crosses this line.
@@ -105,7 +106,7 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
     index.ts             the engine: severity sum → flag + explanation
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
 
-tests/                   Vitest. Covers baseline, scoring, validation and check-in state.
+tests/                   Vitest. Covers baseline, scoring, validation, check-in state, env.
 ```
 
 ---
@@ -176,7 +177,18 @@ Everything is env-driven and read in the main process only.
 | Variable | Default | Purpose |
 |---|---|---|
 | `SMARTSPECTRA_API_KEY` | — | SmartSpectra SDK key. Free from the [Presage portal](https://physiology.presagetech.com/auth/register). Read in `app/main` and never exposed to the renderer. |
-| `KINVUE_SEED_DEMO` | `0` | Seed the demo persona's history on boot (KV-8). Off by default so a real install never invents check-ins that did not happen. |
+
+`app/main/env.ts` loads `.env` into `process.env` at startup. A variable already set in
+the environment wins over the file, and a missing `.env` is normal — the app starts, and
+capture fails with `MissingApiKeyError` when it is asked for a reading. Packaged installs
+need somewhere other than a dotfile for the key; that is KV-19.
+
+**The key is deliberately unprefixed.** A `MAIN_VITE_` name would be replaced into
+`out/main` at build time, which writes the key into a built file in plain text.
+
+There is no environment variable for seeding the demo history. Seeding happens when
+someone presses the button on the dashboard, which is the only way it should be possible
+to invent check-ins that did not happen (KV-8).
 
 Tuned constants live in code, not env, because changing one changes what the app
 *claims* and should go through review:

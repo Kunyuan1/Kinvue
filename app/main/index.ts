@@ -7,7 +7,12 @@ import { createCheckIn } from '@core/session/checkin'
 import type { CaptureResult, SessionRecord } from '@core/session/types'
 import { parseCheckInAnswers, parsePersonId } from '@core/session/validate'
 import { DEMO_PERSON_ID, seedDemoHistory } from '@core/seed/persona'
+import { loadDotEnv } from './env'
 import { captureVitals } from './vitals'
+
+// Before anything reads the environment: the SmartSpectra key lives in `.env`
+// during development and reaches the SDK from here, never from the renderer.
+loadDotEnv()
 
 /**
  * Main process: owns the camera, the API key and the session file. The renderer
