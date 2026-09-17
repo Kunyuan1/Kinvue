@@ -174,14 +174,102 @@ team; one who is told about a disclosed one has learned the constraint was under
 
 ---
 
+## Planning for remote access
+
+Everything above describes an app used at one machine. The product it is for is not: the
+caregiver it exists to help is often not in the room. A caregiver seeing check-ins from
+their own device will therefore be part of the product — and it is the single change most
+able to undo the decisions in this file by accident.
+
+It is not being built yet. It is being planned now, because several of its requirements
+are cheap to honour today and expensive to retrofit once real check-ins exist.
+
+### What is settled
+
+- **Scoring stays on the check-in device.** A server, when there is one, carries results;
+  it never scores and never needs raw data to do its job. `core/` runs where the camera
+  is.
+- **Consent comes before anything leaves the device.** Who has access is visible on the
+  check-in device, and access can be revoked from it. Remote visibility of someone's daily
+  physiology without consent is surveillance, however well meant. *Whose* consent that is
+  — the person's own, or a guardian's when they cannot give it — is not settled here.
+  (#31)
+- **What leaves the device is decided in one place** — a single tested function in
+  `core/`, with every field of a session explicitly classified. Sync code sends what it
+  returns and nothing else. (#37)
+- **A calm daily summary, never a real-time alert.** A notification the moment a flag
+  fires would turn the app into the emergency alarm it is designed not to be, and a lock
+  screen far away cannot carry the difference between "worth a look" and "drive over".
+  (#43)
+- **No secondary use without its own consent.** The data exists for that person's care:
+  no analytics on it, and no aggregation across people. The one planned exception is
+  calibrating the rule thresholds (#22), which pools caregiver-confirmed outcomes (#47)
+  across people. That is opt-in, asked for separately from sharing with a caregiver, and
+  must clear #31 and #35 before any session is used for it.
+- **`core/` stays framework-free**, so that it can be imported by more than one app if
+  #34 chooses a TypeScript client. `core/session/store.ts` is already the exception — it
+  imports `node:fs` — and #38 decides where it lives when the repo is split. (#15, #38)
+
+### What must hold before real check-ins are stored
+
+Each is owned by a Phase 1 ticket that has to land before the check-in flow (#2) stores
+real sessions, because a record written without them cannot be repaired afterwards. Two
+hold today; the third does not:
+
+- **Records are never edited in place, and have globally unique ids.** Both hold.
+  Sessions are only ever appended, which is the property sync needs, and an id is a UUID
+  rather than the local clock, so two devices — or two submits in the same millisecond —
+  cannot produce the same one (#25). Seeded ids repeat across installs, which is
+  acceptable only because seeded records never leave the device (#37). When a record is
+  removed — by deletion, or by whatever retention #21 settles on — sync must carry that
+  as a tombstone, not as silence. (#45)
+- **Vitals originate in the main process and nowhere else.** This holds: `submit` takes
+  the id of a capture main is holding, never the numbers. The rule, and what else that
+  held capture is pinned to, is under *Why the API key lives in the main process*. (#25)
+- **Every record knows its local time zone.** This does not hold yet — no record has one.
+  `capturedAt` is UTC; a caregiver in another zone needs the cared-for person's *today*,
+  and a UTC timestamp recorded without its zone can never be placed on the right local
+  day afterwards. (#28)
+
+### What is deliberately still open
+
+Each of these is a real decision with its own ticket, and each must be closed and written
+into this file before remote code is written:
+
+| Question | Ticket |
+|---|---|
+| Who consents, and how is access withdrawn — including for someone who cannot consent | #31 |
+| What leaves the device: verdict, explanation, vitals, answers, the pain note | #32 |
+| Can the server read what it carries, and how are keys managed and recovered | #33 |
+| What the caregiver's client is | #34 |
+| What legal and regulatory obligations sending health data brings | #35 |
+| What is being protected, from whom — including a viewer who is the danger | #36 |
+
+End-to-end encryption, so the relay cannot read what it carries, is the preferred
+direction. It does not keep the privacy guarantees in `README.md` true: any sync ends *no
+network* and *session data is local*, encrypted or not, and the other three are
+unaffected either way. What it adds is a new guarantee — neither the relay's operator nor
+anyone who compromises the relay can read a check-in (#36). It is not assumed:
+lost-device recovery and revocation are genuinely harder under it, and #33 has to weigh
+that honestly.
+
+When remote access ships, the privacy section of `README.md` is rewritten in the same
+change. The docs must never describe a device that sends nothing after it starts sending
+something.
+
+---
+
 ## What this architecture is bad at
 
 - **One person per install.** `personId` exists throughout, but nothing manages multiple
-  cared-for people, and a home-care aide with six clients is the obvious real user.
-- **No remote access.** The caregiver has to be at the same machine as the camera, which
-  is precisely backwards for the family-member-at-a-distance case the pitch describes.
-  Fixing it properly means a backend and a real authorization story — which is also where
-  most of the privacy guarantees above would have to be renegotiated.
+  cared-for people, and a home-care aide with six clients is the obvious real user. Remote
+  access makes it many-to-many — a parent with three children who each want to see — so
+  the relationship should be modelled that way from the start. (#18)
+- **No remote access yet.** The caregiver has to be at the same machine as the camera,
+  which is precisely backwards for the family-member-at-a-distance case the product is
+  for. Fixing it means a backend and a real authorization story, and it renegotiates the
+  privacy guarantees — which is why it is planned deliberately above rather than
+  discovered later.
 - **Severity weights are unvalidated.** They are ordered sensibly and tested for the
   behaviour we want, but no number in `rules.ts` is calibrated against an outcome.
 - **A single daily sample is a weak signal.** Time of day, having just walked upstairs,
