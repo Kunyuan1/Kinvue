@@ -24,12 +24,13 @@ import { createVitalsAccumulator } from './metrics'
  * without a key or a camera this throws, because a check-in that quietly
  * invented vitals would be worse than no check-in.
  *
- * OPEN DECISION (KV-1): this uses the main-process SDK with `useCamera()`, which
- * the SDK docs note "captures in THIS process" and for Electron suggests the
- * renderer SDK's `useMediaStream()` instead. The renderer path additionally
- * emits a `streamAvailable` MediaStream for a live self-view — valuable, since
- * bad framing and low light are the top demo risk — but it constructs the SDK
- * (and therefore the API key) in the renderer. Settle this on hardware.
+ * SETTLED (KV-1): capture stays here, in main, with `useCamera()`. The renderer
+ * SDK's `useMediaStream()` would have bought a live self-view — which real
+ * captures showed is not optional, since framing the person cannot see is the
+ * main way a capture returns nothing — but it constructs the SDK, and therefore
+ * the API key, in the renderer. It is not needed: the `videoOutput` event
+ * carries processed frames from this process, so the self-view can be fed over
+ * IPC instead (#3). See ARCHITECTURE.md.
  */
 
 export class MissingApiKeyError extends Error {

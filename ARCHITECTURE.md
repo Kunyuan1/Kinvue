@@ -114,14 +114,31 @@ importing `@smartspectra/node-sdk` loads its native runtime through koffi at imp
 Splitting them keeps the reduction testable on any machine, including ones with no
 runtime for their platform.
 
-**Open decision (KV-1):** capture currently runs in the *main* process via `useCamera()`.
-The SDK's own docs note this "captures in THIS process" and suggest the renderer SDK's
-`useMediaStream()` for Electron. The renderer path also emits a `streamAvailable`
-`MediaStream`, which would let the person see and fix their own framing while the capture
-runs — and since bad framing and low light are the single most likely way a capture
-fails, that is worth real weight. The cost is that the renderer SDK is constructed with
-the API key, moving it out of the main process. This should be settled against hardware,
-not in the abstract.
+### Capture stays in the main process (KV-1, settled on hardware)
+
+The SDK's own docs note that `useCamera()` "captures in THIS process" and suggest the
+renderer SDK's `useMediaStream()` for Electron. The renderer path emits a
+`streamAvailable` `MediaStream`, so it looked like the only way to give the person a live
+self-view — and framing is not a detail: the first two real captures produced **no
+readings at all**, purely because the person could not see that their face was sitting at
+the bottom of the frame. The SDK holds the webcam exclusively, so no second app can show
+them either.
+
+The cost of that path is the whole of *Why the API key lives in the main process*: the
+renderer SDK is constructed with the key.
+
+It turns out not to be a trade at all. The main-process SDK emits a `videoOutput` event
+carrying each processed frame — the docs call it "mainly useful for the custom-input /
+headless path", but it fires under `useCamera()`, confirmed by rendering those frames
+live during a real capture. So the self-view can be fed from main, over the same kind of
+one-way channel as `checkin:progress`, and the key never moves.
+
+What that costs instead, and what #3 has to handle: frames arrive at camera rate, so they
+need throttling and downscaling before they cross IPC, and the preload surface gains a
+frame channel that carries a person's face. It is display only — nothing writes footage
+to disk, and the README's *no raw video is stored or transmitted* claim holds — but it is
+the widest thing the bridge will carry, and #29's Electron security baseline should treat
+it as such.
 
 ---
 
