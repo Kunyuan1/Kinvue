@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { MIN_BASELINE_SESSIONS } from '@core/baseline'
-import { MIN_CAPTURE_SECONDS, scoreSession } from '@core/scoring'
+import { MIN_CAPTURE_SECONDS, scoreSession, seededBaselineDisclosure } from '@core/scoring'
 import type { Assessment } from '@core/session/types'
-import { history, session } from './helpers'
+import { history, seededHistory, session } from './helpers'
 
 const ids = (a: Assessment): string[] => a.firedRules.map((r) => r.id)
 
@@ -99,11 +99,92 @@ describe('scoreSession', () => {
     expect([...severities].sort((a, b) => b - a)).toEqual(severities)
   })
 
+  it('carries the seeded count on the assessment', () => {
+    const assessment = scoreSession(session(), seededHistory(12))
+    expect(assessment.flag).toBe('normal')
+    expect(assessment.baselineSeededSessions).toBe(12)
+    // The sentence is composed where it is shown, not frozen into the record.
+    expect(assessment.summary).not.toContain('seeded')
+  })
+
+  it('counts only the seeded part of a mixed baseline', () => {
+    const assessment = scoreSession(session(), [...seededHistory(10), ...history(2)])
+    expect(assessment.baselineSeededSessions).toBe(10)
+    expect(assessment.baselineSessions).toBe(12)
+  })
+
+  it('still withholds a verdict when a seeded baseline is too thin to use', () => {
+    const assessment = scoreSession(session(), seededHistory(MIN_BASELINE_SESSIONS - 1))
+    expect(assessment.flag).toBe('insufficient-signal')
+    expect(assessment.baselineSeededSessions).toBe(MIN_BASELINE_SESSIONS - 1)
+  })
   it('does not let the scored session contaminate its own baseline', () => {
     const past = history(5)
     const before = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), past)
     const after = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), past)
     expect(before).toEqual(after)
     expect(past).toHaveLength(5)
+  })
+})
+
+describe('seededBaselineDisclosure', () => {
+  it('names all of a wholly seeded baseline behind a verdict', () => {
+    const note = seededBaselineDisclosure(scoreSession(session(), seededHistory(12)))
+    expect(note).toContain('seeded demo data')
+    expect(note).toContain('all 12')
+  })
+
+  it('names how many of a mixed baseline were seeded', () => {
+    const note = seededBaselineDisclosure(
+      scoreSession(session(), [...seededHistory(10), ...history(2)]),
+    )
+    expect(note).toContain('10 of the 12')
+  })
+
+  it('says nothing when the baseline is all measured', () => {
+    expect(seededBaselineDisclosure(scoreSession(session(), history(5)))).toBeNull()
+  })
+
+  it('discloses on an elevated verdict too, not only a calm one', () => {
+    const note = seededBaselineDisclosure(
+      scoreSession(
+        session({ vitals: { hrvRmssdMs: 15 }, answers: { sleep: 'poorly', painReported: true } }),
+        seededHistory(12),
+      ),
+    )
+    expect(note).toContain('seeded demo data')
+  })
+
+  it('discloses when a withheld verdict still shows a rule quoting their usual', () => {
+    // The baseline is too thin for a verdict, but hrv-drop fires anyway and its
+    // explanation cites an invented "usual". The card must not stay silent.
+    const assessment = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), seededHistory(2))
+    expect(assessment.flag).toBe('insufficient-signal')
+    expect(assessment.firedRules.map((r) => r.id)).toContain('hrv-drop')
+    expect(seededBaselineDisclosure(assessment)).toContain('seeded demo data')
+  })
+
+  it('says nothing when the capture was unusable, because nothing was compared', () => {
+    const assessment = scoreSession(session({ vitals: { confidence: 0.2 } }), seededHistory(12))
+    expect(assessment.flag).toBe('insufficient-signal')
+    expect(assessment.firedRules).toEqual([])
+    expect(seededBaselineDisclosure(assessment)).toBeNull()
+  })
+
+  it('says nothing when only answer-based rules fired under a thin baseline', () => {
+    const assessment = scoreSession(
+      session({ answers: { eatenToday: false } }),
+      seededHistory(2),
+    )
+    expect(assessment.firedRules.map((r) => r.id)).toEqual(['not-eaten'])
+    expect(seededBaselineDisclosure(assessment)).toBeNull()
+  })
+
+  it('reports an older record as unrecorded rather than as none', () => {
+    // Missing is not zero: a session scored before KV-53 has no count, and
+    // reading that as "no seeded data" is the defect this ticket closes.
+    const scored = scoreSession(session(), history(5))
+    const { baselineSeededSessions: _absent, ...older } = scored
+    expect(seededBaselineDisclosure(older)).toContain('not recorded')
   })
 })

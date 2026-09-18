@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BASELINE_WINDOW_SESSIONS, computeBaseline } from '@core/baseline'
-import { history, session } from './helpers'
+import { history, seededHistory, session } from './helpers'
 
 describe('computeBaseline', () => {
   it('reports no stats and zero sessions for an empty history', () => {
@@ -35,6 +35,27 @@ describe('computeBaseline', () => {
     const baseline = computeBaseline([...old, ...recent])
     expect(baseline.sessions).toBe(BASELINE_WINDOW_SESSIONS)
     expect(baseline.hrvRmssdMs?.mean).toBe(50)
+  })
+
+  it('counts how many contributing sessions were seeded', () => {
+    // KV-53: a verdict has to be able to say what its "usual" was built from.
+    const baseline = computeBaseline([...seededHistory(4), ...history(2)])
+    expect(baseline.sessions).toBe(6)
+    expect(baseline.seededSessions).toBe(4)
+  })
+
+  it('counts no seeded sessions when the history is all measured', () => {
+    expect(computeBaseline(history(3)).seededSessions).toBe(0)
+  })
+
+  it('does not count a seeded session that contributed nothing', () => {
+    const blankSeed = seededHistory(1).map((s) => ({
+      ...s,
+      vitals: { ...s.vitals, pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null },
+    }))
+    const baseline = computeBaseline([...blankSeed, ...history(2)])
+    expect(baseline.sessions).toBe(2)
+    expect(baseline.seededSessions).toBe(0)
   })
 
   it('ignores sessions whose vitals are all missing', () => {

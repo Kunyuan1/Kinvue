@@ -180,19 +180,31 @@ it. Every seeded record carries `seeded: true`, `SessionCard` renders that label
 seeding only happens when someone asks for it. Anyone who finds a hidden fake baseline
 learns not to trust the real numbers either.
 
-The label does not yet cover everything the shortcut touches. The dashboard always
-records against the demo persona, and `computeBaseline` does not look at `seeded`, so a
-real capture taken after seeding is scored against the invented fortnight — which clears
-`MIN_BASELINE_SESSIONS` on its own. That card's vitals are real, but its verdict and
-explanation ("HRV is N% below their usual") compare them with numbers nobody measured,
-and it carries no label saying so. Until the scorer either leaves seeded records out of a
-real session's baseline or marks the result (KV-53), treat any verdict on the demo
-persona as a demonstration of the dashboard, not a reading of anyone.
+The label has to cover the verdict as well as the records, because the dashboard always
+records against the demo persona, so a real capture taken after seeding is compared with
+the invented fortnight — which clears `MIN_BASELINE_SESSIONS` on its own. That card's
+vitals are real. Nothing else about it would distinguish "HRV is 41% below their usual"
+computed from measurements from the same sentence computed from numbers nobody measured.
 
-Seeding does not solve the underlying problem, which is that a genuine install says "not
-enough to say" for its first few check-ins. That is a product question (KV-17), and
-seeded data must never be the answer to it — which is why the gap above is a defect to
-close rather than a convenience to keep.
+So the baseline carries how many of its sessions were seeded and the assessment carries
+that count, which `seededBaselineDisclosure` turns into a sentence wherever the card makes
+a claim resting on them — a verdict, or a withheld verdict whose fired rules still quote
+"their usual". An unusable capture compared nothing with anything and says nothing. The
+count is what is stored rather than the prose, so the wording can be corrected without
+rescoring history, and a record written before the count existed reports that instead of
+reading as "none": absent is unknown, not zero (KV-53).
+
+The alternative was to drop seeded records from a real session's baseline, which is
+cleaner in principle and was rejected for what it costs: seeded records hold no assessment
+of their own, so the fortnight exists *only* to be a baseline for a real capture. Removing
+it from that role would leave the dashboard with no scored verdict to develop against,
+which is the entire reason for seeding.
+
+Seeding still does not solve the underlying problem, which is that a genuine install says
+"not enough to say" for its first few check-ins. That is a product question (KV-17), and
+seeded data must never be the answer to it. A labelled verdict on a demo persona is a
+demonstration of the dashboard; it is not a reading of anyone, and the label is what keeps
+those two apart.
 
 ---
 

@@ -1,8 +1,8 @@
 import { computeBaseline, MIN_BASELINE_SESSIONS, type Baseline } from '../baseline'
 import type { Assessment, FiredRule, SessionRecord } from '../session/types'
-import { ALL_RULES, type Rule } from './rules'
+import { ALL_RULES, BASELINE_RULE_IDS, type Rule } from './rules'
 
-export { ALL_RULES } from './rules'
+export { ALL_RULES, BASELINE_RULE_IDS } from './rules'
 export type { Rule, RuleContext } from './rules'
 
 /**
@@ -50,6 +50,45 @@ function summarise(flag: Assessment['flag'], fired: FiredRule[]): string {
     : `Today looks different from usual — ${top.title.toLowerCase()}.`
 }
 
+/** True when anything this assessment says out loud rests on the baseline. */
+function restsOnBaseline(assessment: Assessment): boolean {
+  if (assessment.flag !== 'insufficient-signal') return true
+  // A withheld verdict still shows its fired rules, and some of those quote
+  // "their usual" — an unusable capture compared nothing with anything.
+  return assessment.firedRules.some((r) => BASELINE_RULE_IDS.has(r.id))
+}
+
+/**
+ * The sentence disclosing that seeded history fed what this card claims, or
+ * null when there is nothing to disclose (KV-53).
+ *
+ * "Their usual" is the whole claim a comparison makes. When part of that usual
+ * was invented by `core/seed`, the sentence naming it belongs wherever the
+ * claim is shown — the reading is real, so the card would otherwise look
+ * exactly like one backed by measurement. The numbers are in it for the same
+ * reason every fired rule carries its own.
+ *
+ * Composed here rather than baked into `summary` at score time. The count is
+ * what is stored, so the wording can be corrected without rescoring history,
+ * and a record written before the count existed can say *that* instead of
+ * quietly reading as "none" — absent is unknown, not zero. Every surface that
+ * renders an assessment calls this, including the caregiver's client later.
+ */
+export function seededBaselineDisclosure(assessment: Assessment): string | null {
+  if (!restsOnBaseline(assessment)) return null
+
+  const { baselineSeededSessions: seeded, baselineSessions: sessions } = assessment
+  if (seeded === undefined) {
+    return 'Whether seeded demo data fed this comparison was not recorded when this check-in was scored.'
+  }
+  if (seeded === 0) return null
+  return seeded === sessions
+    ? `Their usual here is seeded demo data — all ${sessions} check-ins behind this ` +
+        'comparison were invented, not measured.'
+    : `Their usual here is partly seeded demo data — ${seeded} of the ${sessions} ` +
+        'check-ins behind this comparison were invented, not measured.'
+}
+
 /**
  * Score one check-in against the person's own history.
  *
@@ -74,6 +113,7 @@ export function scoreSession(
       firedRules: [],
       summary: 'The camera reading was not clear enough to use today.',
       baselineSessions: baseline.sessions,
+      baselineSeededSessions: baseline.seededSessions,
     }
   }
 
@@ -89,6 +129,7 @@ export function scoreSession(
         `Still learning their normal — ${baseline.sessions} of ` +
         `${MIN_BASELINE_SESSIONS} check-ins needed before daily comparisons start.`,
       baselineSessions: baseline.sessions,
+      baselineSeededSessions: baseline.seededSessions,
     }
   }
 
@@ -100,5 +141,6 @@ export function scoreSession(
     firedRules: fired,
     summary: summarise(flag, fired),
     baselineSessions: baseline.sessions,
+    baselineSeededSessions: baseline.seededSessions,
   }
 }
