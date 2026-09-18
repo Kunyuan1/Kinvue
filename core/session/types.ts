@@ -24,9 +24,13 @@ export interface Vitals {
   hrvRmssdMs: number | null
   /** HRV, standard deviation of NN intervals, in milliseconds. */
   hrvSdnnMs: number | null
-  /** Mean of the SDK's own confidence across the capture, 0..1. */
+  /** Mean of the SDK's own pulse confidence across the capture, 0..1 (KV-12). */
   confidence: number
-  /** Whether the SDK reported the measurement as settled (`hrv[].stable`). */
+  /**
+   * Whether the SDK marked the reading it settled on as stable. The flag lives
+   * on `cardio.pulseRate[]` and `breathing.rate[]`; HRV entries carry no such
+   * field, whatever the shape of the types suggests (KV-1).
+   */
   stable: boolean
   /** Seconds of usable capture. Short captures are not scored. */
   durationSec: number

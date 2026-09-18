@@ -87,6 +87,33 @@ that still lets the UI be written as a web app.
 of the bundle. Bundling it breaks the native runtime lookup at require time. That line is
 load-bearing.
 
+### What the SDK actually emits
+
+Recorded from a real capture (KV-1), because the reduction in `app/main/vitals.ts` was
+written against the type definitions and got this wrong:
+
+- **A metrics message carries whichever metrics were ready at that instant**, not all of
+  them. Over one 60-second capture: 1309 messages carried breathing only, 118 cardio
+  only, 90 both. Reading every vital off the final message therefore returns whatever
+  that one happened to hold and silently drops the rest — which is exactly what the code
+  did, and `captureIsUsable` still called the result usable, so nothing surfaced the loss.
+- **`stable` and `confidence` live on the rate readings** — `cardio.pulseRate[]` and
+  `breathing.rate[]`. HRV entries carry `rmssd`, `meanNn`, `sdnn`, `baevsky` and a
+  timestamp, and nothing else. A rule keyed on "the last HRV the SDK marked stable" can
+  never match.
+- **Most of the stream is waveform, not rates.** Those 1517 messages held 53 pulse
+  readings, 17 breathing rates and 30 HRV entries; the rest were trace points.
+- **The metrics arrive at different times.** In that capture the first breathing rate
+  appeared at ~13s, the first pulse at ~20s, and the first HRV at ~34s. A 30-second
+  capture can therefore end before HRV exists at all, which matters because HRV is the
+  signal the scorer leans on hardest. The capture-length constants are not settled by one
+  run on one person in one room; KV-63 owns that.
+
+The reduction lives in `app/main/metrics.ts`, apart from the SDK plumbing, because
+importing `@smartspectra/node-sdk` loads its native runtime through koffi at import time.
+Splitting them keeps the reduction testable on any machine, including ones with no
+runtime for their platform.
+
 **Open decision (KV-1):** capture currently runs in the *main* process via `useCamera()`.
 The SDK's own docs note this "captures in THIS process" and suggest the renderer SDK's
 `useMediaStream()` for Electron. The renderer path also emits a `streamAvailable`

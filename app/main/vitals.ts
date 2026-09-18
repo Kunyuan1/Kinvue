@@ -10,16 +10,19 @@ import {
 // entry point ships the generated class and returns a typed Metrics.
 import { decodeMetrics } from '@smartspectra/node-sdk/messages'
 import type { Vitals } from '@core/session/types'
+import { createVitalsAccumulator } from './metrics'
 
 /**
  * The SmartSpectra capture, wrapped down to the one call the rest of the app
  * needs: run the camera for N seconds, hand back a single `Vitals`.
  *
- * STATUS (KV-1): written against the SDK's shipped type definitions but NOT yet
- * validated against a real webcam. That spike is the first ticket and nothing
- * downstream should be trusted end-to-end until it closes. There is deliberately
- * no synthetic fallback: without a key or a camera this throws, because a
- * check-in that quietly invented vitals would be worse than no check-in.
+ * STATUS (KV-1): the capture path has now returned real readings from a real
+ * webcam — pulse, breathing and HRV, on one machine, in one room. What that run
+ * corrected is recorded in `createVitalsAccumulator` and in ARCHITECTURE.md.
+ * Still open in KV-1: the capture-length constants, and whether capture stays
+ * here or moves to the renderer. There is deliberately no synthetic fallback:
+ * without a key or a camera this throws, because a check-in that quietly
+ * invented vitals would be worse than no check-in.
  *
  * OPEN DECISION (KV-1): this uses the main-process SDK with `useCamera()`, which
  * the SDK docs note "captures in THIS process" and for Electron suggests the
@@ -28,26 +31,6 @@ import type { Vitals } from '@core/session/types'
  * bad framing and low light are the top demo risk — but it constructs the SDK
  * (and therefore the API key) in the renderer. Settle this on hardware.
  */
-
-// Derived from the decoder's own return type rather than imported from
-// `js/messages/generated`: that path is real on disk but absent from the
-// package's exports map, so importing it directly does not resolve.
-type Metrics = ReturnType<typeof decodeMetrics>
-type Cardio = NonNullable<Metrics['cardio']>
-type Hrv = NonNullable<Cardio['hrv']>[number]
-
-const last = <T,>(xs: readonly T[] | null | undefined): T | undefined =>
-  xs === null || xs === undefined || xs.length === 0 ? undefined : xs[xs.length - 1]
-
-const mean = (xs: number[]): number =>
-  xs.length === 0 ? 0 : xs.reduce((s, v) => s + v, 0) / xs.length
-
-/**
- * The SDK reports confidence as a percentage in [0, 100]; everything in core/
- * works in [0, 1]. Convert once, here, at the boundary.
- */
-const toUnitConfidence = (percent: number | null | undefined): number | null =>
-  percent === null || percent === undefined ? null : percent / 100
 
 export class MissingApiKeyError extends Error {
   constructor() {
@@ -69,8 +52,11 @@ const VALIDATION_HINTS: Partial<Record<ValidationCodeValue, string>> = {
   [ValidationCode.kChestNotVisible]: 'Sit back a little so your chest is in view.',
   [ValidationCode.kFaceTooClose]: 'Sit back a little.',
   [ValidationCode.kFaceTooFar]: 'Come a little closer.',
-  [ValidationCode.kFaceTooHigh]: 'Lower the camera, or sit up straighter.',
-  [ValidationCode.kFaceTooLow]: 'Raise the camera a little.',
+  // Both of these said the opposite until KV-1 put a face in front of the
+  // camera: "too low" means the face sits low IN THE FRAME, so the camera has
+  // to come down to meet it, not go up. The SDK's own hints agree.
+  [ValidationCode.kFaceTooHigh]: 'Move down, or tilt the camera up.',
+  [ValidationCode.kFaceTooLow]: 'Move up, or tilt the camera down.',
   [ValidationCode.kFaceNotForward]: 'Look straight at the camera.',
   [ValidationCode.kExcessiveMotion]: 'Try to hold still.',
   [ValidationCode.kFrameRateTooLow]: 'The camera is struggling to keep up.',
@@ -92,11 +78,11 @@ export interface CaptureOptions {
 /**
  * Run one measurement and reduce the SDK's sample stream to summary values.
  *
- * Reduction rules, and why: pulse and breathing take the LAST sample, which is
- * the SDK's most settled estimate. HRV takes the last sample the SDK itself
- * marked `stable`, falling back to the last sample of any kind. Confidence is
- * averaged across the whole capture rather than taken from the final sample, so
- * one good frame at the end cannot make a poor capture look clean.
+ * Reduction rules, and why: each metric keeps the last reading the SDK sent for
+ * *that metric*, because a metrics message carries only what was ready at that
+ * instant. Confidence is averaged across the whole capture rather than taken
+ * from the final reading, so one good moment at the end cannot make a poor
+ * capture look clean. See `createVitalsAccumulator`.
  */
 export async function captureVitals(options: CaptureOptions = {}): Promise<Vitals> {
   const { durationSec = 30, onProgress, onGuidance } = options
@@ -113,10 +99,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
     enableTelemetry: false,
   })
 
-  const confidences: number[] = []
-  let latest: Metrics | undefined
-  let lastStableHrv: Hrv | undefined
-
+  const collected = createVitalsAccumulator()
   const startedAt = Date.now()
 
   return await new Promise<Vitals>((resolve, reject) => {
@@ -136,19 +119,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
     // NOTE: `on()` REPLACES the callback for an event rather than adding one,
     // so there is exactly one registration per event here. Do not add a second.
     sdk.on('metrics', (buf: Buffer) => {
-      const decoded = decodeMetrics(buf)
-      latest = decoded
-
-      const hrv = last(decoded.cardio?.hrv)
-      if (hrv !== undefined) {
-        if (hrv.stable === true) lastStableHrv = hrv
-        const c = toUnitConfidence(hrv.confidence)
-        if (c !== null) confidences.push(c)
-      }
-
-      const pulse = last(decoded.cardio?.pulseRate)
-      const pulseConfidence = toUnitConfidence(pulse?.confidence)
-      if (pulseConfidence !== null) confidences.push(pulseConfidence)
+      collected.add(decodeMetrics(buf))
     })
 
     sdk.on('validationStatus', (code: ValidationCodeValue, _ts: number, hint: string) => {
@@ -163,17 +134,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
 
     const timer = setTimeout(() => {
       cleanUp()
-
-      const hrv = lastStableHrv ?? last(latest?.cardio?.hrv)
-      resolve({
-        pulseRateBpm: last(latest?.cardio?.pulseRate)?.value ?? null,
-        breathingRateBrpm: last(latest?.breathing?.rate)?.value ?? null,
-        hrvRmssdMs: hrv?.rmssd ?? null,
-        hrvSdnnMs: hrv?.sdnn ?? null,
-        confidence: mean(confidences),
-        stable: lastStableHrv !== undefined,
-        durationSec: Math.round((Date.now() - startedAt) / 1000),
-      })
+      resolve(collected.result(Math.round((Date.now() - startedAt) / 1000)))
     }, durationSec * 1000)
 
     try {
