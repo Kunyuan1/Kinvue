@@ -24,15 +24,19 @@ export function session(
     answers?: Partial<CheckInAnswers>
     capturedAt?: string
     id?: string
+    seeded?: boolean
   } = {},
 ): SessionRecord {
-  return {
+  const record: SessionRecord = {
     id: overrides.id ?? 'test-session',
     personId: 'test-person',
     capturedAt: overrides.capturedAt ?? '2026-09-15T09:00:00.000Z',
     vitals: { ...GOOD_VITALS, ...overrides.vitals },
     answers: { ...GOOD_ANSWERS, ...overrides.answers },
   }
+  // Set only when true, as core/seed does: absent means measured.
+  if (overrides.seeded === true) record.seeded = true
+  return record
 }
 
 /** `count` unremarkable prior sessions, one per day, ending before the scored one. */
@@ -44,4 +48,9 @@ export function history(count: number, overrides: Partial<Vitals> = {}): Session
       vitals: overrides,
     }),
   )
+}
+
+/** The same, but invented — what `core/seed` writes for the demo persona. */
+export function seededHistory(count: number, overrides: Partial<Vitals> = {}): SessionRecord[] {
+  return history(count, overrides).map((s) => ({ ...s, id: `seed-${s.id}`, seeded: true }))
 }

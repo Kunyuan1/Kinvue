@@ -37,6 +37,14 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
           <p>{when}</p>
           {/* Seeded demo history is labelled, never passed off as measured. */}
           {seeded === true && <p className="text-xs">seeded demo data</p>}
+          {/*
+            A measured reading whose baseline was seeded (KV-53). The reading is
+            real, so without this the card looks like any other — the label
+            belongs on the verdict, not only on the invented records.
+          */}
+          {seeded !== true && (assessment?.baselineSeededSessions ?? 0) > 0 && (
+            <p className="text-xs">compared against seeded demo history</p>
+          )}
         </div>
       </header>
 

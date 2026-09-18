@@ -87,6 +87,17 @@ export interface Assessment {
   summary: string
   /** How many past sessions the baseline was computed from. */
   baselineSessions: number
+  /**
+   * How many of those were seeded demo history rather than measured (KV-53).
+   * Above zero, this verdict rests on invented numbers, and both the summary
+   * and the card say so. Zero on a real install, which never seeds unless
+   * someone asks it to.
+   *
+   * Optional because a session scored before KV-53 has no such field, and a
+   * record that predates a field is not a record with a zero in it. Read it as
+   * "unknown", not as "none": absent means nobody asked the question.
+   */
+  baselineSeededSessions?: number
 }
 
 export interface SessionRecord {

@@ -18,6 +18,13 @@ export interface Stat {
 export interface Baseline {
   /** Sessions that contributed at least one usable reading. */
   sessions: number
+  /**
+   * How many of those were seeded demo history (KV-8) rather than measured.
+   * Carried so a verdict can say what it was compared against: a real reading
+   * scored against an invented fortnight is not a reading of anyone, and the
+   * card must not look like one that was. (KV-53)
+   */
+  seededSessions: number
   pulseRateBpm: Stat | null
   breathingRateBrpm: Stat | null
   hrvRmssdMs: Stat | null
@@ -70,6 +77,7 @@ export function computeBaseline(history: SessionRecord[]): Baseline {
 
   return {
     sessions: usable.length,
+    seededSessions: usable.filter((s) => s.seeded === true).length,
     pulseRateBpm: stat(pick((s) => s.vitals.pulseRateBpm)),
     breathingRateBrpm: stat(pick((s) => s.vitals.breathingRateBrpm)),
     hrvRmssdMs: stat(pick((s) => s.vitals.hrvRmssdMs)),

@@ -51,6 +51,25 @@ function summarise(flag: Assessment['flag'], fired: FiredRule[]): string {
 }
 
 /**
+ * Said out loud whenever seeded history fed the comparison (KV-53).
+ *
+ * "Their usual" is the whole claim a verdict makes. When part of that usual was
+ * invented by `core/seed`, the sentence naming it belongs next to the verdict,
+ * not in a doc — the reading is real, so the card would otherwise look exactly
+ * like one backed by measurement. The numbers are in the sentence for the same
+ * reason every fired rule carries its own.
+ */
+function seededBaselineNote(baseline: Baseline): string {
+  const { seededSessions, sessions } = baseline
+  if (seededSessions === 0) return ''
+  return seededSessions === sessions
+    ? ` Their usual here is seeded demo data — all ${sessions} check-ins behind this` +
+        ' comparison were invented, not measured.'
+    : ` Their usual here is partly seeded demo data — ${seededSessions} of the ${sessions}` +
+        ' check-ins behind this comparison were invented, not measured.'
+}
+
+/**
  * Score one check-in against the person's own history.
  *
  * `history` is every prior session for this person; the session being scored
@@ -74,6 +93,7 @@ export function scoreSession(
       firedRules: [],
       summary: 'The camera reading was not clear enough to use today.',
       baselineSessions: baseline.sessions,
+      baselineSeededSessions: baseline.seededSessions,
     }
   }
 
@@ -89,6 +109,7 @@ export function scoreSession(
         `Still learning their normal — ${baseline.sessions} of ` +
         `${MIN_BASELINE_SESSIONS} check-ins needed before daily comparisons start.`,
       baselineSessions: baseline.sessions,
+      baselineSeededSessions: baseline.seededSessions,
     }
   }
 
@@ -98,7 +119,9 @@ export function scoreSession(
   return {
     flag,
     firedRules: fired,
-    summary: summarise(flag, fired),
+    // A verdict that rests on invented history says so in the same breath.
+    summary: summarise(flag, fired) + seededBaselineNote(baseline),
     baselineSessions: baseline.sessions,
+    baselineSeededSessions: baseline.seededSessions,
   }
 }

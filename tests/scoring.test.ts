@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { MIN_BASELINE_SESSIONS } from '@core/baseline'
 import { MIN_CAPTURE_SECONDS, scoreSession } from '@core/scoring'
 import type { Assessment } from '@core/session/types'
-import { history, session } from './helpers'
+import { history, seededHistory, session } from './helpers'
 
 const ids = (a: Assessment): string[] => a.firedRules.map((r) => r.id)
 
@@ -97,6 +97,44 @@ describe('scoreSession', () => {
     )
     const severities = assessment.firedRules.map((r) => r.severity)
     expect([...severities].sort((a, b) => b - a)).toEqual(severities)
+  })
+
+  it('says in the verdict when the baseline it compared against was seeded', () => {
+    // KV-53. The vitals are real, so nothing else on the card distinguishes it
+    // from a verdict backed by measurement.
+    const assessment = scoreSession(session(), seededHistory(12))
+    expect(assessment.flag).toBe('normal')
+    expect(assessment.baselineSeededSessions).toBe(12)
+    expect(assessment.summary).toContain('seeded demo data')
+    expect(assessment.summary).toContain('all 12')
+  })
+
+  it('names how many of a mixed baseline were seeded', () => {
+    const assessment = scoreSession(session(), [...seededHistory(10), ...history(2)])
+    expect(assessment.baselineSeededSessions).toBe(10)
+    expect(assessment.summary).toContain('10 of the 12')
+  })
+
+  it('says nothing about seeding when the baseline is all measured', () => {
+    const assessment = scoreSession(session(), history(5))
+    expect(assessment.baselineSeededSessions).toBe(0)
+    expect(assessment.summary).not.toContain('seeded')
+  })
+
+  it('carries the note on an elevated verdict too, not only a calm one', () => {
+    const assessment = scoreSession(
+      session({ vitals: { hrvRmssdMs: 15 }, answers: { sleep: 'poorly', painReported: true } }),
+      seededHistory(12),
+    )
+    expect(assessment.flag).toBe('elevated')
+    expect(assessment.summary).toContain('seeded demo data')
+  })
+
+  it('still withholds a verdict when a seeded baseline is too thin to use', () => {
+    // Seeded or not, below MIN_BASELINE_SESSIONS there is no usual to compare to.
+    const assessment = scoreSession(session(), seededHistory(MIN_BASELINE_SESSIONS - 1))
+    expect(assessment.flag).toBe('insufficient-signal')
+    expect(assessment.baselineSeededSessions).toBe(MIN_BASELINE_SESSIONS - 1)
   })
 
   it('does not let the scored session contaminate its own baseline', () => {
