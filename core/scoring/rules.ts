@@ -16,6 +16,13 @@ export interface RuleContext {
 
 export interface Rule {
   id: string
+  /**
+   * True when the rule's explanation quotes "their usual" — that is, when what
+   * it says out loud depends on the baseline. Whether that baseline was seeded
+   * is then something the card has to disclose (KV-53), so the scorer needs to
+   * know which fired rules lean on it.
+   */
+  usesBaseline?: true
   /** Returns null when the rule does not fire. */
   evaluate(ctx: RuleContext): FiredRule | null
 }
@@ -33,6 +40,7 @@ const HRV_DROP_FULL_SEVERITY_AT = 0.5
 
 export const hrvDrop: Rule = {
   id: 'hrv-drop',
+  usesBaseline: true,
   evaluate({ session, baseline }) {
     const value = session.vitals.hrvRmssdMs
     const usual = baseline.hrvRmssdMs
@@ -72,6 +80,7 @@ function zRule(
 ): Rule {
   return {
     id,
+    usesBaseline: true,
     evaluate({ session, baseline }) {
       const value = get(session)
       const usual = usualOf(baseline)
@@ -177,6 +186,11 @@ export const lowMood: Rule = {
 }
 
 /** Evaluation order is irrelevant to the result; output is sorted by severity. */
+/** Rules whose explanation quotes the baseline. See `Rule.usesBaseline`. */
+export const BASELINE_RULE_IDS: ReadonlySet<string> = new Set(
+  [hrvDrop, pulseElevated, breathingElevated].map((r) => r.id),
+)
+
 export const ALL_RULES: readonly Rule[] = [
   hrvDrop,
   pulseElevated,

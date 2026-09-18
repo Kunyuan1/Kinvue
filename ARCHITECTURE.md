@@ -186,8 +186,14 @@ the invented fortnight — which clears `MIN_BASELINE_SESSIONS` on its own. That
 vitals are real. Nothing else about it would distinguish "HRV is 41% below their usual"
 computed from measurements from the same sentence computed from numbers nobody measured.
 
-So the baseline carries how many of its sessions were seeded, the assessment carries that
-count, and any verdict resting on them says so in its own summary and on the card (KV-53).
+So the baseline carries how many of its sessions were seeded and the assessment carries
+that count, which `seededBaselineDisclosure` turns into a sentence wherever the card makes
+a claim resting on them — a verdict, or a withheld verdict whose fired rules still quote
+"their usual". An unusable capture compared nothing with anything and says nothing. The
+count is what is stored rather than the prose, so the wording can be corrected without
+rescoring history, and a record written before the count existed reports that instead of
+reading as "none": absent is unknown, not zero (KV-53).
+
 The alternative was to drop seeded records from a real session's baseline, which is
 cleaner in principle and was rejected for what it costs: seeded records hold no assessment
 of their own, so the fortnight exists *only* to be a baseline for a real capture. Removing

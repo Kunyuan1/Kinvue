@@ -1,3 +1,4 @@
+import { seededBaselineDisclosure } from '@core/scoring'
 import type { Flag, SessionRecord } from '@core/session/types'
 
 const FLAG_LABEL: Record<Flag, string> = {
@@ -20,6 +21,9 @@ const FLAG_COLOR: Record<Flag, string> = {
 export default function SessionCard({ session }: { session: SessionRecord }): React.JSX.Element {
   const { assessment, vitals, capturedAt, seeded } = session
   const flag = assessment?.flag ?? 'insufficient-signal'
+  // Composed from the stored counts, not read out of the summary: it appears
+  // only where something on this card actually leans on the baseline (KV-53).
+  const seededNote = assessment === undefined ? null : seededBaselineDisclosure(assessment)
   const when = new Date(capturedAt).toLocaleDateString(undefined, {
     weekday: 'short',
     month: 'short',
@@ -32,19 +36,14 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
         <div>
           <p className={`font-medium ${FLAG_COLOR[flag]}`}>{FLAG_LABEL[flag]}</p>
           <p className="text-sm text-(--color-muted)">{assessment?.summary}</p>
+          {seededNote !== null && (
+            <p className="mt-1 text-sm text-(--color-muted)">{seededNote}</p>
+          )}
         </div>
         <div className="shrink-0 text-right text-sm text-(--color-muted)">
           <p>{when}</p>
           {/* Seeded demo history is labelled, never passed off as measured. */}
           {seeded === true && <p className="text-xs">seeded demo data</p>}
-          {/*
-            A measured reading whose baseline was seeded (KV-53). The reading is
-            real, so without this the card looks like any other — the label
-            belongs on the verdict, not only on the invented records.
-          */}
-          {seeded !== true && (assessment?.baselineSeededSessions ?? 0) > 0 && (
-            <p className="text-xs">compared against seeded demo history</p>
-          )}
         </div>
       </header>
 

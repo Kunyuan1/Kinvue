@@ -301,11 +301,12 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
 - **The demo persona's history is invented** (`core/seed/persona.ts`). A baseline needs
   weeks of check-ins and a new install has none, so a seeded fortnight is how the
   dashboard can be developed and shown with a baseline behind it. Every seeded record
-  carries `seeded: true` and the dashboard labels it. So does any verdict computed against
-  it: `Assessment.baselineSeededSessions` counts the invented sessions behind a comparison,
-  and the summary and the card say so when it is above zero (KV-53). This is disclosed on
-  purpose — in the UI and here. It does not help a real install, which still starts with no
-  baseline (KV-17).
+  carries `seeded: true` and the dashboard labels it. So does anything computed against it:
+  `Assessment.baselineSeededSessions` counts the invented sessions behind a comparison, and
+  `seededBaselineDisclosure` turns that count into the sentence the card shows wherever a
+  verdict — or a fired rule quoting "their usual" — rests on them (KV-53). This is disclosed
+  on purpose — in the UI and here. It does not help a real install, which still starts with
+  no baseline (KV-17).
 - **Severity weights are judgement, not evidence.** The numbers in `rules.ts` were chosen
   so that the combination the product exists to catch clears the threshold and a single
   soft signal does not. They are not calibrated against outcomes and should not be

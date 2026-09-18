@@ -24,7 +24,7 @@ export function session(
     answers?: Partial<CheckInAnswers>
     capturedAt?: string
     id?: string
-    seeded?: boolean
+    seeded?: true
   } = {},
 ): SessionRecord {
   const record: SessionRecord = {
@@ -50,7 +50,18 @@ export function history(count: number, overrides: Partial<Vitals> = {}): Session
   )
 }
 
-/** The same, but invented — what `core/seed` writes for the demo persona. */
+/**
+ * The same, but invented — what `core/seed` writes for the demo persona. Dated
+ * before `history()`'s days so a mixed history has one check-in per day, as a
+ * real store does, rather than pairs sharing an instant.
+ */
 export function seededHistory(count: number, overrides: Partial<Vitals> = {}): SessionRecord[] {
-  return history(count, overrides).map((s) => ({ ...s, id: `seed-${s.id}`, seeded: true }))
+  return Array.from({ length: count }, (_, i) =>
+    session({
+      id: `seed-${i}`,
+      capturedAt: new Date(Date.UTC(2026, 7, i + 1, 9)).toISOString(),
+      seeded: true,
+      vitals: overrides,
+    }),
+  )
 }
