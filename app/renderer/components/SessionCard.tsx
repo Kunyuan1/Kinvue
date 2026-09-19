@@ -72,6 +72,21 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
         <Reading label="HRV" value={vitals.hrvRmssdMs} unit="ms" />
       </dl>
 
+      {/*
+        The person's own words about their own pain, shown to the caregiver
+        unedited and attributed (KV-2). Withholding it would be the wrong kind
+        of discretion: a caregiver deciding whether to drive over is better
+        served by "left hip, since yesterday" than by a rule that says pain was
+        reported. It is never summarised, never paraphrased, and never used as
+        a rule input — whether it may ever leave the device is KV-32.
+      */}
+      {session.answers.painNote !== undefined && (
+        <p className="mt-4 border-t border-(--color-line) pt-4 text-sm">
+          <span className="text-(--color-muted)">In their words: </span>
+          {session.answers.painNote}
+        </p>
+      )}
+
       {assessment !== undefined && assessment.firedRules.length > 0 && (
         <ul className="mt-4 space-y-2 border-t border-(--color-line) pt-4">
           {assessment.firedRules.map((rule) => (

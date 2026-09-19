@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CaptureResult, SessionRecord } from '@core/session/types'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
+import type { CheckInAnswers } from '@core/session/types'
 import CaptureScreen from './components/CaptureScreen'
+import QuestionFlow from './components/QuestionFlow'
 import SessionCard from './components/SessionCard'
 
 /**
@@ -23,6 +25,13 @@ function readable(e: unknown): string {
     return 'This copy of Kinvue is not set up to use the camera yet.'
   }
   if (raw.includes('stopped')) return 'The reading was stopped.'
+  if (raw.includes('too old')) {
+    return 'Too long has passed since the reading was taken. Please take a new one.'
+  }
+  if (raw.includes('No matching capture') || raw.includes('not the latest capture')) {
+    return 'That reading is no longer available. Please take a new one.'
+  }
+  if (raw.includes('malformed answers')) return 'Those answers could not be saved.'
   return 'The camera could not be started.'
 }
 
@@ -35,7 +44,15 @@ function readable(e: unknown): string {
  * for a fixed time whether or not the person is framed, so an empty result is
  * a normal outcome and has to say what to do about it.
  */
-function ReadingSummary({ result }: { result: CaptureResult }): React.JSX.Element {
+function ReadingSummary({
+  result,
+  onRetake,
+  onContinue,
+}: {
+  result: CaptureResult
+  onRetake: () => void
+  onContinue: () => void
+}): React.JSX.Element {
   const { pulseRateBpm, breathingRateBrpm, hrvRmssdMs } = result.vitals
   const measured = [
     pulseRateBpm === null ? null : `pulse ${pulseRateBpm.toFixed(0)} bpm`,
@@ -65,10 +82,26 @@ function ReadingSummary({ result }: { result: CaptureResult }): React.JSX.Elemen
           )}
         </>
       )}
-      <p className="mt-2 text-sm text-(--color-muted)">
-        It is not a check-in until the questions are answered, which is KV-2. Nothing has
-        been saved.
-      </p>
+      <div className="mt-4 flex gap-3">
+        <button
+          type="button"
+          onClick={onRetake}
+          className="rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-ground)"
+        >
+          Try the camera again
+        </button>
+        <button
+          type="button"
+          onClick={onContinue}
+          className="rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-ground)"
+        >
+          Answer the questions anyway
+        </button>
+      </div>
+      {/* Storing a check-in whose camera reading failed is the honest outcome —
+          the questions were still answered, and the verdict says the reading
+          could not be used. Whether that is the policy, rather than this
+          person's choice each time, is KV-7. */}
     </div>
   )
 }
@@ -89,6 +122,9 @@ export default function App(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [capturing, setCapturing] = useState(false)
   const [captureError, setCaptureError] = useState<string | null>(null)
+  const [answering, setAnswering] = useState<CaptureResult | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
   const captureGeneration = useRef(0)
   const [reading, setReading] = useState<CaptureResult | null>(null)
 
@@ -127,10 +163,17 @@ export default function App(): React.JSX.Element {
       .capture(DEMO_PERSON_ID)
       .then((result) => {
         if (started !== captureGeneration.current) return
-        // Held, not stored. `submit` takes the captureId once the questions
-        // have been answered (KV-2); main keeps the reading until then.
-        setReading(result)
         setCapturing(false)
+        // The reading stays in main. What crosses back is its id, and the
+        // questions are what turn it into a check-in. A capture that measured
+        // nothing is shown first: answering four questions about a reading
+        // that does not exist should be a choice, not something that happens.
+        const measuredNothing =
+          result.vitals.pulseRateBpm === null &&
+          result.vitals.breathingRateBrpm === null &&
+          result.vitals.hrvRmssdMs === null
+        if (measuredNothing) setReading(result)
+        else setAnswering(result)
       })
       .catch((e: unknown) => {
         if (started !== captureGeneration.current) return
@@ -148,10 +191,52 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
+  /** Submits the answers against the reading main is holding. */
+  const submit = useCallback(
+    (answers: CheckInAnswers): void => {
+      if (answering === null) return
+      setSubmitting(true)
+      setSubmitError(null)
+
+      window.kinvue
+        .submit(DEMO_PERSON_ID, answering.captureId, answers)
+        .then(async () => {
+          setAnswering(null)
+          setReading(null)
+          setSubmitting(false)
+          await refresh()
+        })
+        .catch((e: unknown) => {
+          setSubmitting(false)
+          setSubmitError(readable(e))
+        })
+    },
+    [answering, refresh],
+  )
+
   if (capturing) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-10">
         <CaptureScreen error={captureError} onCancel={stopCapture} />
+      </main>
+    )
+  }
+
+  if (answering !== null) {
+    return (
+      <main className="mx-auto max-w-3xl px-6 py-10">
+        <QuestionFlow
+          onDone={submit}
+          onCancel={() => {
+            // The reading is left unsubmitted in main, where it expires on its
+            // own. Nothing is stored, which is the honest outcome of a check-in
+            // someone chose not to finish.
+            setAnswering(null)
+            setSubmitError(null)
+          }}
+          submitting={submitting}
+          error={submitError}
+        />
       </main>
     )
   }
@@ -179,7 +264,16 @@ export default function App(): React.JSX.Element {
         </span>
       </div>
 
-      {reading !== null && <ReadingSummary result={reading} />}
+      {reading !== null && (
+        <ReadingSummary
+          result={reading}
+          onRetake={startCapture}
+          onContinue={() => {
+            setAnswering(reading)
+            setReading(null)
+          }}
+        />
+      )}
 
       {error !== null && (
         <p className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm text-(--color-elevated)">

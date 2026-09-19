@@ -97,6 +97,7 @@ app/
     components/
       CaptureScreen.tsx  the 30s in front of the camera — the one screen the
                          cared-for person reads, not the caregiver
+      QuestionFlow.tsx   the four questions, also addressed to them
       SessionCard.tsx    one check-in + the rules that fired
     styles.css           Tailwind v4 theme tokens
 
@@ -105,6 +106,7 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
     types.ts             Vitals, CheckInAnswers, FiredRule, Assessment, SessionRecord
     store.ts             JSON session store (MAIN PROCESS ONLY — imports node:fs)
     validate.ts          runtime checks on everything the renderer sends to main
+    answers.ts           the four questions: complete, or not a check-in at all
     checkin.ts           holds a capture until its answers arrive, then scores and stores it
     time.ts              which local day a check-in belongs to, where it was taken
   baseline/index.ts      per-person trailing baseline + MIN_BASELINE_SESSIONS
@@ -115,7 +117,7 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
 
 tests/                   Vitest. Covers baseline, scoring, validation, check-in, time,
-                         device, guidance, frames, vitals and env.
+                         device, guidance, frames, answers, vitals and env.
 ```
 
 ---
@@ -234,7 +236,7 @@ One record per check-in, appended to a JSON file. Sessions are never edited in p
 | Type | Notes |
 |---|---|
 | `Vitals` | `pulseRateBpm`, `breathingRateBrpm`, `hrvRmssdMs`, `hrvSdnnMs`, plus `confidence`, `stable` and `durationSec`. Any metric may be `null`. |
-| `CheckInAnswers` | `mood`, `sleep`, `eatenToday`, `painReported` (+ optional `painNote`). |
+| `CheckInAnswers` | `mood`, `sleep`, `eatenToday`, `painReported` (+ optional `painNote`). All four are required: there is no way to say "not asked", so the flow collects all of them or stores nothing. |
 | `FiredRule` | `id`, `title`, `explanation`, `severity`. One per rule that fired. |
 | `Assessment` | `flag`, `firedRules`, `summary`, `baselineSessions`, `baselineSeededSessions`. Written by the scorer. |
 | `SessionRecord` | The above plus `id`, `personId`, `capturedAt` (UTC), `timeZone`, and `seeded` for demo history. |
