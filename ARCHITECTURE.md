@@ -145,12 +145,13 @@ headless path", but it fires under `useCamera()`, confirmed by rendering those f
 live during a real capture. So the self-view can be fed from main, over the same kind of
 one-way channel as `checkin:progress`, and the key never moves.
 
-What that costs instead, and what #3 has to handle: frames arrive at camera rate, so they
-need throttling and downscaling before they cross IPC, and the preload surface gains a
-frame channel that carries a person's face. It is display only — nothing writes footage
-to disk, and the README's *no raw video is stored or transmitted* claim holds — but it is
-the widest thing the bridge will carry, and #29's Electron security baseline should treat
-it as such.
+What that costs instead, now built in #3: frames are throttled to ten a second, scaled to
+320px and encoded as JPEG by Electron's own `nativeImage` before they cross IPC, on a
+one-way channel the renderer can only listen to. It is display only — nothing writes
+footage to disk, and the README's *no raw video is stored or transmitted* claim holds —
+but it is the widest thing the bridge carries, and #29's Electron security baseline should
+treat it as such. A pixel format the conversion does not handle costs the preview and
+nothing else: the capture and its guidance carry on.
 
 ---
 
