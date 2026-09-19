@@ -85,7 +85,6 @@ app/
   main/
     index.ts             Electron entry: window, IPC handlers, store wiring
     device.ts            what the device can honestly say about its time zone
-    guidance.ts          which of the SDK's framing hints are worth showing
     env.ts               loads .env into process.env before anything reads it
     vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk
   preload/
@@ -108,9 +107,11 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
   scoring/
     rules.ts             every rule, each independently testable
     index.ts             the engine: severity sum → flag + explanation
+  capture/guidance.ts    which of the camera's hints are worth showing the person
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
 
-tests/                   Vitest. Covers baseline, scoring, validation, check-in, time, guidance, env.
+tests/                   Vitest. Covers baseline, scoring, validation, check-in, time,
+                         device, guidance, vitals and env.
 ```
 
 ---
@@ -214,8 +215,9 @@ Tuned constants live in code, not env, because changing one changes what the app
 | `BASELINE_WINDOW_SESSIONS` | `core/baseline` | `14` — trailing sessions in the baseline |
 | `HRV_DROP_FIRES_AT` | `core/scoring/rules.ts` | `0.25` — fractional drop from baseline HRV |
 | `PENDING_CAPTURE_TTL_MS` | `core/session/checkin.ts` | `15 min` — past this, a reading cannot be submitted with answers given now |
-| `GUIDANCE_SETTLE_MS` | `app/main/guidance.ts` | `6 s` — framing advice is withheld while the camera settles its exposure (KV-1) |
-| `GUIDANCE_REPEAT_MS` | `app/main/guidance.ts` | `4 s` — the same advice is not re-sent more often than this |
+| `GUIDANCE_PERSIST_MS` | `core/capture/guidance.ts` | `400 ms` — how long advice must hold before the person is shown it |
+| `SETTLING_PERSIST_MS` | `core/capture/guidance.ts` | `2.5 s` — the same, for exposure advice a settling camera produces on its own (KV-1) |
+| `GUIDANCE_REPEAT_MS` | `core/capture/guidance.ts` | `4 s` — a line already on screen is not re-sent more often than this |
 
 ---
 
