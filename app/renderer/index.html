@@ -4,10 +4,17 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- No remote origins: the renderer loads nothing off the network, which is
-         what lets the privacy claim in the README be literally true. -->
+         what lets the privacy claim in the README be literally true.
+
+         img-src allows blob: for the self-view (KV-3). Capture frames arrive
+         over IPC and are shown as blob URLs, and without this the browser
+         blocks every one of them silently — which is exactly what happened on
+         the first real run: the frames were arriving and the picture was never
+         allowed to draw. A blob URL is process-local and opens no network
+         path, so the claim above is unaffected. -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:"
     />
     <title>Kinvue</title>
   </head>

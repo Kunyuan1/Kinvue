@@ -14,6 +14,12 @@ const api = {
   capture: (personId: string): Promise<CaptureResult> =>
     ipcRenderer.invoke('checkin:capture', personId),
 
+  /**
+   * Abandons a running capture and releases the camera. The person in front of
+   * it decides when being filmed stops (KV-3).
+   */
+  cancelCapture: (): Promise<void> => ipcRenderer.invoke('checkin:cancel'),
+
   /** Takes the id from `capture`, never the vitals — see core/session/checkin.ts. */
   submit: (personId: string, captureId: string, answers: CheckInAnswers): Promise<SessionRecord> =>
     ipcRenderer.invoke('checkin:submit', personId, captureId, answers),
@@ -37,6 +43,19 @@ const api = {
     const listener = (_e: unknown, message: string | null): void => fn(message)
     ipcRenderer.on('checkin:guidance', listener)
     return () => ipcRenderer.off('checkin:guidance', listener)
+  },
+
+  /**
+   * JPEG frames of what the camera sees, for the person's own self-view, about
+   * ten a second while a capture runs. Display only — nothing stores them, and
+   * the renderer cannot ask for them, only listen. Returns an unsubscribe.
+   */
+  onCaptureFrame: (fn: (jpeg: Uint8Array | null) => void): (() => void) => {
+    // null means this camera's frames cannot be shown, so the screen can say so
+    // rather than wait for a picture that is never coming.
+    const listener = (_e: unknown, jpeg: Uint8Array | null): void => fn(jpeg)
+    ipcRenderer.on('checkin:frame', listener)
+    return () => ipcRenderer.off('checkin:frame', listener)
   },
 }
 
