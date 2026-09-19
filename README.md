@@ -16,11 +16,11 @@ It should be enough to understand how the system fits together and where to make
 
 > **Project status: early.** Kinvue is a personal project, developed in the open with no
 > deadline. The repository is scaffolded and the scoring engine and its tests are real,
-> but the app cannot yet record a check-in end to end (KV-1, KV-2). The SmartSpectra
-> capture (`app/main/vitals.ts`) is written against the documented API but **has not yet
-> been run against a webcam** — that is KV-1, and it is the highest-risk dependency in
-> the build. Nothing downstream should be treated as
-> validated end-to-end until it closes.
+> but the app cannot yet record a check-in end to end (KV-2) — nothing in the UI starts a
+> capture. The SmartSpectra capture (`app/main/vitals.ts`) **has now returned real pulse,
+> breathing and HRV from a webcam** (KV-1), on one machine in one room, which corrected
+> several assumptions this code was built on. The capture-length constants (KV-63) and
+> what the SDK sends to Presage (KV-65) are still open.
 
 ---
 
@@ -33,7 +33,7 @@ It should be enough to understand how the system fits together and where to make
 | **app/renderer** | React 19 · Tailwind CSS v4 · TypeScript — the caregiver dashboard |
 | **core/** | Framework-free TypeScript: baseline, rules, scoring, session types, demo seed |
 | **Vitals** | [Presage SmartSpectra](https://smartspectra.presagetech.com/) `@smartspectra/node-sdk` v3 — camera-based pulse, breathing and HRV |
-| **Data** | A single JSON file under Electron's `userData`. No server, no database, no network |
+| **Data** | A single JSON file under Electron's `userData`. No server and no database of ours; the SDK itself calls out during a capture (KV-65) |
 | **Build** | electron-vite 5 on Vite 7 · TypeScript 5.9 · Vitest · ESLint 10 |
 
 **Why Electron and not a web app.** The SmartSpectra SDK ships no browser build — the
@@ -45,7 +45,8 @@ Node process. The UI is still written as a web app; it just ships in an Electron
 
 ## Architecture & Flow
 
-Everything happens on one machine. Nothing leaves it.
+Check-ins happen on one machine and stay there. The SDK itself talks to Presage while a
+capture runs (KV-65); nothing else here opens a socket.
 
 ```
                      ┌──────────────────────────────────────────┐
@@ -235,8 +236,13 @@ them checkable:
 
 - **No raw video is stored or transmitted.** Frames go from the camera into the SDK and
   are reduced to a handful of numbers. Nothing writes footage to disk.
-- **No network.** There is no backend. The renderer's CSP is `default-src 'self'`, so the
-  UI cannot load or call out to a remote origin even by accident.
+- **No backend of ours, and no check-in leaves this machine.** Sessions are written and
+  read locally; nothing here uploads them. The renderer's CSP is `default-src 'self'`, so
+  the UI cannot load or call out to a remote origin even by accident.
+- **The SDK itself contacts Presage during a capture.** Measured, not assumed: every
+  capture opens an outbound TLS connection as the session starts, with the SDK's own
+  telemetry switched off. What that request contains has not been established — most
+  likely a key check — and until it has, this app cannot claim to be offline (KV-65).
 - **The API key stays in the main process.** The preload surface exposes named calls only
   — no generic `invoke(channel, ...)` — so a compromised renderer cannot read it.
 - **Session data is local**, under Electron's `userData`, and `.gitignore` covers

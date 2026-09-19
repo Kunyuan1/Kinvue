@@ -87,14 +87,68 @@ that still lets the UI be written as a web app.
 of the bundle. Bundling it breaks the native runtime lookup at require time. That line is
 load-bearing.
 
-**Open decision (KV-1):** capture currently runs in the *main* process via `useCamera()`.
-The SDK's own docs note this "captures in THIS process" and suggest the renderer SDK's
-`useMediaStream()` for Electron. The renderer path also emits a `streamAvailable`
-`MediaStream`, which would let the person see and fix their own framing while the capture
-runs — and since bad framing and low light are the single most likely way a capture
-fails, that is worth real weight. The cost is that the renderer SDK is constructed with
-the API key, moving it out of the main process. This should be settled against hardware,
-not in the abstract.
+### What the SDK actually emits
+
+Recorded from a real capture (KV-1), because the reduction in `app/main/vitals.ts` was
+written against the type definitions and got this wrong:
+
+- **A metrics message carries whichever metrics were ready at that instant**, not all of
+  them. Over one 60-second capture: 1309 messages carried breathing only, 118 cardio
+  only, 90 both. Reading every vital off the final message therefore returns whatever
+  that one happened to hold and silently drops the rest — which is exactly what the code
+  did, and `captureIsUsable` still called the result usable, so nothing surfaced the loss.
+- **Only the rate readings actually reported `stable` and `confidence`** —
+  `cardio.pulseRate[]` and `breathing.rate[]`. The schema declares both on HRV too, but
+  across that capture no HRV entry set either, so a rule keyed on "the last HRV the SDK
+  marked stable" matched nothing. Note the limit of the evidence: a decoded message is a
+  protobufjs instance whose proto3 defaults sit on the prototype, so "field absent" and
+  "field present and zero" look identical unless you ask by own-property. Everything
+  reading this stream has to ask that way, or a reading nobody took arrives as a
+  confident zero.
+- **Most of the stream is waveform, not rates.** Those 1517 messages held 53 pulse
+  readings, 17 breathing rates and 30 HRV entries; the rest were trace points.
+- **The first seconds of guidance are noise.** Every run so far — six of them, well lit
+  and badly lit alike — emitted exactly 57 `kTooDark` hints between about 4s and 5s while
+  the camera was still settling, and nothing after. Forwarding `validationStatus`
+  straight to the person would tell them to turn on a light at the start of every
+  check-in. Guidance needs to ignore the opening seconds, or wait for a code to persist
+  before showing it (#6, #3).
+- **The metrics arrive at different times.** In that capture the first breathing rate
+  appeared at ~13s, the first pulse at ~20s, and the first HRV at ~34s. A 30-second
+  capture can therefore end before HRV exists at all, which matters because HRV is the
+  signal the scorer leans on hardest. The capture-length constants are not settled by one
+  run on one person in one room; KV-63 owns that.
+
+The reduction lives in `app/main/metrics.ts`, apart from the SDK plumbing, because
+importing `@smartspectra/node-sdk` loads its native runtime through koffi at import time.
+Splitting them keeps the reduction testable on any machine, including ones with no
+runtime for their platform.
+
+### Capture stays in the main process (KV-1, settled on hardware)
+
+The SDK's own docs note that `useCamera()` "captures in THIS process" and suggest the
+renderer SDK's `useMediaStream()` for Electron. The renderer path emits a
+`streamAvailable` `MediaStream`, so it looked like the only way to give the person a live
+self-view — and framing is not a detail: the first two real captures produced **no
+readings at all**, purely because the person could not see that their face was sitting at
+the bottom of the frame. The SDK holds the webcam exclusively, so no second app can show
+them either.
+
+The cost of that path is the whole of *Why the API key lives in the main process*: the
+renderer SDK is constructed with the key.
+
+It turns out not to be a trade at all. The main-process SDK emits a `videoOutput` event
+carrying each processed frame — the docs call it "mainly useful for the custom-input /
+headless path", but it fires under `useCamera()`, confirmed by rendering those frames
+live during a real capture. So the self-view can be fed from main, over the same kind of
+one-way channel as `checkin:progress`, and the key never moves.
+
+What that costs instead, and what #3 has to handle: frames arrive at camera rate, so they
+need throttling and downscaling before they cross IPC, and the preload surface gains a
+frame channel that carries a person's face. It is display only — nothing writes footage
+to disk, and the README's *no raw video is stored or transmitted* claim holds — but it is
+the widest thing the bridge will carry, and #29's Electron security baseline should treat
+it as such.
 
 ---
 
@@ -125,8 +179,19 @@ compromised, which for an app processing a person's physiological data is not a
 theoretical concern worth accepting for the convenience.
 
 The renderer additionally runs under a `default-src 'self'` CSP, so it cannot load remote
-code or call out to a remote origin. Combined with `enableTelemetry: false` on the SDK,
-the claim "this app makes no network calls of its own" is meant literally.
+code or call out to a remote origin.
+
+**The SDK is a different matter, and this was wrong until a capture was measured.** The
+claim here used to be that `enableTelemetry: false` made "no network calls of its own"
+literally true. It does not. Every real capture opened an outbound TLS connection as the
+session started — before any measurement existed — to an AWS-fronted endpoint, with
+telemetry off; `api.physiology.presagetech.com` is compiled into each platform runtime. A
+control process of the same shape without the SDK opened nothing, so it is the SDK.
+
+What that request carries is not yet known (KV-65). The honest position until it is: the
+app writes and reads check-ins locally and uploads none of them, and the capture itself is
+not offline. Phase 4 and 5 plan around what already leaves the device, so this belongs in
+#32 and #36 rather than being discovered when sync is designed.
 
 The key reaches the main process from `.env`, read at startup by `app/main/env.ts` and
 only when the app is not packaged. It is
