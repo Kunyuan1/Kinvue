@@ -27,8 +27,12 @@ export interface Vitals {
   /**
    * The SDK's own confidence in the readings being reported, 0..1 (KV-12).
    *
-   * Averaged over the readings it called settled — the same ones the values
-   * above come from — falling back to every reading when it settled on none.
+   * Per metric, averaged over the readings the SDK called settled — the same
+   * ones the values above come from — falling back to that metric's every
+   * reading when it settled on none; then averaged across the metrics that
+   * reported a confidence at all. It says how far to trust the numbers beside
+   * it, not what share of the capture was usable.
+   *
    * Zero when nothing reported a confidence at all, which is not the same as
    * a measured zero and is still conflated with one; see KV-12.
    */
