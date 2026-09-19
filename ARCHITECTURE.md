@@ -103,6 +103,12 @@ written against the type definitions and got this wrong:
   never match.
 - **Most of the stream is waveform, not rates.** Those 1517 messages held 53 pulse
   readings, 17 breathing rates and 30 HRV entries; the rest were trace points.
+- **The first seconds of guidance are noise.** Every run so far — six of them, well lit
+  and badly lit alike — emitted exactly 57 `kTooDark` hints between about 4s and 5s while
+  the camera was still settling, and nothing after. Forwarding `validationStatus`
+  straight to the person would tell them to turn on a light at the start of every
+  check-in. Guidance needs to ignore the opening seconds, or wait for a code to persist
+  before showing it (#6, #3).
 - **The metrics arrive at different times.** In that capture the first breathing rate
   appeared at ~13s, the first pulse at ~20s, and the first HRV at ~34s. A 30-second
   capture can therefore end before HRV exists at all, which matters because HRV is the
