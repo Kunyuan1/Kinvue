@@ -69,6 +69,13 @@ was too low, or there is not yet enough history. All three mean the same thing t
 caregiver — *we cannot tell you today* — and none of them should be rendered as a green
 tick.
 
+A fourth produces it as of KV-12: the camera measured something and **nothing rated it**.
+A rate can arrive carrying a value and a timestamp and nothing else — no confidence, no
+stable flag — and scoring that would present a number as reliable on the grounds that
+nothing said otherwise. The card says which of the two it is, because "the camera could
+not get a clear reading" and "the camera never said how good this reading was" are
+different things for a caregiver to be told.
+
 The tempting shortcut is to score the four questions alone when the camera reading fails
 and call the result `normal`. That would quietly redefine what the flag means, on exactly
 the days the measurement failed, without telling anyone. The rules that fired are still
