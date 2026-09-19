@@ -8,6 +8,7 @@ import type { CaptureResult, SessionRecord } from '@core/session/types'
 import { parseCheckInAnswers, parsePersonId } from '@core/session/validate'
 import { DEMO_PERSON_ID, seedDemoHistory } from '@core/seed/persona'
 import { deviceTimeZone } from './device'
+import { createGuidanceGate } from './guidance'
 import { loadDotEnv } from './env'
 import { captureVitals } from './vitals'
 
@@ -94,12 +95,24 @@ function registerIpc(): void {
   ipcMain.handle('checkin:capture', async (event, personId: unknown): Promise<CaptureResult> => {
     const id = parsePersonId(personId)
     if (id === null) throw new Error('checkin:capture needs a person id.')
+    // One gate per capture: the settle window is measured from this capture's
+    // start, not from when the app launched.
+    const guidance = createGuidanceGate(Date.now())
+
     return await checkIn.capture(id, () =>
       captureVitals({
         onProgress: (elapsedSec) => {
           // Progress is best-effort: a closed window must not fail the capture.
           if (!event.sender.isDestroyed()) {
             event.sender.send('checkin:progress', elapsedSec)
+          }
+        },
+        // The mitigation for the likeliest capture failure: bad framing the
+        // person cannot see. Best-effort for the same reason as progress.
+        onGuidance: (message) => {
+          const show = guidance.offer(message, Date.now())
+          if (show !== null && !event.sender.isDestroyed()) {
+            event.sender.send('checkin:guidance', show)
           }
         },
       }),
