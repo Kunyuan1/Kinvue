@@ -1,8 +1,30 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CaptureResult, SessionRecord } from '@core/session/types'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
 import CaptureScreen from './components/CaptureScreen'
 import SessionCard from './components/SessionCard'
+
+/**
+ * What to put in front of the person when a capture fails.
+ *
+ * `String(e)` on an IPC rejection reads "Error: Error invoking remote method
+ * 'checkin:capture': Error: …" — and for a missing key, a registration URL and
+ * instructions about a dotfile. That is a developer's error message on the one
+ * screen addressed to the person being measured, so the known cases are put
+ * into this screen's voice and anything else is kept short.
+ */
+function readable(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e)
+
+  if (raw.includes('already running')) {
+    return 'The camera is still finishing the last reading. Try again in a moment.'
+  }
+  if (raw.includes('SMARTSPECTRA_API_KEY')) {
+    return 'This copy of Kinvue is not set up to use the camera yet.'
+  }
+  if (raw.includes('stopped')) return 'The reading was stopped.'
+  return 'The camera could not be started.'
+}
 
 /**
  * What a finished capture actually produced.
@@ -67,6 +89,7 @@ export default function App(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [capturing, setCapturing] = useState(false)
   const [captureError, setCaptureError] = useState<string | null>(null)
+  const captureGeneration = useRef(0)
   const [reading, setReading] = useState<CaptureResult | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -94,21 +117,41 @@ export default function App(): React.JSX.Element {
     setCaptureError(null)
     setCapturing(true)
 
+    // Which capture this is. A stopped capture still resolves in main, and
+    // without this its reading arrived half a minute later and appeared on the
+    // dashboard — a card for a run the person deliberately abandoned, or worse,
+    // one that yanked them off an error screen.
+    const started = ++captureGeneration.current
+
     window.kinvue
       .capture(DEMO_PERSON_ID)
       .then((result) => {
+        if (started !== captureGeneration.current) return
         // Held, not stored. `submit` takes the captureId once the questions
         // have been answered (KV-2); main keeps the reading until then.
         setReading(result)
         setCapturing(false)
       })
-      .catch((e: unknown) => setCaptureError(String(e)))
+      .catch((e: unknown) => {
+        if (started !== captureGeneration.current) return
+        setCaptureError(readable(e))
+      })
+  }, [])
+
+  /** Stops the camera, then leaves the screen. */
+  const stopCapture = useCallback((): void => {
+    captureGeneration.current++
+    setCapturing(false)
+    void window.kinvue.cancelCapture().catch(() => {
+      // Nothing useful to say: the screen is already gone and the capture is
+      // abandoned either way.
+    })
   }, [])
 
   if (capturing) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-10">
-        <CaptureScreen error={captureError} onCancel={() => setCapturing(false)} />
+        <CaptureScreen error={captureError} onCancel={stopCapture} />
       </main>
     )
   }

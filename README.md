@@ -85,7 +85,7 @@ app/
   main/
     index.ts             Electron entry: window, IPC handlers, store wiring
     device.ts            what the device can honestly say about its time zone
-    frames.ts            camera frames → what a screen can show (self-view)
+    frames.ts            camera frames → a small picture a screen can show
     env.ts               loads .env into process.env before anything reads it
     vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk
   preload/
@@ -223,7 +223,7 @@ Tuned constants live in code, not env, because changing one changes what the app
 | `SETTLING_PERSIST_MS` | `core/capture/guidance.ts` | `2.5 s` — the same, for exposure advice a settling camera produces on its own (KV-1) |
 | `GUIDANCE_REPEAT_MS` | `core/capture/guidance.ts` | `4 s` — a line already on screen is not re-sent more often than this |
 | `FRAME_INTERVAL_MS` | `app/main/frames.ts` | `100 ms` — how often a self-view frame is sent, against the camera's ~30/s |
-| `FRAME_WIDTH` | `app/main/frames.ts` | `320 px` — frames are scaled to this before crossing the bridge |
+| `FRAME_WIDTH` | `app/main/frames.ts` | `320 px` — frames are sampled down to this during conversion, not after |
 
 ---
 

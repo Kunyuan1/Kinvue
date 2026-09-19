@@ -39,19 +39,30 @@ export default function CaptureScreen({
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
   const [previewFailed, setPreviewFailed] = useState(false)
   const latestUrl = useRef<string | null>(null)
+  const previousUrl = useRef<string | null>(null)
 
   useEffect(() => {
     // Subscriptions only, which are safe to set up and tear down twice.
     const offProgress = window.kinvue.onCaptureProgress(setElapsedSec)
     const offGuidance = window.kinvue.onCaptureGuidance(setGuidance)
     const offFrame = window.kinvue.onCaptureFrame((jpeg) => {
-      // One object URL at a time: the old one is revoked as the new one
-      // replaces it, so a 30-second capture does not leak 300 blobs.
+      // Main says null when this camera's frames cannot be converted. Nothing
+      // more is coming, so say so instead of waiting.
+      if (jpeg === null) {
+        setPreviewFailed(true)
+        return
+      }
       // Copied into a fresh view: the IPC payload is typed over a shared
       // ArrayBufferLike, which Blob will not take directly.
       const url = URL.createObjectURL(new Blob([new Uint8Array(jpeg)], { type: 'image/jpeg' }))
-      if (latestUrl.current !== null) URL.revokeObjectURL(latestUrl.current)
+      // The previous URL is kept one generation. Revoking it the instant its
+      // replacement is set can pull it out from under a browser that has
+      // committed the new src but not yet fetched it, which fails the load and
+      // — before this — killed the preview for the rest of the capture.
+      const stale = previousUrl.current
+      previousUrl.current = latestUrl.current
       latestUrl.current = url
+      if (stale !== null) URL.revokeObjectURL(stale)
       setFrameUrl(url)
     })
 
@@ -59,8 +70,11 @@ export default function CaptureScreen({
       offProgress()
       offGuidance()
       offFrame()
-      if (latestUrl.current !== null) URL.revokeObjectURL(latestUrl.current)
+      for (const url of [latestUrl.current, previousUrl.current]) {
+        if (url !== null) URL.revokeObjectURL(url)
+      }
       latestUrl.current = null
+      previousUrl.current = null
     }
   }, [])
 
@@ -103,21 +117,32 @@ export default function CaptureScreen({
             src={frameUrl}
             alt=""
             onError={() => setPreviewFailed(true)}
+            // One frame failing to load is not the camera failing. Frames keep
+            // arriving, so the next one that draws puts the picture back.
+            onLoad={() => setPreviewFailed(false)}
             className="w-full -scale-x-100"
           />
         )}
       </div>
 
-      {/* Announced as it changes: the person may be looking at themselves
-          rather than at the text, and this is the part worth hearing. */}
+      {/* Only real advice is announced. Keeping the reassurance line in the
+          live region would read it out again every time the shot goes back to
+          being fine, which is constantly while someone is adjusting. */}
       <p aria-live="polite" className="mt-4 min-h-6 text-base">
-        {guidance ?? 'Holding still is all that is needed.'}
+        {guidance}
       </p>
+      {guidance === null && (
+        <p className="-mt-6 min-h-6 text-base">Holding still is all that is needed.</p>
+      )}
 
       <p className="mt-2 text-sm text-(--color-muted)">
         {remaining > 0 ? `About ${remaining} seconds left` : 'Finishing up…'}
       </p>
 
+      {/* Stops the camera for real: main abandons the capture and releases the
+          device. A button that said Stop and left the camera running for
+          another half minute would be the wrong lie on the one screen the
+          person being filmed reads. */}
       <button
         type="button"
         onClick={onCancel}
