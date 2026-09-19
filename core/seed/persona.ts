@@ -56,6 +56,10 @@ export function seedDemoHistory(
   days = 12,
   endingAt: Date = new Date(),
   seed = 20260915,
+  // The invented days are laid out in the device's own local time, so the zone
+  // recorded on them is the device's as well (KV-28). A seeded record with no
+  // zone would be the one kind of record the dashboard could not place on a day.
+  timeZone: string = Intl.DateTimeFormat().resolvedOptions().timeZone,
 ): SessionRecord[] {
   const r = rng(seed)
   const out: SessionRecord[] = []
@@ -73,6 +77,7 @@ export function seedDemoHistory(
       id: `seed-${DEMO_PERSON_ID}-${i}`,
       personId: DEMO_PERSON_ID,
       capturedAt: at.toISOString(),
+      timeZone,
       seeded: true,
       vitals: {
         pulseRateBpm: Math.round(USUAL.pulseRateBpm + jitter(4)),

@@ -79,6 +79,8 @@ function registerIpc(): void {
     score: scoreSession,
     now: () => new Date(),
     newId: randomUUID,
+    // Where the check-in device is, read fresh each capture: a laptop travels.
+    timeZone: () => Intl.DateTimeFormat().resolvedOptions().timeZone,
   })
 
   ipcMain.handle('sessions:list', async (_e, personId: unknown): Promise<SessionRecord[]> => {

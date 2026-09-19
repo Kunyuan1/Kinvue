@@ -24,6 +24,7 @@ function setup(overrides: Partial<CheckInDeps> = {}) {
     score: scoreSession,
     now: () => new Date(clock),
     newId: () => `id-${next++}`,
+    timeZone: () => 'Europe/London',
     ...overrides,
   }
   return {

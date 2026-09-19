@@ -1,4 +1,5 @@
 import { seededBaselineDisclosure } from '@core/scoring'
+import { localDateOf } from '@core/session/time'
 import type { Flag, SessionRecord } from '@core/session/types'
 
 const FLAG_LABEL: Record<Flag, string> = {
@@ -24,11 +25,18 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
   // Composed from the stored counts, not read out of the summary: it appears
   // only where something on this card actually leans on the baseline (KV-53).
   const seededNote = assessment === undefined ? null : seededBaselineDisclosure(assessment)
-  const when = new Date(capturedAt).toLocaleDateString(undefined, {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-  })
+  // The day the check-in happened where the person was, not where whoever is
+  // reading this happens to be (KV-28). Rendered from the recorded local date
+  // so a caregiver in another zone is not shown a different day than the one
+  // the person lived. Records written before zones existed keep the old
+  // behaviour, which is the reader's zone, because nothing better is knowable.
+  const localDate = localDateOf(session)
+  const when = (localDate === null ? new Date(capturedAt) : new Date(`${localDate}T00:00:00`))
+    .toLocaleDateString(undefined, {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+    })
 
   return (
     <article className="rounded-xl border border-(--color-line) bg-(--color-raised) p-5">

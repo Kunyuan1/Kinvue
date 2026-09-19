@@ -26,6 +26,13 @@ export interface CheckInDeps {
   score: (session: SessionRecord, history: readonly SessionRecord[]) => Assessment
   now: () => Date
   newId: () => string
+  /**
+   * The device's IANA time zone, read when a capture starts. Injected rather
+   * than read here so the rules stay testable, and captured with the reading
+   * rather than with the answers: a check-in taken at 23:50 and submitted at
+   * 00:05 belongs to the day it was taken (KV-28).
+   */
+  timeZone: () => string
 }
 
 export interface CheckIn {
@@ -39,6 +46,7 @@ interface Held {
   captureId: string
   personId: string
   capturedAt: string
+  timeZone: string
   vitals: Vitals
 }
 
@@ -56,13 +64,14 @@ export function createCheckIn(deps: CheckInDeps): CheckIn {
       if (capturing) throw new Error('A capture is already running.')
       capturing = true
       const capturedAt = deps.now().toISOString()
+      const timeZone = deps.timeZone()
       try {
         // The previous reading stays submittable until this one succeeds. A
         // retake that fails (camera busy, SDK error) must not throw away a good
         // reading the person is still looking at.
         const vitals = await measure()
         const captureId = deps.newId()
-        pending = { captureId, personId, capturedAt, vitals }
+        pending = { captureId, personId, capturedAt, timeZone, vitals }
         latestCaptureId = captureId
         return { captureId, vitals }
       } finally {
@@ -99,6 +108,7 @@ export function createCheckIn(deps: CheckInDeps): CheckIn {
           id: deps.newId(),
           personId,
           capturedAt: held.capturedAt,
+          timeZone: held.timeZone,
           vitals: held.vitals,
           answers,
         }

@@ -101,13 +101,14 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
     store.ts             JSON session store (MAIN PROCESS ONLY — imports node:fs)
     validate.ts          runtime checks on everything the renderer sends to main
     checkin.ts           holds a capture until its answers arrive, then scores and stores it
+    time.ts              which local day a check-in belongs to, where it was taken
   baseline/index.ts      per-person trailing baseline + MIN_BASELINE_SESSIONS
   scoring/
     rules.ts             every rule, each independently testable
     index.ts             the engine: severity sum → flag + explanation
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
 
-tests/                   Vitest. Covers baseline, scoring, validation, check-in state, env.
+tests/                   Vitest. Covers baseline, scoring, validation, check-in, time, env.
 ```
 
 ---
@@ -223,8 +224,15 @@ One record per check-in, appended to a JSON file. Sessions are never edited in p
 | `Vitals` | `pulseRateBpm`, `breathingRateBrpm`, `hrvRmssdMs`, `hrvSdnnMs`, plus `confidence`, `stable` and `durationSec`. Any metric may be `null`. |
 | `CheckInAnswers` | `mood`, `sleep`, `eatenToday`, `painReported` (+ optional `painNote`). |
 | `FiredRule` | `id`, `title`, `explanation`, `severity`. One per rule that fired. |
-| `Assessment` | `flag`, `firedRules`, `summary`, `baselineSessions`. Written by the scorer. |
-| `SessionRecord` | The above plus `id`, `personId`, `capturedAt`, and `seeded` for demo history. |
+| `Assessment` | `flag`, `firedRules`, `summary`, `baselineSessions`, `baselineSeededSessions`. Written by the scorer. |
+| `SessionRecord` | The above plus `id`, `personId`, `capturedAt` (UTC), `timeZone`, and `seeded` for demo history. |
+
+`timeZone` is the IANA zone of the device at capture time, e.g. `Europe/London` — not a
+UTC offset, which changes with daylight saving and cannot be applied to another date. It
+is what makes "was this today?" answerable for the person who gave the check-in rather
+than for whoever is reading it, and it cannot be recovered afterwards, so it is recorded
+with the capture. `localDateOf` in `core/session/time.ts` turns it into a local day, and
+answers `null` for a record written before this existed rather than guessing.
 
 ---
 
