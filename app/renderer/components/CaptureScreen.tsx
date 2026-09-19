@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { CaptureFailure } from '@core/capture/failure'
 
 /**
  * The ~30 seconds in front of the camera.
@@ -27,11 +28,50 @@ const CAPTURE_SECONDS = 30
  * did on real hardware. A side effect nothing can take back belongs to the
  * press, not to a render.
  */
+/**
+ * What each failure says, addressed to the person in front of the camera.
+ *
+ * Three of these are not about them at all — no key, a camera another
+ * application is holding, a reading that expired — and reading as though they
+ * were would be the app blaming someone for its own setup (KV-7).
+ */
+const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
+  'no-api-key': {
+    title: 'This app is not set up yet',
+    detail:
+      'Kinvue has not been given what it needs to use the camera. Nothing is wrong on ' +
+      'your side — whoever set this up can finish it.',
+  },
+  'camera-unavailable': {
+    title: 'The camera could not be used',
+    detail:
+      'Another program may have it open — a video call, perhaps. Closing that and trying ' +
+      'again usually does it.',
+  },
+  'capture-in-progress': {
+    title: 'One moment',
+    detail: 'The last reading is still finishing. Try again in a few seconds.',
+  },
+  expired: {
+    title: 'That reading is no longer current',
+    detail: 'Too long passed since it was taken, so it is worth taking a fresh one.',
+  },
+  'no-capture': {
+    title: 'That reading is no longer available',
+    detail: 'Taking a new one is the way forward.',
+  },
+  cancelled: { title: 'Stopped', detail: 'The camera is off.' },
+  unknown: {
+    title: 'The reading could not be taken',
+    detail: 'Something went wrong with the camera. Trying again is worth a go.',
+  },
+}
+
 export default function CaptureScreen({
-  error,
+  failure,
   onCancel,
 }: {
-  error: string | null
+  failure: CaptureFailure | null
   onCancel: () => void
 }): React.JSX.Element {
   const [elapsedSec, setElapsedSec] = useState(0)
@@ -80,11 +120,12 @@ export default function CaptureScreen({
 
   const remaining = Math.max(0, CAPTURE_SECONDS - elapsedSec)
 
-  if (error !== null) {
+  if (failure !== null) {
+    const { title, detail } = FAILURE[failure]
     return (
       <section className="mx-auto max-w-xl text-center">
-        <h2 className="text-xl font-semibold">The reading could not be taken</h2>
-        <p className="mt-2 text-sm text-(--color-muted)">{error}</p>
+        <h2 className="text-xl font-semibold">{title}</h2>
+        <p className="mt-2 text-base text-(--color-muted)">{detail}</p>
         <button
           type="button"
           onClick={onCancel}

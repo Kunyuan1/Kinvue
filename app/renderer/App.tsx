@@ -2,61 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
 import { hasScorableVitals } from '@core/scoring'
+import { classifyCaptureError, type CaptureFailure } from '@core/capture/failure'
 import CaptureScreen from './components/CaptureScreen'
 import QuestionFlow from './components/QuestionFlow'
 import SessionCard from './components/SessionCard'
-
-/**
- * What to put in front of the person when something fails.
- *
- * `String(e)` on an IPC rejection reads "Error: Error invoking remote method
- * 'checkin:capture': Error: …" — and for a missing key, a registration URL and
- * instructions about a dotfile. That is a developer's error message on the one
- * screen addressed to the person being measured, so the known cases are put
- * into this screen's voice and anything else is kept short.
- *
- * Two voices, not one: a capture failing and a save failing are different
- * things to be told about, and a single fallback meant someone who had just
- * answered four questions was told the camera could not be started.
- */
-function message(e: unknown): string {
-  return e instanceof Error ? e.message : String(e)
-}
-
-/** A capture that never produced a reading. */
-function readableCapture(e: unknown): string {
-  const raw = message(e)
-
-  if (raw.includes('already running')) {
-    return 'The camera is still finishing the last reading. Try again in a moment.'
-  }
-  if (raw.includes('SMARTSPECTRA_API_KEY')) {
-    return 'This copy of Kinvue is not set up to use the camera yet.'
-  }
-  if (raw.includes('stopped')) return 'The reading was stopped.'
-  return 'The camera could not be started.'
-}
-
-/**
- * Answers that could not be stored against their reading. Every refusal main
- * can raise on a submit has a branch here; what is left for the fallback is
- * the store and the scorer, which fail as saving, not as measuring.
- */
-function readableSubmit(e: unknown): string {
-  const raw = message(e)
-
-  if (raw.includes('too old')) {
-    return 'Too long has passed since the reading was taken. Please take a new one.'
-  }
-  if (raw.includes('not the latest capture') || raw.includes('already been submitted')) {
-    return 'That reading is no longer available. Please take a new one.'
-  }
-  if (raw.includes('different person')) {
-    return 'That reading was taken for someone else. Please take a new one.'
-  }
-  if (raw.includes('malformed answers')) return 'Those answers could not be saved.'
-  return 'The check-in could not be saved.'
-}
 
 /**
  * What a finished capture actually produced.
@@ -95,7 +44,12 @@ function ReadingSummary({
           <p className="mt-1 text-sm text-(--color-muted)">
             The camera ran, but no reading came out of it. That usually means the framing
             was not right for long enough — the face centred, chest in view, reasonably
-            lit, and still. Worth another try.
+            lit, and still.
+          </p>
+          <p className="mt-1 text-sm text-(--color-muted)">
+            Another try is worth it. Either way the day is worth recording: a check-in
+            that says the camera could not tell is still something a caregiver should
+            see.
           </p>
         </>
       ) : (
@@ -125,10 +79,11 @@ function ReadingSummary({
           Answer the questions anyway
         </button>
       </div>
-      {/* Storing a check-in whose camera reading failed is the honest outcome —
-          the questions were still answered, and the verdict says the reading
-          could not be used. Whether that is the policy, rather than this
-          person's choice each time, is KV-7. */}
+      {/* A failed camera reading is a fact about the day, not an error to
+          swallow (KV-7). The questions still get answered and the check-in is
+          still stored, with `insufficient-signal` as its verdict — because a
+          discarded day and a day nobody sat down look identical in the history,
+          and from three hours away that difference is the whole point (#44). */}
     </div>
   )
 }
@@ -146,10 +101,10 @@ export default function App(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [capturing, setCapturing] = useState(false)
-  const [captureError, setCaptureError] = useState<string | null>(null)
+  const [captureFailure, setCaptureFailure] = useState<CaptureFailure | null>(null)
   const [answering, setAnswering] = useState<CaptureResult | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [submitFailure, setSubmitFailure] = useState<CaptureFailure | null>(null)
   const captureGeneration = useRef(0)
   const [reading, setReading] = useState<CaptureResult | null>(null)
 
@@ -175,7 +130,7 @@ export default function App(): React.JSX.Element {
    */
   const startCapture = useCallback((): void => {
     setReading(null)
-    setCaptureError(null)
+    setCaptureFailure(null)
     setCapturing(true)
 
     // Which capture this is. A stopped capture still resolves in main, and
@@ -198,7 +153,7 @@ export default function App(): React.JSX.Element {
       })
       .catch((e: unknown) => {
         if (started !== captureGeneration.current) return
-        setCaptureError(readableCapture(e))
+        setCaptureFailure(classifyCaptureError(e))
       })
   }, [])
 
@@ -217,7 +172,7 @@ export default function App(): React.JSX.Element {
     (answers: CheckInAnswers): void => {
       if (answering === null) return
       setSubmitting(true)
-      setSubmitError(null)
+      setSubmitFailure(null)
 
       window.kinvue
         .submit(DEMO_PERSON_ID, answering.captureId, answers)
@@ -237,7 +192,7 @@ export default function App(): React.JSX.Element {
         })
         .catch((e: unknown) => {
           setSubmitting(false)
-          setSubmitError(readableSubmit(e))
+          setSubmitFailure(classifyCaptureError(e))
         })
     },
     [answering, refresh],
@@ -246,7 +201,7 @@ export default function App(): React.JSX.Element {
   if (capturing) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-10">
-        <CaptureScreen error={captureError} onCancel={stopCapture} />
+        <CaptureScreen failure={captureFailure} onCancel={stopCapture} />
       </main>
     )
   }
@@ -265,10 +220,10 @@ export default function App(): React.JSX.Element {
             // and a mis-tap there should not cost a good 30-second reading.
             setReading(answering)
             setAnswering(null)
-            setSubmitError(null)
+            setSubmitFailure(null)
           }}
           submitting={submitting}
-          error={submitError}
+          failure={submitFailure}
         />
       </main>
     )

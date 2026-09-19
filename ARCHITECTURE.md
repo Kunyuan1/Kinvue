@@ -223,6 +223,28 @@ tested without a camera or an Electron harness; `app/main` only wires it to IPC.
 
 ---
 
+## Why a failed capture is still a check-in
+
+A camera reading that produced nothing is a fact about the day, and the history has to
+carry it (KV-7). The alternative — discarding it — makes a day the person sat down for
+look exactly like a day they did not, and nobody can tell the two apart afterwards.
+
+So an unusable capture goes through the questions like any other and is stored with
+`insufficient-signal` as its verdict. The answers were still given; what is missing is the
+measurement, and the card says which.
+
+This matters more the further away the caregiver is. From the same room, a failed capture
+is visible — someone watched it happen. From three hours away, a discarded one is
+indistinguishable from silence, which is what #44 is about.
+
+**The three failures that are not this.** No API key, a camera another application is
+holding, and a reading that has expired are setup and hardware. None of them is about the
+person, none of them is stored as a check-in, and each says so in its own words rather
+than arriving as a raw error string. `core/capture/failure.ts` tells them apart by a tag
+carried inside the message, because an Error crossing IPC keeps nothing else.
+
+---
+
 ## Why a JSON file and not SQLite
 
 One record per person per day. At that size a single JSON file is not a compromise — it is

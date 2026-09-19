@@ -114,10 +114,11 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
     rules.ts             every rule, each independently testable
     index.ts             the engine: severity sum → flag + explanation
   capture/guidance.ts    which of the camera's hints are worth showing the person
+  capture/failure.ts     telling apart the ways a check-in fails to happen
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
 
 tests/                   Vitest. Covers baseline, scoring, validation, check-in, time,
-                         device, guidance, frames, answers, vitals and env.
+                         device, guidance, frames, answers, failures, vitals and env.
 ```
 
 ---

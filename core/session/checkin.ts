@@ -1,3 +1,4 @@
+import { failureTag } from '../capture/failure'
 import type { SessionStore } from './store'
 import type { Assessment, CaptureResult, CheckInAnswers, SessionRecord, Vitals } from './types'
 
@@ -62,7 +63,9 @@ export function createCheckIn(deps: CheckInDeps): CheckIn {
     async capture(personId, measure) {
       // One camera, one capture. A second SDK instance on the same device is not
       // a second reading, it is two broken ones.
-      if (capturing) throw new Error('A capture is already running.')
+      if (capturing) {
+        throw new Error(`${failureTag('capture-in-progress')}: a capture is already running.`)
+      }
       // Both read before the lock is taken. `now()` cannot throw, but reading a
       // zone can — and a throw after `capturing = true` would leave the lock set
       // for the life of the process, so every later capture would fail with "a
@@ -86,19 +89,26 @@ export function createCheckIn(deps: CheckInDeps): CheckIn {
 
     async submit(personId, captureId, answers) {
       if (captureId !== latestCaptureId) {
-        throw new Error('That is not the latest capture — a newer one replaced it, or it never existed.')
+        throw new Error(
+          `${failureTag('no-capture')}: that is not the latest capture — a newer one replaced ` +
+            'it, or it never existed.',
+        )
       }
       if (pending === null) {
-        throw new Error('That capture has already been submitted, or has expired.')
+        throw new Error(
+          `${failureTag('no-capture')}: that capture has already been submitted, or has expired.`,
+        )
       }
       // Rejected, not refiled: a reading scored against someone else's history
       // would also enter their baseline for good.
       if (pending.personId !== personId) {
-        throw new Error('That capture was taken for a different person.')
+        throw new Error(`${failureTag('no-capture')}: that capture was taken for a different person.`)
       }
       if (deps.now().getTime() - Date.parse(pending.capturedAt) > PENDING_CAPTURE_TTL_MS) {
         pending = null
-        throw new Error('That capture is too old to go with answers given now. Take a new one.')
+        throw new Error(
+          `${failureTag('expired')}: that capture is too old to go with answers given now.`,
+        )
       }
 
       // Taken before any await, so a double submit cannot store the capture twice.
