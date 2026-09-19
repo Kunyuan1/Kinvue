@@ -24,25 +24,27 @@ export function localDateOf(
   if (Number.isNaN(at.getTime())) return null
 
   try {
-    // en-CA formats as YYYY-MM-DD, which sorts and compares as a date should.
-    return new Intl.DateTimeFormat('en-CA', {
+    // Built from parts rather than by formatting with a locale that happens to
+    // print YYYY-MM-DD: the output shape is then stated here instead of resting
+    // on locale data an ICU update could reshape.
+    const parts = new Intl.DateTimeFormat('en-US', {
       timeZone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
-    }).format(at)
+    }).formatToParts(at)
+
+    const part = (type: Intl.DateTimeFormatPartTypes): string | undefined =>
+      parts.find((p) => p.type === type)?.value
+    const year = part('year')
+    const month = part('month')
+    const day = part('day')
+    if (year === undefined || month === undefined || day === undefined) return null
+
+    return `${year}-${month}-${day}`
   } catch {
     // Intl throws RangeError on a zone it does not know. A record carrying one
     // is damaged rather than undated, but the honest answer is still "unknown".
     return null
   }
-}
-
-/** True when both check-ins fall on the same local day for the person. */
-export function onSameLocalDay(
-  a: Pick<SessionRecord, 'capturedAt' | 'timeZone'>,
-  b: Pick<SessionRecord, 'capturedAt' | 'timeZone'>,
-): boolean {
-  const dayA = localDateOf(a)
-  return dayA !== null && dayA === localDateOf(b)
 }

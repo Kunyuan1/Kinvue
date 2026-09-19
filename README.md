@@ -84,6 +84,7 @@ The session being scored is **never** part of the baseline it is compared agains
 app/
   main/
     index.ts             Electron entry: window, IPC handlers, store wiring
+    device.ts            what the device can honestly say about its time zone
     env.ts               loads .env into process.env before anything reads it
     vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk
   preload/
@@ -108,7 +109,7 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
     index.ts             the engine: severity sum → flag + explanation
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
 
-tests/                   Vitest. Covers baseline, scoring, validation, check-in, time, env.
+tests/                   Vitest. Covers baseline, scoring, validation, check-in, time, device, env.
 ```
 
 ---
@@ -232,7 +233,9 @@ UTC offset, which changes with daylight saving and cannot be applied to another 
 is what makes "was this today?" answerable for the person who gave the check-in rather
 than for whoever is reading it, and it cannot be recovered afterwards, so it is recorded
 with the capture. `localDateOf` in `core/session/time.ts` turns it into a local day, and
-answers `null` for a record written before this existed rather than guessing.
+answers `null` for a record written before this existed rather than guessing. The writing
+end follows the same rule: `app/main/device.ts` records no zone at all when the device
+cannot establish one, rather than the `UTC` that `Intl` falls back to.
 
 ---
 

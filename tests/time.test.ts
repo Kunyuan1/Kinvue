@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { localDateOf, onSameLocalDay } from '@core/session/time'
+import { localDateOf } from '@core/session/time'
 import { session } from './helpers'
 
 /**
@@ -54,29 +54,5 @@ describe('localDateOf', () => {
   it('reads the zone off a whole session record', () => {
     const record = { ...session(), timeZone: 'Europe/London' }
     expect(localDateOf(record)).toBe('2026-09-15')
-  })
-})
-
-describe('onSameLocalDay', () => {
-  it('is true for two captures on one local day in different zones', () => {
-    const morning = at('2026-09-15T08:00:00.000Z', 'Europe/London')
-    const evening = at('2026-09-15T21:00:00.000Z', 'Europe/London')
-
-    expect(onSameLocalDay(morning, evening)).toBe(true)
-  })
-
-  it('is false across the person’s midnight, even minutes apart', () => {
-    const before = at('2026-09-15T22:59:00.000Z', 'Europe/London')
-    const after = at('2026-09-15T23:01:00.000Z', 'Europe/London')
-
-    expect(onSameLocalDay(before, after)).toBe(false)
-  })
-
-  it('is false when either day is unknown, never accidentally true', () => {
-    const known = at('2026-09-15T08:00:00.000Z', 'Europe/London')
-    const unknown = at('2026-09-15T08:00:00.000Z')
-
-    expect(onSameLocalDay(known, unknown)).toBe(false)
-    expect(onSameLocalDay(unknown, unknown)).toBe(false)
   })
 })

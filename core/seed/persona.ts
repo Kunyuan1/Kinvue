@@ -56,11 +56,12 @@ export function seedDemoHistory(
   days = 12,
   endingAt: Date = new Date(),
   seed = 20260915,
-  // The invented days are laid out in the device's own local time, so the zone
-  // recorded on them is the device's as well (KV-28). A seeded record with no
-  // zone would be the one kind of record the dashboard could not place on a day.
-  timeZone: string = Intl.DateTimeFormat().resolvedOptions().timeZone,
 ): SessionRecord[] {
+  // The invented days are laid out with setDate/setHours, which are host-local,
+  // so the zone stamped on them has to be the host's too. Taking one as a
+  // parameter would let a caller label 09:15 here as 09:15 somewhere else, and
+  // every seeded day would land on the wrong date (KV-28).
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
   const r = rng(seed)
   const out: SessionRecord[] = []
 
