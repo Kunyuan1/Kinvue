@@ -5,6 +5,7 @@ import {
   draftToAnswers,
   type AnswerDraft,
 } from '@core/session/answers'
+import type { CaptureFailure } from '@core/capture/failure'
 import type { CheckInAnswers } from '@core/session/types'
 import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
 
@@ -28,6 +29,29 @@ import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
  * a question nobody put to them. See `core/session/answers.ts`.
  */
 
+/**
+ * What the person is told when their answers cannot be stored (KV-7).
+ *
+ * The reading itself is held in the main process, so what fails here is
+ * almost always the reading having gone rather than anything about the
+ * answers — and none of it is about them.
+ */
+const SUBMIT_FAILURE: Record<CaptureFailure, string> = {
+  expired: 'Too long passed since the reading was taken. Taking a new one is the way forward.',
+  'no-capture': 'That reading is no longer available. Taking a new one is the way forward.',
+  'no-api-key': 'This app is not finished being set up, so the check-in cannot be saved yet.',
+  'camera-unavailable': 'The reading could not be saved. Taking a new one is worth a go.',
+  'capture-in-progress': 'One moment — the last reading is still finishing.',
+  cancelled: 'The reading was stopped, so there is nothing to save.',
+  // Says nothing about taking a new reading, deliberately. Every untagged
+  // write failure lands here — a full disk, a permission, a corrupt file —
+  // and `createCheckIn` refiles the held reading on exactly that path, so the
+  // answers and the capture are both still submittable. Sending the person to
+  // the camera would spend a good 30-second reading and four answers to fail
+  // in the same way (KV-7).
+  unknown: 'The check-in could not be saved. Trying again is worth a go.',
+}
+
 /** Add a fifth question to `ANSWER_STEPS` and this follows it. */
 const TOTAL = ANSWER_STEPS.length
 
@@ -35,12 +59,12 @@ export default function QuestionFlow({
   onDone,
   onCancel,
   submitting,
-  error,
+  failure,
 }: {
   onDone: (answers: CheckInAnswers) => void
   onCancel: () => void
   submitting: boolean
-  error: string | null
+  failure: CaptureFailure | null
 }): React.JSX.Element {
   const [draft, setDraft] = useState<AnswerDraft>({})
   const [step, setStep] = useState(0)
@@ -159,9 +183,9 @@ export default function QuestionFlow({
         </Question>
       )}
 
-      {error !== null && (
-        <p className="mt-6 rounded-lg border border-(--color-line) p-4 text-center text-sm text-(--color-elevated)">
-          {error}
+      {failure !== null && (
+        <p className="mt-6 rounded-lg border border-(--color-line) p-4 text-center text-base text-(--color-elevated)">
+          {SUBMIT_FAILURE[failure]}
         </p>
       )}
 

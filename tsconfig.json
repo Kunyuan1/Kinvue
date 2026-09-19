@@ -31,6 +31,7 @@
     "app/**/*.tsx",
     "core/**/*.ts",
     "tests/**/*.ts",
+    "tests/**/*.tsx",
     "*.config.ts"
   ]
 }

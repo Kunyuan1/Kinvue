@@ -223,6 +223,38 @@ tested without a camera or an Electron harness; `app/main` only wires it to IPC.
 
 ---
 
+## Why a failed capture is still a check-in
+
+A camera reading that produced nothing is a fact about the day, and the history has to
+carry it (KV-7). The alternative — discarding it — makes a day the person sat down for
+look exactly like a day they did not, and nobody can tell the two apart afterwards.
+
+So an unusable capture goes through the questions like any other and is stored with
+`insufficient-signal` as its verdict. The answers were still given; what is missing is the
+measurement, and the card says which.
+
+This matters more the further away the caregiver is. From the same room, a failed capture
+is visible — someone watched it happen. From three hours away, a discarded one is
+indistinguishable from silence, which is what #44 is about.
+
+**The failures that are not this.** No API key — or a key the service rejects — is setup;
+a camera another application is holding is hardware. Neither is about the person, neither
+is stored as a check-in, and each says so in its own words rather than arriving as a raw
+error string. `core/capture/failure.ts` tells them apart by a tag carried inside the
+message, because an Error crossing IPC keeps nothing else. The tag is also what keeps a
+*rejected* key from being reported as a busy camera: the SDK only discovers it at session
+start, so it arrives on the same path as a real camera fault and is told apart by the
+SDK's own error code, not by the call site guessing.
+
+**An expired reading is neither of those.** It is a timer, and grouping it with setup and
+hardware hides the harder question: the person sat down, the camera measured well, they
+answered, and a clock ran out. Today that day is discarded, which is the very thing the
+paragraph above argues against. The TTL itself is right — a reading must not be stored
+beside answers about a different moment — but "these two cannot be one check-in" is not
+the same as "neither exists". Left open deliberately, and it belongs with #44.
+
+---
+
 ## Why a JSON file and not SQLite
 
 One record per person per day. At that size a single JSON file is not a compromise — it is
