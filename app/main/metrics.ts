@@ -64,19 +64,20 @@ function set<T extends object, K extends keyof T>(reading: T, key: K): T[K] | un
 const num = (v: unknown): number | null => (typeof v === 'number' ? v : null)
 
 /**
- * Tracks one metric across the stream: the newest reading, and separately the
- * newest the SDK marked stable.
+ * Tracks one metric across the stream: the newest reading, the newest the SDK
+ * marked stable, and the confidences this metric reported along the way.
  */
 class Tracked<T extends object> {
   latest: T | undefined
   latestStable: T | undefined
   /** Timestamps already counted, so a repeated reading is not averaged twice. */
   private readonly counted = new Set<string>()
+  /** This metric's confidences in [0, 1], split by the SDK's own verdict. */
+  private readonly settled: number[] = []
+  private readonly every: number[] = []
 
-  /** Returns the confidences this message contributed, in [0, 1]. */
-  observe(readings: readonly T[] | null | undefined): number[] {
-    const confidences: number[] = []
-    if (readings === null || readings === undefined) return confidences
+  observe(readings: readonly T[] | null | undefined): void {
+    if (readings === null || readings === undefined) return
 
     for (const reading of readings) {
       // Every reading in the message counts toward the average, not just the
@@ -86,13 +87,16 @@ class Tracked<T extends object> {
       if (key !== undefined && this.counted.has(key)) continue
       if (key !== undefined) this.counted.add(key)
 
+      const isStable = set(reading, 'stable' as keyof T) === true
       this.latest = reading
-      if (set(reading, 'stable' as keyof T) === true) this.latestStable = reading
+      if (isStable) this.latestStable = reading
 
       const confidence = set(reading, 'confidence' as keyof T)
-      if (typeof confidence === 'number') confidences.push(confidence / 100)
+      if (typeof confidence === 'number') {
+        this.every.push(confidence / 100)
+        if (isStable) this.settled.push(confidence / 100)
+      }
     }
-    return confidences
   }
 
   /**
@@ -103,6 +107,25 @@ class Tracked<T extends object> {
    */
   get chosen(): T | undefined {
     return this.latestStable ?? this.latest
+  }
+
+  /**
+   * This metric's own confidence in [0, 1], or undefined when it never
+   * reported one — which is not the same as a confidence of zero (KV-12).
+   *
+   * Averaged over the readings the SDK called settled, since `chosen` reports
+   * one of those; falling back to every reading when it settled on none, which
+   * is then what the reported value rests on.
+   *
+   * **Decided per metric, not once for the capture.** Pooling that decision
+   * lets a metric that settled vouch for one that never did: the unsettled
+   * readings drop out of the average while their value is still reported, so a
+   * clean breathing rate would carry a distrusted pulse past
+   * `MIN_CAPTURE_CONFIDENCE` and into a rule that quotes the pulse.
+   */
+  get confidence(): number | undefined {
+    if (this.every.length === 0) return undefined
+    return averageOf(this.settled.length > 0 ? this.settled : this.every)
   }
 }
 
@@ -125,7 +148,7 @@ export function createVitalsAccumulator(): VitalsAccumulator {
   const pulse = new Tracked<RateReading>()
   const breathing = new Tracked<RateReading>()
   const hrv = new Tracked<HrvReading>()
-  const confidences: number[] = []
+  const tracked = [pulse, breathing, hrv]
 
   return {
     add(metrics) {
@@ -133,9 +156,9 @@ export function createVitalsAccumulator(): VitalsAccumulator {
       // this a pulse-presence check wearing a confidence threshold's clothes:
       // a capture with a clean breathing rate and no pulse would average zero
       // and be discarded as unusable (KV-12).
-      confidences.push(...pulse.observe(metrics.cardio?.pulseRate))
-      confidences.push(...breathing.observe(metrics.breathing?.rate))
-      confidences.push(...hrv.observe(metrics.cardio?.hrv))
+      pulse.observe(metrics.cardio?.pulseRate)
+      breathing.observe(metrics.breathing?.rate)
+      hrv.observe(metrics.cardio?.hrv)
     },
 
     result(durationSec) {
@@ -148,11 +171,28 @@ export function createVitalsAccumulator(): VitalsAccumulator {
         breathingRateBrpm: num(chosenBreathing && set(chosenBreathing, 'value')),
         hrvRmssdMs: num(chosenHrv && set(chosenHrv, 'rmssd')),
         hrvSdnnMs: num(chosenHrv && set(chosenHrv, 'sdnn')),
-        // Averaged across the capture rather than taken from the final reading,
-        // so one good moment at the end cannot make a poor capture look clean.
-        // Still one number for the whole session: whether it should be per
-        // metric, and how "none reported" should differ from "zero", is KV-12.
-        confidence: confidences.length === 0 ? 0 : mean(confidences),
+        // Describes the readings actually being reported (KV-12).
+        //
+        // Each metric resolves its own confidence from its own readings (see
+        // Tracked.confidence), and the capture averages the metrics that
+        // reported one. Averaging every reading instead mixes in the ones the
+        // SDK distrusted, and those are scattered through a capture rather
+        // than clustered at its start: across recorded runs that pulled 0.64
+        // down to 0.45, under MIN_CAPTURE_CONFIDENCE, and threw away captures
+        // carrying a settled pulse and breathing rate.
+        //
+        // Metrics count once each, not once per reading, so the chattiest
+        // metric does not decide the number: a real capture carried breathing
+        // on 1399 messages and cardio on 208, and weighting by reading count
+        // would let breathing all but speak for the pulse beside it.
+        //
+        // What it is not: a measure of how much of the capture was usable. A
+        // metric that settled once after a noisy minute reports that settled
+        // reading and its confidence, because that reading is what the card
+        // shows. Whether a metric whose own confidence is poor should be
+        // nulled instead of counted here is left open, because it changes when
+        // rules fire.
+        confidence: averageOf(definedConfidences(tracked)),
         // True when the reading being reported is one the SDK itself called
         // settled. Reported per capture; nothing gates on it yet (KV-12).
         stable: reportedStable(chosenPulse, chosenBreathing),
@@ -162,7 +202,17 @@ export function createVitalsAccumulator(): VitalsAccumulator {
   }
 }
 
-const mean = (xs: number[]): number => xs.reduce((s, v) => s + v, 0) / xs.length
+/** Zero for an empty capture: nothing was measured, so nothing is claimed. */
+const averageOf = (xs: number[]): number =>
+  xs.length === 0 ? 0 : xs.reduce((s, v) => s + v, 0) / xs.length
+
+/**
+ * The confidence of every metric that reported one. A metric that reported
+ * none contributes nothing rather than a zero — missing is not zero, and one
+ * silent metric must not halve the capture's confidence.
+ */
+const definedConfidences = (tracked: readonly { confidence: number | undefined }[]): number[] =>
+  tracked.map((t) => t.confidence).filter((c): c is number => c !== undefined)
 
 /**
  * Pulse decides when it reported a flag, because every vitals rule leans on it

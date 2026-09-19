@@ -111,6 +111,69 @@ describe('createVitalsAccumulator', () => {
     expect(result.confidence).toBeCloseTo(0.8, 5)
   })
 
+  it('averages the confidence of the readings it is reporting', () => {
+    // The values reported come from the newest settled reading, so the
+    // confidence beside them comes from the same place. Readings the SDK
+    // distrusted are scattered through a capture, not clustered at its start:
+    // across recorded runs, averaging them in pulled 0.64 down to 0.45 and
+    // discarded captures carrying a settled pulse and breathing rate.
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(64, 90, true))
+    acc.add(pulseMsg(101, 20, false))
+    acc.add(pulseMsg(65, 90, true))
+
+    expect(acc.result(30).confidence).toBeCloseTo(0.9, 5)
+  })
+
+  it('falls back to every reading when the SDK settled on none of them', () => {
+    // Then that is what the numbers rest on, and the confidence should say so
+    // rather than pretend there is nothing to report.
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(101, 40, false))
+    acc.add(pulseMsg(99, 20, false))
+
+    expect(acc.result(30).confidence).toBeCloseTo(0.3, 5)
+  })
+
+  it('does not let a metric that settled vouch for one that never did', () => {
+    // Breathing settles, pulse never does — and the pulse value is still
+    // reported and still quoted by the rules. Deciding settled-or-everything
+    // once for the whole capture would drop the pulse's distrusted readings
+    // from the average and score the capture on breathing alone.
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(110, 20, false))
+    acc.add(pulseMsg(110, 30, false))
+    acc.add(breathingMsg(14, 80, true))
+    const result = acc.result(30)
+
+    expect(result.pulseRateBpm).toBe(110)
+    expect(result.stable).toBe(false)
+    // mean(pulse 0.25, breathing 0.8), not breathing's 0.8 on its own.
+    expect(result.confidence).toBeCloseTo(0.525, 5)
+  })
+
+  it('weights each metric once, not once per reading', () => {
+    // A real capture carried breathing on 1399 messages and cardio on 208
+    // (KV-1). Pooling every reading would let the chattier metric all but
+    // speak for the one beside it.
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(64, 40, true))
+    for (let i = 0; i < 20; i += 1) acc.add(breathingMsg(14, 80, true))
+
+    expect(acc.result(30).confidence).toBeCloseTo(0.6, 5)
+  })
+
+  it('leaves a metric that reported no confidence out of the average', () => {
+    // HRV never set `confidence` in the KV-1 capture. Counting it as zero
+    // would drag a clean capture under MIN_CAPTURE_CONFIDENCE — missing is
+    // not zero, here as everywhere.
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(64, 90, true))
+    acc.add(hrvMsg(41, 52))
+
+    expect(acc.result(30).confidence).toBeCloseTo(0.9, 5)
+  })
+
   it('reports nothing measured as all null with zero confidence', () => {
     const result = createVitalsAccumulator().result(30)
 
