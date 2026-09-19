@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { classifyCaptureError, failureTag, type CaptureFailure } from '@core/capture/failure'
+import {
+  classifyCaptureError,
+  classifySubmitError,
+  failureTag,
+  taggedFailure,
+  type TaggedFailure,
+} from '@core/capture/failure'
 
 /**
  * Three quite different situations used to reach the screen as the same raw
@@ -25,14 +31,40 @@ describe('classifyCaptureError', () => {
     ['capture-in-progress'],
     ['expired'],
     ['no-capture'],
-  ] as [CaptureFailure][])('recognises %s', (failure) => {
-    expect(classifyCaptureError(new Error(`${failureTag(failure)}: something`))).toBe(failure)
+  ] as [TaggedFailure][])('reads %s back off the wire', (failure) => {
+    expect(taggedFailure(new Error(`${failureTag(failure)}: something`))).toBe(failure)
+  })
+
+  /**
+   * Two unions, so a tag belongs to a path (KV-75). A failure the other path
+   * raised is `unknown` here rather than a confident wrong sentence — the same
+   * answer an untagged throw gets, and for the same reason.
+   */
+  it.each([['expired'], ['no-capture']] as [TaggedFailure][])(
+    'will not show %s on the capture screen, because that path cannot raise it',
+    (failure) => {
+      expect(classifyCaptureError(new Error(`${failureTag(failure)}: x`))).toBe('unknown')
+    },
+  )
+
+  it.each([['no-api-key'], ['camera-unavailable'], ['capture-in-progress'], ['cancelled']] as [
+    TaggedFailure,
+  ][])('will not show %s on the questions screen', (failure) => {
+    expect(classifySubmitError(new Error(`${failureTag(failure)}: x`))).toBe('unknown')
+  })
+
+  it('says nothing at all for a capture the person stopped', () => {
+    // Null, not a sentence: they stopped it, so they know. The old flat union
+    // had copy for this that no screen could ever reach.
+    expect(classifyCaptureError(new Error(`${failureTag('cancelled')}: stopped.`))).toBeNull()
   })
 
   it('calls anything untagged unknown rather than guessing', () => {
-    expect(classifyCaptureError(new Error('ENOENT: no such file'))).toBe('unknown')
-    expect(classifyCaptureError('a string')).toBe('unknown')
-    expect(classifyCaptureError(undefined)).toBe('unknown')
+    for (const thrown of [new Error('ENOENT: no such file'), 'a string', undefined]) {
+      expect(classifyCaptureError(thrown)).toBe('unknown')
+      expect(classifySubmitError(thrown)).toBe('unknown')
+      expect(taggedFailure(thrown)).toBeNull()
+    }
   })
 
   it('takes the outer tag when a message quotes another tagged error', () => {
@@ -42,12 +74,12 @@ describe('classifyCaptureError', () => {
     const nested = new Error(
       `${failureTag('camera-unavailable')}: wrapping — ${failureTag('cancelled')}: inner.`,
     )
-    expect(classifyCaptureError(nested)).toBe('camera-unavailable')
+    expect(taggedFailure(nested)).toBe('camera-unavailable')
 
     const other = new Error(
       `${failureTag('cancelled')}: wrapping — ${failureTag('camera-unavailable')}: inner.`,
     )
-    expect(classifyCaptureError(other)).toBe('cancelled')
+    expect(taggedFailure(other)).toBe('cancelled')
   })
 
   it('does not depend on the wording after the tag', () => {

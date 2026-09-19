@@ -53,15 +53,6 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
     title: 'One moment',
     detail: 'The last reading is still finishing. Try again in a few seconds.',
   },
-  expired: {
-    title: 'That reading is no longer current',
-    detail: 'Too long passed since it was taken, so it is worth taking a fresh one.',
-  },
-  'no-capture': {
-    title: 'That reading is no longer available',
-    detail: 'Taking a new one is the way forward.',
-  },
-  cancelled: { title: 'Stopped', detail: 'The camera is off.' },
   unknown: {
     title: 'The reading could not be taken',
     detail: 'Something went wrong with the camera. Trying again is worth a go.',

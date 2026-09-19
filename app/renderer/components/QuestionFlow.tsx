@@ -5,7 +5,7 @@ import {
   draftToAnswers,
   type AnswerDraft,
 } from '@core/session/answers'
-import type { CaptureFailure } from '@core/capture/failure'
+import type { SubmitFailure } from '@core/capture/failure'
 import type { CheckInAnswers } from '@core/session/types'
 import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
 
@@ -36,13 +36,9 @@ import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
  * almost always the reading having gone rather than anything about the
  * answers — and none of it is about them.
  */
-const SUBMIT_FAILURE: Record<CaptureFailure, string> = {
+const SUBMIT_FAILURE: Record<SubmitFailure, string> = {
   expired: 'Too long passed since the reading was taken. Taking a new one is the way forward.',
   'no-capture': 'That reading is no longer available. Taking a new one is the way forward.',
-  'no-api-key': 'This app is not finished being set up, so the check-in cannot be saved yet.',
-  'camera-unavailable': 'The reading could not be saved. Taking a new one is worth a go.',
-  'capture-in-progress': 'One moment — the last reading is still finishing.',
-  cancelled: 'The reading was stopped, so there is nothing to save.',
   // Says nothing about taking a new reading, deliberately. Every untagged
   // write failure lands here — a full disk, a permission, a corrupt file —
   // and `createCheckIn` refiles the held reading on exactly that path, so the
@@ -64,7 +60,7 @@ export default function QuestionFlow({
   onDone: (answers: CheckInAnswers) => void
   onCancel: () => void
   submitting: boolean
-  failure: CaptureFailure | null
+  failure: SubmitFailure | null
 }): React.JSX.Element {
   const [draft, setDraft] = useState<AnswerDraft>({})
   const [step, setStep] = useState(0)

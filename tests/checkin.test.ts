@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { scoreSession } from '@core/scoring'
-import { classifyCaptureError } from '@core/capture/failure'
+import { classifyCaptureError, classifySubmitError } from '@core/capture/failure'
 import { createCheckIn, PENDING_CAPTURE_TTL_MS, type CheckInDeps } from '@core/session/checkin'
 import type { CheckInAnswers, SessionRecord, Vitals } from '@core/session/types'
 import { session } from './helpers'
@@ -254,38 +254,47 @@ describe('createCheckIn', () => {
  * Drop a tag from any refusal below and one of these goes red (KV-7).
  */
 describe('createCheckIn tags every refusal it can raise', () => {
-  const failureOf = async (p: Promise<unknown>): Promise<string> => {
+  /**
+   * Each path is read by its own classifier (KV-75), which is the stricter
+   * check: a submit-path tag put on a capture-path throw would now come back
+   * `unknown` rather than quietly passing.
+   */
+  const thrownBy = async (p: Promise<unknown>): Promise<unknown> => {
     try {
       await p
-      return 'did not throw'
+      return new Error('did not throw')
     } catch (err) {
-      return classifyCaptureError(err)
+      return err
     }
   }
+  const submitFailureOf = async (p: Promise<unknown>): Promise<string> =>
+    classifySubmitError(await thrownBy(p))
+  const captureFailureOf = async (p: Promise<unknown>): Promise<string | null> =>
+    classifyCaptureError(await thrownBy(p))
 
   it('tags an id that was never captured', async () => {
     const { checkIn } = setup()
-    expect(await failureOf(checkIn.submit(PERSON, 'made-up', ANSWERS))).toBe('no-capture')
+    expect(await submitFailureOf(checkIn.submit(PERSON, 'made-up', ANSWERS))).toBe('no-capture')
   })
 
   it('tags a capture that was already submitted', async () => {
     const { checkIn } = setup()
     const { captureId } = await checkIn.capture(PERSON, measure())
     await checkIn.submit(PERSON, captureId, ANSWERS)
-    expect(await failureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('no-capture')
+    expect(await submitFailureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('no-capture')
   })
 
   it('tags a capture taken for a different person', async () => {
     const { checkIn } = setup()
     const { captureId } = await checkIn.capture(PERSON, measure())
-    expect(await failureOf(checkIn.submit('someone-else', captureId, ANSWERS))).toBe('no-capture')
+    expect(await submitFailureOf(checkIn.submit('someone-else', captureId, ANSWERS))).toBe('no-capture')
   })
 
   it('tags a reading that outlived its TTL', async () => {
     const { checkIn, advance } = setup()
     const { captureId } = await checkIn.capture(PERSON, measure())
     advance(PENDING_CAPTURE_TTL_MS + 1)
-    expect(await failureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('expired')
+    expect(await submitFailureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('expired')
   })
 
   it('still says expired when Save is pressed a second time', async () => {
@@ -294,8 +303,8 @@ describe('createCheckIn tags every refusal it can raise', () => {
     const { checkIn, advance } = setup()
     const { captureId } = await checkIn.capture(PERSON, measure())
     advance(PENDING_CAPTURE_TTL_MS + 1)
-    await failureOf(checkIn.submit(PERSON, captureId, ANSWERS))
-    expect(await failureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('expired')
+    await submitFailureOf(checkIn.submit(PERSON, captureId, ANSWERS))
+    expect(await submitFailureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('expired')
   })
 
   it('tags a second capture started while one is running', async () => {
@@ -307,7 +316,7 @@ describe('createCheckIn tags every refusal it can raise', () => {
       })
     const running = checkIn.capture(PERSON, slow)
     await new Promise((r) => setTimeout(r, 0))
-    expect(await failureOf(checkIn.capture(PERSON, measure()))).toBe('capture-in-progress')
+    expect(await captureFailureOf(checkIn.capture(PERSON, measure()))).toBe('capture-in-progress')
     release(READING)
     await running
   })
@@ -319,6 +328,6 @@ describe('createCheckIn tags every refusal it can raise', () => {
       store: { list: async () => [], append: async () => Promise.reject(new Error('disk full')) },
     })
     const { captureId } = await checkIn.capture(PERSON, measure())
-    expect(await failureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('unknown')
+    expect(await submitFailureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('unknown')
   })
 })

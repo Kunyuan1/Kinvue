@@ -1,4 +1,4 @@
-import { failureTag, type CaptureFailure } from '@core/capture/failure'
+import { failureTag, type CaptureFailure, type TaggedFailure } from '@core/capture/failure'
 
 /**
  * The errors the capture throws, and what the SDK's own error codes mean.
@@ -75,7 +75,7 @@ export function sdkErrorCode(err: unknown): number | undefined {
  * rides along rather than being flattened into the text.
  */
 export function captureError(
-  failure: CaptureFailure,
+  failure: TaggedFailure,
   detail: string,
   cause?: unknown,
 ): Error {
