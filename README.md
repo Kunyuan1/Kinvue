@@ -235,7 +235,7 @@ One record per check-in, appended to a JSON file. Sessions are never edited in p
 
 | Type | Notes |
 |---|---|
-| `Vitals` | `pulseRateBpm`, `breathingRateBrpm`, `hrvRmssdMs`, `hrvSdnnMs`, plus `confidence`, `stable` and `durationSec`. Any metric may be `null`. |
+| `Vitals` | `pulseRateBpm`, `breathingRateBrpm`, `hrvRmssdMs`, `hrvSdnnMs`, plus `confidence`, `stable` and `durationSec`. Any metric may be `null`. `confidence` describes the readings actually reported — the ones the SDK called settled (KV-12). |
 | `CheckInAnswers` | `mood`, `sleep`, `eatenToday`, `painReported` (+ optional `painNote`). All four are required: there is no way to say "not asked", so the flow collects all of them or stores nothing. |
 | `FiredRule` | `id`, `title`, `explanation`, `severity`. One per rule that fired. |
 | `Assessment` | `flag`, `firedRules`, `summary`, `baselineSessions`, `baselineSeededSessions`. Written by the scorer. |
