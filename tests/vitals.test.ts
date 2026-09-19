@@ -174,13 +174,33 @@ describe('createVitalsAccumulator', () => {
     expect(acc.result(30).confidence).toBeCloseTo(0.9, 5)
   })
 
-  it('reports nothing measured as all null with zero confidence', () => {
+  it('reports nothing measured as all null, confidence included', () => {
+    // Zero would say the SDK judged these readings and found them worthless.
+    // It judged nothing: there was nothing to judge (KV-12).
     const result = createVitalsAccumulator().result(30)
 
     expect(result.pulseRateBpm).toBeNull()
     expect(result.breathingRateBrpm).toBeNull()
-    expect(result.confidence).toBe(0)
+    expect(result.confidence).toBeNull()
     expect(result.stable).toBe(false)
+  })
+
+  it('reports a rate that nothing rated as unrated, not as worthless', () => {
+    // Seen in a real capture: breathing rates carrying a value and a timestamp,
+    // with no confidence and no stable flag on them at all.
+    const acc = createVitalsAccumulator()
+    acc.add({ breathing: { rate: [{ value: 14 }] } })
+    const result = acc.result(30)
+
+    expect(result.breathingRateBrpm).toBe(14)
+    expect(result.confidence).toBeNull()
+  })
+
+  it('keeps a measured zero distinct from an unrated capture', () => {
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(64, 0, true))
+
+    expect(acc.result(30).confidence).toBe(0)
   })
 
   it('averages every reading in a message, not just the last one', () => {
@@ -236,7 +256,7 @@ describe('createVitalsAccumulator, against real decoded messages', () => {
     const result = acc.result(30)
 
     expect(result.pulseRateBpm).toBeNull()
-    expect(result.confidence).toBe(0)
+    expect(result.confidence).toBeNull()
   })
 
   it('does not average an unset confidence in as zero', () => {

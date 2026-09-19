@@ -37,9 +37,18 @@ export function hasScorableVitals(vitals: Vitals): boolean {
 
 function captureIsUsable(session: SessionRecord): boolean {
   const { confidence, durationSec } = session.vitals
-  if (confidence < MIN_CAPTURE_CONFIDENCE) return false
+  // Unrated is not usable (KV-12). The SDK sometimes reports a rate without
+  // rating it at all, and scoring that would present a number as reliable on
+  // the grounds that nothing said otherwise — the reassuring direction, which
+  // is the worse one. Withholding says the true thing: we cannot tell today.
+  if (confidence === null || confidence < MIN_CAPTURE_CONFIDENCE) return false
   if (durationSec < MIN_CAPTURE_SECONDS) return false
   return hasScorableVitals(session.vitals)
+}
+
+/** True when the camera measured something that nothing then rated. */
+function isUnrated(session: SessionRecord): boolean {
+  return session.vitals.confidence === null && hasScorableVitals(session.vitals)
 }
 
 function fire(rules: readonly Rule[], session: SessionRecord, baseline: Baseline): FiredRule[] {
@@ -125,7 +134,11 @@ export function scoreSession(
     return {
       flag: 'insufficient-signal',
       firedRules: [],
-      summary: 'The camera reading was not clear enough to use today.',
+      // Two different things, said differently: a reading the camera judged and
+      // found poor, and one it never judged at all.
+      summary: isUnrated(session)
+        ? 'The camera did not say how reliable this reading was, so today is not being compared.'
+        : 'The camera reading was not clear enough to use today.',
       baselineSessions: baseline.sessions,
       baselineSeededSessions: baseline.seededSessions,
     }

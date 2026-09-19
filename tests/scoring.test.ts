@@ -123,6 +123,35 @@ describe('scoreSession', () => {
     expect(assessment.flag).toBe('insufficient-signal')
     expect(assessment.baselineSeededSessions).toBe(MIN_BASELINE_SESSIONS - 1)
   })
+  it('withholds a verdict on a reading nothing rated', () => {
+    // A rate can arrive with no confidence and no stable flag at all. Scoring
+    // it would present a number as reliable because nothing contradicted it,
+    // which is the reassuring direction and the wrong one (KV-12).
+    const assessment = scoreSession(session({ vitals: { confidence: null } }), history(5))
+
+    expect(assessment.flag).toBe('insufficient-signal')
+    expect(assessment.summary).toContain('did not say how reliable')
+  })
+
+  it('says something different about a reading it judged and found poor', () => {
+    const assessment = scoreSession(session({ vitals: { confidence: 0.2 } }), history(5))
+
+    expect(assessment.flag).toBe('insufficient-signal')
+    expect(assessment.summary).toContain('not clear enough')
+  })
+
+  it('does not call an empty capture unrated', () => {
+    // Nothing measured is its own thing; "the camera did not say how reliable
+    // this reading was" would be describing a reading that does not exist.
+    const nothing = { pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null }
+    const assessment = scoreSession(
+      session({ vitals: { ...nothing, confidence: null } }),
+      history(5),
+    )
+
+    expect(assessment.summary).toContain('not clear enough')
+  })
+
   it('does not let the scored session contaminate its own baseline', () => {
     const past = history(5)
     const before = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), past)

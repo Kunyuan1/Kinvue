@@ -125,7 +125,10 @@ class Tracked<T extends object> {
    */
   get confidence(): number | undefined {
     if (this.every.length === 0) return undefined
-    return averageOf(this.settled.length > 0 ? this.settled : this.every)
+    // Not null here: this metric reported confidences, so one of the two lists
+    // is non-empty. Null at this level would mean "unrated", which is the whole
+    // point of the branch above.
+    return averageOf(this.settled.length > 0 ? this.settled : this.every) ?? undefined
   }
 }
 
@@ -202,9 +205,15 @@ export function createVitalsAccumulator(): VitalsAccumulator {
   }
 }
 
-/** Zero for an empty capture: nothing was measured, so nothing is claimed. */
-const averageOf = (xs: number[]): number =>
-  xs.length === 0 ? 0 : xs.reduce((s, v) => s + v, 0) / xs.length
+/**
+ * Null when nothing rated the readings, rather than zero (KV-12).
+ *
+ * Zero said the SDK had judged these readings and found them worthless. It had
+ * not judged them at all — a real capture carried a breathing rate with no
+ * confidence and no stable flag on it, just a value and a timestamp.
+ */
+const averageOf = (xs: number[]): number | null =>
+  xs.length === 0 ? null : xs.reduce((s, v) => s + v, 0) / xs.length
 
 /**
  * The confidence of every metric that reported one. A metric that reported
