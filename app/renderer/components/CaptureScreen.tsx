@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CaptureResult } from '@core/session/types'
 
 /**
  * The ~30 seconds in front of the camera.
@@ -19,22 +18,29 @@ import type { CaptureResult } from '@core/session/types'
 
 const CAPTURE_SECONDS = 30
 
+/**
+ * Shows a capture that is **already running**. Starting one is deliberately not
+ * done here: a capture cannot be cancelled once the camera is open, and React
+ * runs an effect, tears it down and runs it again in development. That turned
+ * one button press into two captures, the second of which main correctly
+ * refused with "a capture is already running" — the first thing this screen
+ * did on real hardware. A side effect nothing can take back belongs to the
+ * press, not to a render.
+ */
 export default function CaptureScreen({
-  personId,
-  onDone,
+  error,
   onCancel,
 }: {
-  personId: string
-  onDone: (result: CaptureResult) => void
+  error: string | null
   onCancel: () => void
 }): React.JSX.Element {
   const [elapsedSec, setElapsedSec] = useState(0)
   const [guidance, setGuidance] = useState<string | null>(null)
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const latestUrl = useRef<string | null>(null)
 
   useEffect(() => {
+    // Subscriptions only, which are safe to set up and tear down twice.
     const offProgress = window.kinvue.onCaptureProgress(setElapsedSec)
     const offGuidance = window.kinvue.onCaptureGuidance(setGuidance)
     const offFrame = window.kinvue.onCaptureFrame((jpeg) => {
@@ -48,25 +54,14 @@ export default function CaptureScreen({
       setFrameUrl(url)
     })
 
-    let cancelled = false
-    window.kinvue
-      .capture(personId)
-      .then((result) => {
-        if (!cancelled) onDone(result)
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setError(String(e))
-      })
-
     return () => {
-      cancelled = true
       offProgress()
       offGuidance()
       offFrame()
       if (latestUrl.current !== null) URL.revokeObjectURL(latestUrl.current)
       latestUrl.current = null
     }
-  }, [personId, onDone])
+  }, [])
 
   const remaining = Math.max(0, CAPTURE_SECONDS - elapsedSec)
 

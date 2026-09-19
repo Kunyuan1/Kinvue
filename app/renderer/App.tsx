@@ -19,6 +19,7 @@ export default function App(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [capturing, setCapturing] = useState(false)
+  const [captureError, setCaptureError] = useState<string | null>(null)
   const [reading, setReading] = useState<CaptureResult | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
@@ -36,21 +37,31 @@ export default function App(): React.JSX.Element {
 
   const newest = sessions === null ? [] : [...sessions].reverse()
 
-  const onCaptured = useCallback((result: CaptureResult): void => {
-    // Held, not stored. `submit` takes the captureId once the questions have
-    // been answered (KV-2); main keeps the reading until then.
-    setReading(result)
-    setCapturing(false)
+  /**
+   * Started here, on the press, rather than inside the capture screen. Opening
+   * the camera cannot be undone, and React runs an effect twice in development
+   * — which asked main for two captures and had the second refused.
+   */
+  const startCapture = useCallback((): void => {
+    setReading(null)
+    setCaptureError(null)
+    setCapturing(true)
+
+    window.kinvue
+      .capture(DEMO_PERSON_ID)
+      .then((result) => {
+        // Held, not stored. `submit` takes the captureId once the questions
+        // have been answered (KV-2); main keeps the reading until then.
+        setReading(result)
+        setCapturing(false)
+      })
+      .catch((e: unknown) => setCaptureError(String(e)))
   }, [])
 
   if (capturing) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-10">
-        <CaptureScreen
-          personId={DEMO_PERSON_ID}
-          onDone={onCaptured}
-          onCancel={() => setCapturing(false)}
-        />
+        <CaptureScreen error={captureError} onCancel={() => setCapturing(false)} />
       </main>
     )
   }
@@ -68,10 +79,7 @@ export default function App(): React.JSX.Element {
       <div className="mb-8 flex items-center gap-3">
         <button
           type="button"
-          onClick={() => {
-            setReading(null)
-            setCapturing(true)
-          }}
+          onClick={startCapture}
           className="rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-raised)"
         >
           Take a reading
