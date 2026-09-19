@@ -1,0 +1,136 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { cleanup, render, screen } from '@testing-library/react'
+import { classifyCaptureError, type CaptureFailure } from '@core/capture/failure'
+import CaptureScreen from '@renderer/components/CaptureScreen'
+import QuestionFlow from '@renderer/components/QuestionFlow'
+
+/**
+ * That the failure copy reaches the screen.
+ *
+ * The rest of the suite proves a throw is classified correctly; it stops at
+ * the point where a `CaptureFailure` becomes something a person reads. These
+ * were the five checks KV-7 could only list as manual, and four of them were
+ * really one question — does the copy table render? — which does not need a
+ * camera to answer.
+ *
+ * What is still manual, and stays that way: a camera genuinely held by another
+ * program, and a capture that genuinely measured nothing. Those are facts
+ * about hardware, and no DOM can assert them (KV-7).
+ *
+ * Asserted by *meaning*, never by matching the sentence: the wording is meant
+ * to be rewritten, and a test that pins it would make that a chore. What must
+ * not change is which failure gets which message.
+ */
+
+/** The preload bridge. `CaptureScreen` subscribes before it renders anything. */
+beforeEach(() => {
+  const off = (): void => undefined
+  Object.defineProperty(window, 'kinvue', {
+    configurable: true,
+    value: {
+      onCaptureProgress: vi.fn(() => off),
+      onCaptureGuidance: vi.fn(() => off),
+      onCaptureFrame: vi.fn(() => off),
+    },
+  })
+  // jsdom has no object URLs, and the frame preview makes them.
+  window.URL.createObjectURL = vi.fn(() => 'blob:stub')
+  window.URL.revokeObjectURL = vi.fn()
+})
+
+afterEach(cleanup)
+
+const noop = (): void => undefined
+
+describe('CaptureScreen says which failure it was', () => {
+  const cases: [CaptureFailure, RegExp][] = [
+    // Check 1: rename .env. Not a registration URL and a dotfile instruction.
+    ['no-api-key', /not set up yet/i],
+    // Check 2: the camera held by something else.
+    ['camera-unavailable', /camera could not be used/i],
+    // Check 3: Take a reading pressed twice.
+    ['capture-in-progress', /one moment/i],
+    ['no-capture', /no longer available/i],
+    ['expired', /no longer current/i],
+    ['unknown', /could not be taken/i],
+  ]
+
+  it.each(cases)('renders %s as its own sentence', (failure, expected) => {
+    render(<CaptureScreen failure={failure} onCancel={noop} />)
+    expect(screen.getByText(expected)).toBeDefined()
+  })
+
+  it('names no condition and shows no raw error string', () => {
+    for (const [failure] of cases) {
+      cleanup()
+      render(<CaptureScreen failure={failure} onCancel={noop} />)
+      const text = document.body.textContent ?? ''
+      // The whole point of the tag is that it never reaches a person.
+      expect(text).not.toMatch(/kinvue\//)
+      expect(text).not.toMatch(/\bError\b|stack|undefined|\[object/i)
+    }
+  })
+
+  it('does not blame the person for a setup or hardware fault', () => {
+    // The framing is the product: these three are not about them, and the
+    // screen is the one addressed to the cared-for person.
+    for (const failure of ['no-api-key', 'camera-unavailable'] as const) {
+      cleanup()
+      render(<CaptureScreen failure={failure} onCancel={noop} />)
+      expect(document.body.textContent).toMatch(/nothing is wrong on your side/i)
+    }
+  })
+
+  it('shows nothing at all when there is no failure', () => {
+    render(<CaptureScreen failure={null} onCancel={noop} />)
+    expect(screen.queryByText(/not set up yet/i)).toBeNull()
+  })
+})
+
+describe('QuestionFlow says which failure it was', () => {
+  const show = (failure: CaptureFailure): string => {
+    render(<QuestionFlow failure={failure} onDone={noop} onCancel={noop} submitting={false} />)
+    return document.body.textContent ?? ''
+  }
+
+  // Check 4: the questions left for fifteen minutes.
+  it('tells the person a reading expired rather than that saving broke', () => {
+    expect(show('expired')).toMatch(/too long passed/i)
+  })
+
+  it('tells the person a reading is gone', () => {
+    expect(show('no-capture')).toMatch(/no longer available/i)
+  })
+
+  it('does not send the person to the camera when the reading is still theirs', () => {
+    // `createCheckIn` refiles the held reading on every untagged write failure,
+    // so the capture and the four answers are both still submittable. Advice
+    // to take a new reading would spend them to fail in the same way.
+    const text = show('unknown')
+    expect(text).toMatch(/trying again/i)
+    expect(text).not.toMatch(/new reading|take a new|fresh one/i)
+  })
+
+  it('leaks no tag into what the person reads', () => {
+    for (const failure of ['expired', 'no-capture', 'unknown', 'no-api-key'] as const) {
+      cleanup()
+      expect(show(failure)).not.toMatch(/kinvue\//)
+    }
+  })
+})
+
+describe('end to end, from the thrown error to the sentence', () => {
+  it('turns what main throws into the right screen, over IPC', () => {
+    // What Electron actually hands the renderer: the message, wrapped twice.
+    const overIpc = new Error(
+      "Error invoking remote method 'checkin:capture': Error: kinvue/no-api-key: " +
+        'SMARTSPECTRA_API_KEY is not set.',
+    )
+    render(<CaptureScreen failure={classifyCaptureError(overIpc)} onCancel={noop} />)
+
+    expect(screen.getByText(/not set up yet/i)).toBeDefined()
+    // The old behaviour: this exact string in front of the cared-for person.
+    expect(document.body.textContent).not.toMatch(/SMARTSPECTRA_API_KEY/)
+  })
+})
