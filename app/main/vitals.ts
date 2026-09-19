@@ -10,6 +10,7 @@ import {
 // entry point ships the generated class and returns a typed Metrics.
 import { decodeMetrics } from '@smartspectra/node-sdk/messages'
 import type { CaptureGuidance } from '@core/capture/guidance'
+import type { SdkFrame } from './frames'
 import type { Vitals } from '@core/session/types'
 import {
   createVitalsAccumulator,
@@ -146,6 +147,15 @@ export interface CaptureOptions {
    * decided by `core/capture/guidance.ts`, not here.
    */
   onGuidance?: (advice: CaptureGuidance | null) => void
+  /**
+   * Each processed frame, for the person's own self-view (KV-3). The SDK docs
+   * call `videoOutput` "mainly useful for the custom-input / headless path",
+   * but it fires under `useCamera()` — confirmed against real hardware in KV-1,
+   * which is what let the capture stay in the main process with the API key.
+   *
+   * Display only. Nothing here writes footage anywhere.
+   */
+  onFrame?: (frame: SdkFrame) => void
 }
 
 /**
@@ -159,7 +169,7 @@ export interface CaptureOptions {
  * the end cannot make a poor capture look clean. See `createVitalsAccumulator`.
  */
 export async function captureVitals(options: CaptureOptions = {}): Promise<Vitals> {
-  const { durationSec = 30, onProgress, onGuidance } = options
+  const { durationSec = 30, onProgress, onGuidance, onFrame } = options
 
   const apiKey = process.env.SMARTSPECTRA_API_KEY
   if (apiKey === undefined || apiKey === '') throw new MissingApiKeyError()
@@ -220,6 +230,23 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
         settlingArtefact: SETTLING_CODES.has(code),
       })
     })
+
+    // NOTE: one registration per event — `on()` replaces rather than adds.
+    if (onFrame !== undefined) {
+      sdk.on(
+        'videoOutput',
+        (data: Buffer, width: number, height: number, stride: number, pixelFormat: number) => {
+          firstFrameAt ??= Date.now()
+          // Best-effort, like progress and guidance: a preview that throws must
+          // not take down the measurement it is showing.
+          try {
+            onFrame({ data, width, height, stride, pixelFormat })
+          } catch {
+            /* the reading matters more than the picture of it */
+          }
+        },
+      )
+    }
 
     sdk.on('error', (_code: number, message: string) => {
       cleanUp()

@@ -38,6 +38,17 @@ const api = {
     ipcRenderer.on('checkin:guidance', listener)
     return () => ipcRenderer.off('checkin:guidance', listener)
   },
+
+  /**
+   * JPEG frames of what the camera sees, for the person's own self-view, about
+   * ten a second while a capture runs. Display only — nothing stores them, and
+   * the renderer cannot ask for them, only listen. Returns an unsubscribe.
+   */
+  onCaptureFrame: (fn: (jpeg: Uint8Array) => void): (() => void) => {
+    const listener = (_e: unknown, jpeg: Uint8Array): void => fn(jpeg)
+    ipcRenderer.on('checkin:frame', listener)
+    return () => ipcRenderer.off('checkin:frame', listener)
+  },
 }
 
 export type KinvueApi = typeof api

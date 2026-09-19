@@ -85,6 +85,7 @@ app/
   main/
     index.ts             Electron entry: window, IPC handlers, store wiring
     device.ts            what the device can honestly say about its time zone
+    frames.ts            camera frames → what a screen can show (self-view)
     env.ts               loads .env into process.env before anything reads it
     vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk
   preload/
@@ -93,6 +94,8 @@ app/
     index.html           CSP: default-src 'self' — the UI loads nothing off the network
     App.tsx              caregiver dashboard shell
     components/
+      CaptureScreen.tsx  the 30s in front of the camera — the one screen the
+                         cared-for person reads, not the caregiver
       SessionCard.tsx    one check-in + the rules that fired
     styles.css           Tailwind v4 theme tokens
 
@@ -111,7 +114,7 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
 
 tests/                   Vitest. Covers baseline, scoring, validation, check-in, time,
-                         device, guidance, vitals and env.
+                         device, guidance, frames, vitals and env.
 ```
 
 ---
@@ -218,6 +221,8 @@ Tuned constants live in code, not env, because changing one changes what the app
 | `GUIDANCE_PERSIST_MS` | `core/capture/guidance.ts` | `400 ms` — how long advice must hold before the person is shown it |
 | `SETTLING_PERSIST_MS` | `core/capture/guidance.ts` | `2.5 s` — the same, for exposure advice a settling camera produces on its own (KV-1) |
 | `GUIDANCE_REPEAT_MS` | `core/capture/guidance.ts` | `4 s` — a line already on screen is not re-sent more often than this |
+| `FRAME_INTERVAL_MS` | `app/main/frames.ts` | `100 ms` — how often a self-view frame is sent, against the camera's ~30/s |
+| `FRAME_WIDTH` | `app/main/frames.ts` | `320 px` — frames are scaled to this before crossing the bridge |
 
 ---
 
@@ -251,7 +256,9 @@ physiological, so the design commits to the following and the code is arranged t
 them checkable:
 
 - **No raw video is stored or transmitted.** Frames go from the camera into the SDK and
-  are reduced to a handful of numbers. Nothing writes footage to disk.
+  are reduced to a handful of numbers. Nothing writes footage to disk. While a capture is
+  running they also cross the preload bridge as small JPEGs so the person can see their
+  own framing — held only long enough to draw, never saved, and never sent anywhere else.
 - **No backend of ours, and no check-in leaves this machine.** Sessions are written and
   read locally; nothing here uploads them. The renderer's CSP is `default-src 'self'`, so
   the UI cannot load or call out to a remote origin even by accident.

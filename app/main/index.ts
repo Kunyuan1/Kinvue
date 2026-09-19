@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { join, resolve } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, nativeImage } from 'electron'
 import { scoreSession } from '@core/scoring'
 import { createJsonSessionStore } from '@core/session/store'
 import { createCheckIn } from '@core/session/checkin'
@@ -9,6 +9,7 @@ import { parseCheckInAnswers, parsePersonId } from '@core/session/validate'
 import { DEMO_PERSON_ID, seedDemoHistory } from '@core/seed/persona'
 import { createGuidanceGate } from '@core/capture/guidance'
 import { deviceTimeZone } from './device'
+import { createFrameThrottle, FRAME_WIDTH, toBgra } from './frames'
 import { loadDotEnv } from './env'
 import { captureVitals } from './vitals'
 
@@ -97,6 +98,7 @@ function registerIpc(): void {
     if (id === null) throw new Error('checkin:capture needs a person id.')
     // One gate per capture, so nothing carries over from the last one.
     const guidance = createGuidanceGate()
+    const sendFrame = createFrameThrottle()
 
     return await checkIn.capture(id, () =>
       captureVitals({
@@ -118,6 +120,24 @@ function registerIpc(): void {
           const update = guidance.offer(advice, performance.now())
           if (update === null) return
           event.sender.send('checkin:guidance', 'show' in update ? update.show : null)
+        },
+        // The self-view. Encoded here rather than in the renderer because
+        // Electron's own nativeImage does it with no dependency, and because a
+        // JPEG a tenth the size of raw pixels is what makes this affordable on
+        // a bridge that also carries the check-in itself.
+        onFrame: (frame) => {
+          if (event.sender.isDestroyed()) return
+          if (!sendFrame(performance.now())) return
+
+          const bgra = toBgra(frame)
+          // A format this does not convert costs the preview and nothing else.
+          if (bgra === null) return
+
+          const jpeg = nativeImage
+            .createFromBitmap(Buffer.from(bgra), { width: frame.width, height: frame.height })
+            .resize({ width: FRAME_WIDTH })
+            .toJPEG(55)
+          event.sender.send('checkin:frame', jpeg)
         },
       }),
     )
