@@ -111,8 +111,10 @@ written against the type definitions and got this wrong:
   and badly lit alike — emitted exactly 57 `kTooDark` hints between about 4s and 5s while
   the camera was still settling, and nothing after. Forwarding `validationStatus`
   straight to the person would tell them to turn on a light at the start of every
-  check-in. Guidance needs to ignore the opening seconds, or wait for a code to persist
-  before showing it (#6, #3).
+  check-in. #6 waits for a code to persist rather than ignoring a fixed opening window:
+  exposure complaints have to hold for seconds before they are believed, framing advice
+  only for a moment. A wall-clock window would have had to be calibrated against how long
+  one particular camera takes to open, and would quietly stop working on a slower one.
 - **The metrics arrive at different times.** In that capture the first breathing rate
   appeared at ~13s, the first pulse at ~20s, and the first HRV at ~34s. A 30-second
   capture can therefore end before HRV exists at all, which matters because HRV is the

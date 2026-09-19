@@ -26,6 +26,18 @@ const api = {
     ipcRenderer.on('checkin:progress', listener)
     return () => ipcRenderer.off('checkin:progress', listener)
   },
+
+  /**
+   * What the person should do differently, in their words — "sit back a
+   * little", "too dark" — or null when the shot is fine again and whatever is
+   * on screen should go. Main decides when advice is worth showing and when it
+   * stops being true; this carries it. Returns an unsubscribe function.
+   */
+  onCaptureGuidance: (fn: (message: string | null) => void): (() => void) => {
+    const listener = (_e: unknown, message: string | null): void => fn(message)
+    ipcRenderer.on('checkin:guidance', listener)
+    return () => ipcRenderer.off('checkin:guidance', listener)
+  },
 }
 
 export type KinvueApi = typeof api

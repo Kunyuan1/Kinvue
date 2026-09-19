@@ -7,6 +7,7 @@ import { createCheckIn } from '@core/session/checkin'
 import type { CaptureResult, SessionRecord } from '@core/session/types'
 import { parseCheckInAnswers, parsePersonId } from '@core/session/validate'
 import { DEMO_PERSON_ID, seedDemoHistory } from '@core/seed/persona'
+import { createGuidanceGate } from '@core/capture/guidance'
 import { deviceTimeZone } from './device'
 import { loadDotEnv } from './env'
 import { captureVitals } from './vitals'
@@ -94,6 +95,9 @@ function registerIpc(): void {
   ipcMain.handle('checkin:capture', async (event, personId: unknown): Promise<CaptureResult> => {
     const id = parsePersonId(personId)
     if (id === null) throw new Error('checkin:capture needs a person id.')
+    // One gate per capture, so nothing carries over from the last one.
+    const guidance = createGuidanceGate()
+
     return await checkIn.capture(id, () =>
       captureVitals({
         onProgress: (elapsedSec) => {
@@ -101,6 +105,19 @@ function registerIpc(): void {
           if (!event.sender.isDestroyed()) {
             event.sender.send('checkin:progress', elapsedSec)
           }
+        },
+        // The mitigation for the likeliest capture failure: bad framing the
+        // person cannot see. Best-effort for the same reason as progress.
+        onGuidance: (advice) => {
+          // Checked before the gate is consulted, not after: offering advice
+          // records it as shown, so asking a dead window afterwards would let
+          // the gate believe a line reached a screen that had gone.
+          if (event.sender.isDestroyed()) return
+          // performance.now() rather than Date.now(): a wall clock stepped by
+          // NTP mid-capture would mute guidance or let the settling burst out.
+          const update = guidance.offer(advice, performance.now())
+          if (update === null) return
+          event.sender.send('checkin:guidance', 'show' in update ? update.show : null)
         },
       }),
     )

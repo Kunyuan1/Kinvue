@@ -9,6 +9,7 @@ import {
 // protobuf class has been registered with setMetricsClass(). The `/messages`
 // entry point ships the generated class and returns a typed Metrics.
 import { decodeMetrics } from '@smartspectra/node-sdk/messages'
+import type { CaptureGuidance } from '@core/capture/guidance'
 import type { Vitals } from '@core/session/types'
 import {
   createVitalsAccumulator,
@@ -87,8 +88,18 @@ export class MissingApiKeyError extends Error {
   }
 }
 
-/** What the person in front of the camera should do differently, in their words. */
-const VALIDATION_HINTS: Partial<Record<ValidationCodeValue, string>> = {
+/**
+ * What the person in front of the camera should do differently, in their words.
+ *
+ * Every code except `kOk` is covered on purpose, and the type enforces it: the
+ * SDK's own `hint` strings are never forwarded. Two entries in this table told
+ * people to move the camera the wrong way until KV-1 put a face in front of
+ * one, and vendor copy nobody has read is not a safe default on the single
+ * surface the cared-for person reads.
+ */
+type Advisable = Exclude<ValidationCodeValue, typeof ValidationCode.kOk>
+
+const VALIDATION_HINTS: Record<Advisable, string> = {
   [ValidationCode.kNoFaceFound]: 'No face in view — sit in front of the camera.',
   [ValidationCode.kMultipleFacesFound]: 'More than one face in view.',
   [ValidationCode.kFaceNotCentered]: 'Move to the centre of the picture.',
@@ -105,7 +116,22 @@ const VALIDATION_HINTS: Partial<Record<ValidationCodeValue, string>> = {
   [ValidationCode.kFaceNotForward]: 'Look straight at the camera.',
   [ValidationCode.kExcessiveMotion]: 'Try to hold still.',
   [ValidationCode.kFrameRateTooLow]: 'The camera is struggling to keep up.',
+  [ValidationCode.kCameraTuning]: 'Just a moment — the camera is adjusting.',
+  // Deprecated in favour of kFaceTooClose / kFaceTooFar, which say which way.
+  [ValidationCode.kFaceSizeOutOfRange]: 'Move a little closer, or a little further back.',
 }
+
+/**
+ * Codes a camera produces while settling rather than because of the person.
+ * The measured burst was `kTooDark`; the others sit alongside it as properties
+ * of exposure and tuning. Framing codes are deliberately not here — nobody is
+ * out of frame by accident of warm-up. See `core/capture/guidance.ts`.
+ */
+const SETTLING_CODES: ReadonlySet<ValidationCodeValue> = new Set([
+  ValidationCode.kTooDark,
+  ValidationCode.kTooBright,
+  ValidationCode.kCameraTuning,
+])
 
 export interface CaptureOptions {
   /** How long to hold the camera open. The UI asks the person for ~30s. */
@@ -114,10 +140,12 @@ export interface CaptureOptions {
   onProgress?: (elapsedSec: number) => void
   /**
    * Called when the SDK reports the shot is unusable — bad framing, low light,
-   * too much movement. Surfacing this live is the difference between a capture
-   * that fails and a person who can fix it while it is still running.
+   * too much movement — and with null when it reports the shot is fine.
+   * Surfacing this live is the difference between a capture that fails and a
+   * person who can fix it while it is still running. What reaches a screen is
+   * decided by `core/capture/guidance.ts`, not here.
    */
-  onGuidance?: (message: string) => void
+  onGuidance?: (advice: CaptureGuidance | null) => void
 }
 
 /**
@@ -181,10 +209,16 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       }
     })
 
-    sdk.on('validationStatus', (code: ValidationCodeValue, _ts: number, hint: string) => {
+    sdk.on('validationStatus', (code: ValidationCodeValue, _ts: number) => {
       firstFrameAt ??= Date.now()
-      if (code === ValidationCode.kOk) return
-      onGuidance?.(VALIDATION_HINTS[code] ?? hint)
+      if (code === ValidationCode.kOk) {
+        onGuidance?.(null)
+        return
+      }
+      onGuidance?.({
+        message: VALIDATION_HINTS[code as Advisable],
+        settlingArtefact: SETTLING_CODES.has(code),
+      })
     })
 
     sdk.on('error', (_code: number, message: string) => {
