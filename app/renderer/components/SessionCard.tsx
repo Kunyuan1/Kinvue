@@ -78,10 +78,12 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
         of discretion: a caregiver deciding whether to drive over is better
         served by "left hip, since yesterday" than by a rule that says pain was
         reported. It is never summarised, never paraphrased, and never used as
-        a rule input — whether it may ever leave the device is KV-32.
+        a rule input — whether it may ever leave the device is KV-32. Its line
+        breaks are kept for the same reason: collapsing them would be a silent
+        edit in the one place nothing should be edited.
       */}
       {session.answers.painNote !== undefined && (
-        <p className="mt-4 border-t border-(--color-line) pt-4 text-sm">
+        <p className="mt-4 border-t border-(--color-line) pt-4 text-sm whitespace-pre-wrap">
           <span className="text-(--color-muted)">In their words: </span>
           {session.answers.painNote}
         </p>

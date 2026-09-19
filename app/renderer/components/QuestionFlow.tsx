@@ -1,6 +1,12 @@
 import { useState } from 'react'
-import { answeredCount, draftToAnswers, type AnswerDraft } from '@core/session/answers'
+import {
+  ANSWER_STEPS,
+  answeredCount,
+  draftToAnswers,
+  type AnswerDraft,
+} from '@core/session/answers'
 import type { CheckInAnswers } from '@core/session/types'
+import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
 
 /**
  * The four questions, asked one at a time.
@@ -11,14 +17,19 @@ import type { CheckInAnswers } from '@core/session/types'
  *
  * One question per screen, with large targets and no free text until the last
  * one. The reader may be 82 and may be doing this at seven in the morning, so
- * nothing here depends on precision or on remembering what was asked before.
+ * nothing here depends on precision of memory, on remembering what was asked
+ * before — or on tapping the button they meant. Every answer stays visible and
+ * changeable, and every question can be gone back to: `mood` is a scorer input,
+ * so a mis-tap is not cosmetic, and the flow was previously forward-only on the
+ * screen least able to afford that.
  *
  * Nothing can be skipped. `CheckInAnswers` has no way to say "not asked", and
  * a missing answer that arrived as `false` would fire the `not-eaten` rule on
  * a question nobody put to them. See `core/session/answers.ts`.
  */
 
-const TOTAL = 4
+/** Add a fifth question to `ANSWER_STEPS` and this follows it. */
+const TOTAL = ANSWER_STEPS.length
 
 export default function QuestionFlow({
   onDone,
@@ -35,10 +46,11 @@ export default function QuestionFlow({
   const [step, setStep] = useState(0)
 
   const answer = (patch: AnswerDraft): void => {
-    const next = { ...draft, ...patch }
-    setDraft(next)
-    // Pain is the last question and opens the note, so it stays put.
-    if (patch.painReported === undefined) setStep((s) => s + 1)
+    setDraft({ ...draft, ...patch })
+    // Decided by which step this is, not by which field was patched: the last
+    // question opens the note and so stays put, and an answer changed on a
+    // step gone back to still moves forward from there.
+    if (step < TOTAL - 1) setStep(step + 1)
   }
 
   const finish = (): void => {
@@ -58,35 +70,66 @@ export default function QuestionFlow({
 
       {step === 0 && (
         <Question title="How are you feeling today?">
-          <Choice onClick={() => answer({ mood: 'good' })}>Good</Choice>
-          <Choice onClick={() => answer({ mood: 'ok' })}>All right</Choice>
-          <Choice onClick={() => answer({ mood: 'low' })}>Low</Choice>
+          <Choice chosen={draft.mood === 'good'} onClick={() => answer({ mood: 'good' })}>
+            Good
+          </Choice>
+          <Choice chosen={draft.mood === 'ok'} onClick={() => answer({ mood: 'ok' })}>
+            All right
+          </Choice>
+          <Choice chosen={draft.mood === 'low'} onClick={() => answer({ mood: 'low' })}>
+            Low
+          </Choice>
         </Question>
       )}
 
       {step === 1 && (
         <Question title="How did you sleep?">
-          <Choice onClick={() => answer({ sleep: 'well' })}>Well</Choice>
-          <Choice onClick={() => answer({ sleep: 'ok' })}>All right</Choice>
-          <Choice onClick={() => answer({ sleep: 'poorly' })}>Badly</Choice>
+          <Choice chosen={draft.sleep === 'well'} onClick={() => answer({ sleep: 'well' })}>
+            Well
+          </Choice>
+          <Choice chosen={draft.sleep === 'ok'} onClick={() => answer({ sleep: 'ok' })}>
+            All right
+          </Choice>
+          <Choice
+            chosen={draft.sleep === 'poorly'}
+            onClick={() => answer({ sleep: 'poorly' })}
+          >
+            Badly
+          </Choice>
         </Question>
       )}
 
       {step === 2 && (
         <Question title="Have you eaten today?">
-          <Choice onClick={() => answer({ eatenToday: true })}>Yes</Choice>
-          <Choice onClick={() => answer({ eatenToday: false })}>Not yet</Choice>
+          <Choice chosen={draft.eatenToday === true} onClick={() => answer({ eatenToday: true })}>
+            Yes
+          </Choice>
+          <Choice
+            chosen={draft.eatenToday === false}
+            onClick={() => answer({ eatenToday: false })}
+          >
+            Not yet
+          </Choice>
         </Question>
       )}
 
       {step === 3 && (
         <Question title="Are you in any pain today?">
-          {draft.painReported === undefined && (
-            <>
-              <Choice onClick={() => answer({ painReported: false })}>No</Choice>
-              <Choice onClick={() => answer({ painReported: true })}>Yes</Choice>
-            </>
-          )}
+          {/* Still on screen once answered: "No" was as final as a mis-tap on
+              any other question, and this is the one that decides whether the
+              note is even offered. */}
+          <Choice
+            chosen={draft.painReported === false}
+            onClick={() => answer({ painReported: false })}
+          >
+            No
+          </Choice>
+          <Choice
+            chosen={draft.painReported === true}
+            onClick={() => answer({ painReported: true })}
+          >
+            Yes
+          </Choice>
 
           {draft.painReported === false && (
             <p className="text-center text-sm text-(--color-muted)">
@@ -99,9 +142,15 @@ export default function QuestionFlow({
               <span className="text-sm text-(--color-muted)">
                 If you would like to say where, you can. It is not required.
               </span>
+              {/* Capped where the caller can see it rather than at the process
+                  boundary, which rejects the whole check-in for a note that is
+                  too long and cannot say which of the five answers was the
+                  problem. `draftToAnswers` trims, so a note that fits here
+                  fits there. */}
               <textarea
                 value={draft.painNote ?? ''}
                 onChange={(e) => setDraft({ ...draft, painNote: e.target.value })}
+                maxLength={MAX_PAIN_NOTE_LENGTH}
                 rows={3}
                 className="mt-2 w-full rounded-lg border border-(--color-line) bg-(--color-raised) p-3 text-base"
               />
@@ -117,13 +166,24 @@ export default function QuestionFlow({
       )}
 
       <div className="mt-8 flex items-center justify-between">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="text-sm text-(--color-muted) underline hover:text-(--color-ink)"
-        >
-          Not now
-        </button>
+        <div className="flex items-center gap-4">
+          {step > 0 && (
+            <button
+              type="button"
+              onClick={() => setStep(step - 1)}
+              className="rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-raised)"
+            >
+              Back
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onCancel}
+            className="text-sm text-(--color-muted) underline hover:text-(--color-ink)"
+          >
+            Not now
+          </button>
+        </div>
 
         {done === TOTAL && (
           <button
@@ -155,11 +215,17 @@ function Question({
   )
 }
 
-/** Deliberately large: the person answering may not have a steady hand. */
+/**
+ * Deliberately large: the person answering may not have a steady hand. `chosen`
+ * is what makes an answer correctable — the button stays on screen showing what
+ * was tapped, and tapping another one replaces it.
+ */
 function Choice({
+  chosen,
   onClick,
   children,
 }: {
+  chosen: boolean
   onClick: () => void
   children: React.ReactNode
 }): React.JSX.Element {
@@ -167,7 +233,10 @@ function Choice({
     <button
       type="button"
       onClick={onClick}
-      className="w-full rounded-xl border border-(--color-line) bg-(--color-raised) px-5 py-4 text-left text-lg hover:border-(--color-muted)"
+      aria-pressed={chosen}
+      className={`w-full rounded-xl border bg-(--color-raised) px-5 py-4 text-left text-lg hover:border-(--color-muted) ${
+        chosen ? 'border-(--color-ink) font-medium' : 'border-(--color-line)'
+      }`}
     >
       {children}
     </button>

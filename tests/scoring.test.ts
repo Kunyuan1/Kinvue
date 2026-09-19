@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { MIN_BASELINE_SESSIONS } from '@core/baseline'
-import { MIN_CAPTURE_SECONDS, scoreSession, seededBaselineDisclosure } from '@core/scoring'
+import {
+  hasScorableVitals,
+  MIN_CAPTURE_SECONDS,
+  scoreSession,
+  seededBaselineDisclosure,
+} from '@core/scoring'
 import type { Assessment } from '@core/session/types'
 import { history, seededHistory, session } from './helpers'
 
@@ -124,6 +129,38 @@ describe('scoreSession', () => {
     const after = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), past)
     expect(before).toEqual(after)
     expect(past).toHaveLength(5)
+  })
+})
+
+describe('hasScorableVitals', () => {
+  // The renderer offers a retake on this predicate and the scorer withholds a
+  // verdict on it. They were two copies of the same three fields; these pin
+  // them to one, so a capture the scorer would score can never be shown to the
+  // person as "nothing was measured".
+  it('agrees with the scorer about a capture that measured nothing', () => {
+    const nothing = { pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null }
+    expect(hasScorableVitals(session({ vitals: nothing }).vitals)).toBe(false)
+    expect(scoreSession(session({ vitals: nothing }), history(5)).flag).toBe(
+      'insufficient-signal',
+    )
+  })
+
+  it('counts a capture that produced only one of the three', () => {
+    const onlyBreathing = { pulseRateBpm: null, hrvRmssdMs: null }
+    expect(hasScorableVitals(session({ vitals: onlyBreathing }).vitals)).toBe(true)
+    expect(scoreSession(session({ vitals: onlyBreathing }), history(5)).flag).not.toBe(
+      'insufficient-signal',
+    )
+  })
+
+  it('does not count SDNN, which no rule reads', () => {
+    const onlySdnn = {
+      pulseRateBpm: null,
+      breathingRateBrpm: null,
+      hrvRmssdMs: null,
+      hrvSdnnMs: 42,
+    }
+    expect(hasScorableVitals(session({ vitals: onlySdnn }).vitals)).toBe(false)
   })
 })
 
