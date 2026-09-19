@@ -5,6 +5,53 @@ import CaptureScreen from './components/CaptureScreen'
 import SessionCard from './components/SessionCard'
 
 /**
+ * What a finished capture actually produced.
+ *
+ * A capture that measured nothing must not read as a success: the first real
+ * run came back with every metric null and a card that still said "reading
+ * taken", which is the reassuring direction and the wrong one. The camera runs
+ * for a fixed time whether or not the person is framed, so an empty result is
+ * a normal outcome and has to say what to do about it.
+ */
+function ReadingSummary({ result }: { result: CaptureResult }): React.JSX.Element {
+  const { pulseRateBpm, breathingRateBrpm, hrvRmssdMs } = result.vitals
+  const measured = [
+    pulseRateBpm === null ? null : `pulse ${pulseRateBpm.toFixed(0)} bpm`,
+    breathingRateBrpm === null ? null : `breathing ${breathingRateBrpm.toFixed(0)} br/min`,
+    hrvRmssdMs === null ? null : `HRV ${hrvRmssdMs.toFixed(0)} ms`,
+  ].filter((part): part is string => part !== null)
+
+  return (
+    <div className="mb-8 rounded-xl border border-(--color-line) bg-(--color-raised) p-5">
+      {measured.length === 0 ? (
+        <>
+          <p className="font-medium text-(--color-unknown)">Nothing was measured</p>
+          <p className="mt-1 text-sm text-(--color-muted)">
+            The camera ran, but no reading came out of it. That usually means the framing
+            was not right for long enough — the face centred, chest in view, reasonably
+            lit, and still. Worth another try.
+          </p>
+        </>
+      ) : (
+        <>
+          <p className="font-medium">Reading taken</p>
+          <p className="mt-1 text-sm text-(--color-muted)">{measured.join(' · ')}</p>
+          {measured.length < 3 && (
+            <p className="mt-1 text-sm text-(--color-muted)">
+              The rest did not settle in the time the camera ran.
+            </p>
+          )}
+        </>
+      )}
+      <p className="mt-2 text-sm text-(--color-muted)">
+        It is not a check-in until the questions are answered, which is KV-2. Nothing has
+        been saved.
+      </p>
+    </div>
+  )
+}
+
+/**
  * The caregiver's view. This app is not used by the person being checked on —
  * every string on this screen is addressed to whoever looks after them, which
  * is the framing the whole product hangs on. Keep it that way.
@@ -89,20 +136,7 @@ export default function App(): React.JSX.Element {
         </span>
       </div>
 
-      {reading !== null && (
-        <div className="mb-8 rounded-xl border border-(--color-line) bg-(--color-raised) p-5">
-          <p className="font-medium">Reading taken</p>
-          <p className="mt-1 text-sm text-(--color-muted)">
-            Pulse {reading.vitals.pulseRateBpm?.toFixed(0) ?? '—'} bpm · breathing{' '}
-            {reading.vitals.breathingRateBrpm?.toFixed(0) ?? '—'} br/min · HRV{' '}
-            {reading.vitals.hrvRmssdMs?.toFixed(0) ?? '—'} ms
-          </p>
-          <p className="mt-2 text-sm text-(--color-muted)">
-            It is not a check-in until the questions are answered, which is KV-2. Nothing
-            has been saved.
-          </p>
-        </div>
-      )}
+      {reading !== null && <ReadingSummary result={reading} />}
 
       {error !== null && (
         <p className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm text-(--color-elevated)">
