@@ -15,12 +15,12 @@ This document is the entry point for both humans onboarding and AI agents contri
 It should be enough to understand how the system fits together and where to make a change.
 
 > **Project status: early.** Kinvue is a personal project, developed in the open with no
-> deadline. The repository is scaffolded and the scoring engine and its tests are real,
-> but the app cannot yet record a check-in end to end (KV-2) — nothing in the UI starts a
-> capture. The SmartSpectra capture (`app/main/vitals.ts`) **has now returned real pulse,
-> breathing and HRV from a webcam** (KV-1), on one machine in one room, which corrected
-> several assumptions this code was built on. The capture-length constants (KV-63) and
-> what the SDK sends to Presage (KV-65) are still open.
+> deadline. **The loop closes as of KV-2**: a capture, four questions, a scored session on
+> the dashboard, all on real hardware. The SmartSpectra capture has returned real pulse,
+> breathing and HRV from a webcam (KV-1) — on one machine, in one room, which corrected
+> several assumptions this code was built on. Still open: the capture-length constants
+> (KV-63), what the SDK sends to Presage (KV-65), and how the dashboard handles failures
+> and emptiness (KV-7). Nothing here has been used by anyone it was built for.
 
 ---
 
@@ -97,6 +97,7 @@ app/
     components/
       CaptureScreen.tsx  the 30s in front of the camera — the one screen the
                          cared-for person reads, not the caregiver
+      QuestionFlow.tsx   the four questions, also addressed to them
       SessionCard.tsx    one check-in + the rules that fired
     styles.css           Tailwind v4 theme tokens
 
@@ -105,6 +106,7 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
     types.ts             Vitals, CheckInAnswers, FiredRule, Assessment, SessionRecord
     store.ts             JSON session store (MAIN PROCESS ONLY — imports node:fs)
     validate.ts          runtime checks on everything the renderer sends to main
+    answers.ts           the four questions: complete, or not a check-in at all
     checkin.ts           holds a capture until its answers arrive, then scores and stores it
     time.ts              which local day a check-in belongs to, where it was taken
   baseline/index.ts      per-person trailing baseline + MIN_BASELINE_SESSIONS
@@ -115,7 +117,7 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
 
 tests/                   Vitest. Covers baseline, scoring, validation, check-in, time,
-                         device, guidance, frames, vitals and env.
+                         device, guidance, frames, answers, vitals and env.
 ```
 
 ---
@@ -234,7 +236,7 @@ One record per check-in, appended to a JSON file. Sessions are never edited in p
 | Type | Notes |
 |---|---|
 | `Vitals` | `pulseRateBpm`, `breathingRateBrpm`, `hrvRmssdMs`, `hrvSdnnMs`, plus `confidence`, `stable` and `durationSec`. Any metric may be `null`. |
-| `CheckInAnswers` | `mood`, `sleep`, `eatenToday`, `painReported` (+ optional `painNote`). |
+| `CheckInAnswers` | `mood`, `sleep`, `eatenToday`, `painReported` (+ optional `painNote`). All four are required: there is no way to say "not asked", so the flow collects all of them or stores nothing. |
 | `FiredRule` | `id`, `title`, `explanation`, `severity`. One per rule that fired. |
 | `Assessment` | `flag`, `firedRules`, `summary`, `baselineSessions`, `baselineSeededSessions`. Written by the scorer. |
 | `SessionRecord` | The above plus `id`, `personId`, `capturedAt` (UTC), `timeZone`, and `seeded` for demo history. |

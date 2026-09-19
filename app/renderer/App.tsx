@@ -1,20 +1,31 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { CaptureResult, SessionRecord } from '@core/session/types'
+import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
+import { hasScorableVitals } from '@core/scoring'
 import CaptureScreen from './components/CaptureScreen'
+import QuestionFlow from './components/QuestionFlow'
 import SessionCard from './components/SessionCard'
 
 /**
- * What to put in front of the person when a capture fails.
+ * What to put in front of the person when something fails.
  *
  * `String(e)` on an IPC rejection reads "Error: Error invoking remote method
  * 'checkin:capture': Error: …" — and for a missing key, a registration URL and
  * instructions about a dotfile. That is a developer's error message on the one
  * screen addressed to the person being measured, so the known cases are put
  * into this screen's voice and anything else is kept short.
+ *
+ * Two voices, not one: a capture failing and a save failing are different
+ * things to be told about, and a single fallback meant someone who had just
+ * answered four questions was told the camera could not be started.
  */
-function readable(e: unknown): string {
-  const raw = e instanceof Error ? e.message : String(e)
+function message(e: unknown): string {
+  return e instanceof Error ? e.message : String(e)
+}
+
+/** A capture that never produced a reading. */
+function readableCapture(e: unknown): string {
+  const raw = message(e)
 
   if (raw.includes('already running')) {
     return 'The camera is still finishing the last reading. Try again in a moment.'
@@ -27,6 +38,27 @@ function readable(e: unknown): string {
 }
 
 /**
+ * Answers that could not be stored against their reading. Every refusal main
+ * can raise on a submit has a branch here; what is left for the fallback is
+ * the store and the scorer, which fail as saving, not as measuring.
+ */
+function readableSubmit(e: unknown): string {
+  const raw = message(e)
+
+  if (raw.includes('too old')) {
+    return 'Too long has passed since the reading was taken. Please take a new one.'
+  }
+  if (raw.includes('not the latest capture') || raw.includes('already been submitted')) {
+    return 'That reading is no longer available. Please take a new one.'
+  }
+  if (raw.includes('different person')) {
+    return 'That reading was taken for someone else. Please take a new one.'
+  }
+  if (raw.includes('malformed answers')) return 'Those answers could not be saved.'
+  return 'The check-in could not be saved.'
+}
+
+/**
  * What a finished capture actually produced.
  *
  * A capture that measured nothing must not read as a success: the first real
@@ -35,17 +67,29 @@ function readable(e: unknown): string {
  * for a fixed time whether or not the person is framed, so an empty result is
  * a normal outcome and has to say what to do about it.
  */
-function ReadingSummary({ result }: { result: CaptureResult }): React.JSX.Element {
+function ReadingSummary({
+  result,
+  onRetake,
+  onContinue,
+}: {
+  result: CaptureResult
+  onRetake: () => void
+  onContinue: () => void
+}): React.JSX.Element {
   const { pulseRateBpm, breathingRateBrpm, hrvRmssdMs } = result.vitals
-  const measured = [
+  const parts = [
     pulseRateBpm === null ? null : `pulse ${pulseRateBpm.toFixed(0)} bpm`,
     breathingRateBrpm === null ? null : `breathing ${breathingRateBrpm.toFixed(0)} br/min`,
     hrvRmssdMs === null ? null : `HRV ${hrvRmssdMs.toFixed(0)} ms`,
-  ].filter((part): part is string => part !== null)
+  ]
+  const measured = parts.filter((part): part is string => part !== null)
+  // Asked of the scorer rather than decided again here: the retake is offered
+  // on exactly the question the scorer answers with `insufficient-signal`.
+  const measuredSomething = hasScorableVitals(result.vitals)
 
   return (
     <div className="mb-8 rounded-xl border border-(--color-line) bg-(--color-raised) p-5">
-      {measured.length === 0 ? (
+      {!measuredSomething ? (
         <>
           <p className="font-medium text-(--color-unknown)">Nothing was measured</p>
           <p className="mt-1 text-sm text-(--color-muted)">
@@ -58,17 +102,33 @@ function ReadingSummary({ result }: { result: CaptureResult }): React.JSX.Elemen
         <>
           <p className="font-medium">Reading taken</p>
           <p className="mt-1 text-sm text-(--color-muted)">{measured.join(' · ')}</p>
-          {measured.length < 3 && (
+          {measured.length < parts.length && (
             <p className="mt-1 text-sm text-(--color-muted)">
               The rest did not settle in the time the camera ran.
             </p>
           )}
         </>
       )}
-      <p className="mt-2 text-sm text-(--color-muted)">
-        It is not a check-in until the questions are answered, which is KV-2. Nothing has
-        been saved.
-      </p>
+      <div className="mt-4 flex gap-3">
+        <button
+          type="button"
+          onClick={onRetake}
+          className="rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-ground)"
+        >
+          Try the camera again
+        </button>
+        <button
+          type="button"
+          onClick={onContinue}
+          className="rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-ground)"
+        >
+          Answer the questions anyway
+        </button>
+      </div>
+      {/* Storing a check-in whose camera reading failed is the honest outcome —
+          the questions were still answered, and the verdict says the reading
+          could not be used. Whether that is the policy, rather than this
+          person's choice each time, is KV-7. */}
     </div>
   )
 }
@@ -78,17 +138,18 @@ function ReadingSummary({ result }: { result: CaptureResult }): React.JSX.Elemen
  * every string on this screen is addressed to whoever looks after them, which
  * is the framing the whole product hangs on. Keep it that way.
  *
- * SCAFFOLD (KV-2/KV-4): the session list, the per-session explanation and the
- * capture itself are real. What is missing is the four questions that turn a
- * reading into a check-in (KV-2) and the trend view (KV-4) — so a capture
- * taken here is shown and then discarded, because a session cannot be stored
- * without answers.
+ * SCAFFOLD (KV-4): the loop closes here — a capture leads into the four
+ * questions, and answering them stores a scored session that appears in the
+ * list below. What is still missing is the trend view (KV-4).
  */
 export default function App(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [capturing, setCapturing] = useState(false)
   const [captureError, setCaptureError] = useState<string | null>(null)
+  const [answering, setAnswering] = useState<CaptureResult | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
   const captureGeneration = useRef(0)
   const [reading, setReading] = useState<CaptureResult | null>(null)
 
@@ -127,14 +188,17 @@ export default function App(): React.JSX.Element {
       .capture(DEMO_PERSON_ID)
       .then((result) => {
         if (started !== captureGeneration.current) return
-        // Held, not stored. `submit` takes the captureId once the questions
-        // have been answered (KV-2); main keeps the reading until then.
-        setReading(result)
         setCapturing(false)
+        // The reading stays in main. What crosses back is its id, and the
+        // questions are what turn it into a check-in. A capture that measured
+        // nothing is shown first: answering four questions about a reading
+        // that does not exist should be a choice, not something that happens.
+        if (hasScorableVitals(result.vitals)) setAnswering(result)
+        else setReading(result)
       })
       .catch((e: unknown) => {
         if (started !== captureGeneration.current) return
-        setCaptureError(readable(e))
+        setCaptureError(readableCapture(e))
       })
   }, [])
 
@@ -148,10 +212,64 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
+  /** Submits the answers against the reading main is holding. */
+  const submit = useCallback(
+    (answers: CheckInAnswers): void => {
+      if (answering === null) return
+      setSubmitting(true)
+      setSubmitError(null)
+
+      window.kinvue
+        .submit(DEMO_PERSON_ID, answering.captureId, answers)
+        .then(async () => {
+          // The check-in is stored by the time this runs, so a refresh that
+          // fails now is a stale list, not a lost check-in — and it has to be
+          // said on the dashboard, because `submitError` is rendered only by
+          // the screen that clearing `answering` unmounts. Dropped silently, it
+          // sent the person back to take a second reading of the same moment,
+          // which would then enter the baseline twice.
+          await refresh().catch(() => {
+            setError('The check-in was saved, but the list could not be reloaded.')
+          })
+          setAnswering(null)
+          setReading(null)
+          setSubmitting(false)
+        })
+        .catch((e: unknown) => {
+          setSubmitting(false)
+          setSubmitError(readableSubmit(e))
+        })
+    },
+    [answering, refresh],
+  )
+
   if (capturing) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-10">
         <CaptureScreen error={captureError} onCancel={stopCapture} />
+      </main>
+    )
+  }
+
+  if (answering !== null) {
+    return (
+      <main className="mx-auto max-w-3xl px-6 py-10">
+        <QuestionFlow
+          onDone={submit}
+          onCancel={() => {
+            // Nothing is stored, which is the honest outcome of a check-in
+            // someone chose not to finish. But main holds that reading as
+            // submittable for another fifteen minutes, so it goes back to the
+            // dashboard rather than becoming unreachable — "Not now" sits
+            // under the answer buttons on a screen built for an unsteady hand,
+            // and a mis-tap there should not cost a good 30-second reading.
+            setReading(answering)
+            setAnswering(null)
+            setSubmitError(null)
+          }}
+          submitting={submitting}
+          error={submitError}
+        />
       </main>
     )
   }
@@ -179,7 +297,16 @@ export default function App(): React.JSX.Element {
         </span>
       </div>
 
-      {reading !== null && <ReadingSummary result={reading} />}
+      {reading !== null && (
+        <ReadingSummary
+          result={reading}
+          onRetake={startCapture}
+          onContinue={() => {
+            setAnswering(reading)
+            setReading(null)
+          }}
+        />
+      )}
 
       {error !== null && (
         <p className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm text-(--color-elevated)">

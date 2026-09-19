@@ -1,5 +1,5 @@
 import { computeBaseline, MIN_BASELINE_SESSIONS, type Baseline } from '../baseline'
-import type { Assessment, FiredRule, SessionRecord } from '../session/types'
+import type { Assessment, FiredRule, SessionRecord, Vitals } from '../session/types'
 import { ALL_RULES, BASELINE_RULE_IDS, type Rule } from './rules'
 
 export { ALL_RULES, BASELINE_RULE_IDS } from './rules'
@@ -18,14 +18,28 @@ export const MIN_CAPTURE_CONFIDENCE = 0.5
 /** Captures shorter than this are not scored. The UI asks for ~30s. */
 export const MIN_CAPTURE_SECONDS = 20
 
+/**
+ * Whether a capture measured anything a rule can read.
+ *
+ * `hrvSdnnMs` is deliberately not in the list: nothing scores on it, so a
+ * capture that produced only SDNN has nothing to say. Exported because the
+ * renderer offers a retake on exactly this question, and a second copy of the
+ * list would drift — a capture the scorer would happily score must never be
+ * shown to the person as "nothing was measured".
+ */
+export function hasScorableVitals(vitals: Vitals): boolean {
+  return (
+    vitals.pulseRateBpm !== null ||
+    vitals.breathingRateBrpm !== null ||
+    vitals.hrvRmssdMs !== null
+  )
+}
+
 function captureIsUsable(session: SessionRecord): boolean {
-  const { confidence, durationSec, pulseRateBpm, breathingRateBrpm, hrvRmssdMs } =
-    session.vitals
+  const { confidence, durationSec } = session.vitals
   if (confidence < MIN_CAPTURE_CONFIDENCE) return false
   if (durationSec < MIN_CAPTURE_SECONDS) return false
-  return (
-    pulseRateBpm !== null || breathingRateBrpm !== null || hrvRmssdMs !== null
-  )
+  return hasScorableVitals(session.vitals)
 }
 
 function fire(rules: readonly Rule[], session: SessionRecord, baseline: Baseline): FiredRule[] {
