@@ -97,10 +97,14 @@ written against the type definitions and got this wrong:
   only, 90 both. Reading every vital off the final message therefore returns whatever
   that one happened to hold and silently drops the rest — which is exactly what the code
   did, and `captureIsUsable` still called the result usable, so nothing surfaced the loss.
-- **`stable` and `confidence` live on the rate readings** — `cardio.pulseRate[]` and
-  `breathing.rate[]`. HRV entries carry `rmssd`, `meanNn`, `sdnn`, `baevsky` and a
-  timestamp, and nothing else. A rule keyed on "the last HRV the SDK marked stable" can
-  never match.
+- **Only the rate readings actually reported `stable` and `confidence`** —
+  `cardio.pulseRate[]` and `breathing.rate[]`. The schema declares both on HRV too, but
+  across that capture no HRV entry set either, so a rule keyed on "the last HRV the SDK
+  marked stable" matched nothing. Note the limit of the evidence: a decoded message is a
+  protobufjs instance whose proto3 defaults sit on the prototype, so "field absent" and
+  "field present and zero" look identical unless you ask by own-property. Everything
+  reading this stream has to ask that way, or a reading nobody took arrives as a
+  confident zero.
 - **Most of the stream is waveform, not rates.** Those 1517 messages held 53 pulse
   readings, 17 breathing rates and 30 HRV entries; the rest were trace points.
 - **The first seconds of guidance are noise.** Every run so far — six of them, well lit

@@ -27,9 +27,11 @@ export interface Vitals {
   /** Mean of the SDK's own pulse confidence across the capture, 0..1 (KV-12). */
   confidence: number
   /**
-   * Whether the SDK marked the reading it settled on as stable. The flag lives
-   * on `cardio.pulseRate[]` and `breathing.rate[]`; HRV entries carry no such
-   * field, whatever the shape of the types suggests (KV-1).
+   * Whether the SDK marked the reading being reported as settled. The flag is
+   * declared on the rate readings and on HRV alike, but in the KV-1 capture
+   * only `cardio.pulseRate[]` and `breathing.rate[]` ever set it — HRV never
+   * reported `stable: true`, which is an observation about that capture and
+   * not a fact about the schema.
    */
   stable: boolean
   /** Seconds of usable capture. Short captures are not scored. */

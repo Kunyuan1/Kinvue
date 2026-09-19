@@ -10,7 +10,12 @@ import {
 // entry point ships the generated class and returns a typed Metrics.
 import { decodeMetrics } from '@smartspectra/node-sdk/messages'
 import type { Vitals } from '@core/session/types'
-import { createVitalsAccumulator } from './metrics'
+import {
+  createVitalsAccumulator,
+  type HrvReading,
+  type MetricsLike,
+  type RateReading,
+} from './metrics'
 
 /**
  * The SmartSpectra capture, wrapped down to the one call the rest of the app
@@ -18,7 +23,7 @@ import { createVitalsAccumulator } from './metrics'
  *
  * STATUS (KV-1): the capture path has now returned real readings from a real
  * webcam — pulse, breathing and HRV, on one machine, in one room. What that run
- * corrected is recorded in `createVitalsAccumulator` and in ARCHITECTURE.md.
+ * corrected is recorded in `metrics.ts` and in ARCHITECTURE.md.
  * Still open in KV-1: the capture-length constants, and whether capture stays
  * here or moves to the renderer. There is deliberately no synthetic fallback:
  * without a key or a camera this throws, because a check-in that quietly
@@ -32,6 +37,45 @@ import { createVitalsAccumulator } from './metrics'
  * carries processed frames from this process, so the self-view can be fed over
  * IPC instead (#3). See ARCHITECTURE.md.
  */
+
+
+/**
+ * `metrics.ts` describes the decoded message structurally so it can be tested
+ * without loading the native runtime. These assertions are the tether: if a
+ * field name there stops matching the SDK — a typo, or a rename in a future
+ * version — this stops compiling instead of quietly reducing every capture to
+ * nulls, which is the failure KV-1 was opened to fix.
+ */
+type Metrics = ReturnType<typeof decodeMetrics>
+type Assert<T extends true> = T
+type HasKey<T, K extends PropertyKey> = K extends keyof T ? true : false
+
+type Keys<T> = keyof NonNullable<T>
+type Entry<T> = NonNullable<T> extends readonly (infer E)[] ? E : never
+
+type SdkCardio = NonNullable<Metrics['cardio']>
+type SdkBreathing = NonNullable<Metrics['breathing']>
+
+/**
+ * Exported so it is not an unused local; it exists only to be checked.
+ *
+ * Each line says "every field name metrics.ts reads is a field the SDK has".
+ * Asserting the other direction would not work: an extra optional property
+ * never breaks assignability, so a typo would typecheck happily and reduce
+ * every capture to nulls.
+ */
+export type SdkShapePinned = [
+  Assert<Metrics extends MetricsLike ? true : false>,
+  Assert<Keys<MetricsLike['cardio']> extends Keys<Metrics['cardio']> ? true : false>,
+  Assert<Keys<MetricsLike['breathing']> extends Keys<Metrics['breathing']> ? true : false>,
+  Assert<HasKey<SdkCardio, 'pulseRate'>>,
+  Assert<HasKey<SdkCardio, 'hrv'>>,
+  Assert<HasKey<SdkBreathing, 'rate'>>,
+  // Field names on the readings themselves.
+  Assert<keyof RateReading extends keyof Entry<SdkCardio['pulseRate']> ? true : false>,
+  Assert<keyof RateReading extends keyof Entry<SdkBreathing['rate']> ? true : false>,
+  Assert<keyof HrvReading extends keyof Entry<SdkCardio['hrv']> ? true : false>,
+]
 
 export class MissingApiKeyError extends Error {
   constructor() {
@@ -79,11 +123,12 @@ export interface CaptureOptions {
 /**
  * Run one measurement and reduce the SDK's sample stream to summary values.
  *
- * Reduction rules, and why: each metric keeps the last reading the SDK sent for
- * *that metric*, because a metrics message carries only what was ready at that
- * instant. Confidence is averaged across the whole capture rather than taken
- * from the final reading, so one good moment at the end cannot make a poor
- * capture look clean. See `createVitalsAccumulator`.
+ * Reduction rules, and why: each metric keeps the newest reading the SDK marked
+ * stable — falling back to the newest of any kind — because a metrics message
+ * carries only what was ready at that instant, and the last thing to arrive can
+ * be an outlier the SDK itself distrusted. Confidence is averaged across the
+ * whole capture rather than taken from the final reading, so one good moment at
+ * the end cannot make a poor capture look clean. See `createVitalsAccumulator`.
  */
 export async function captureVitals(options: CaptureOptions = {}): Promise<Vitals> {
   const { durationSec = 30, onProgress, onGuidance } = options
@@ -94,14 +139,19 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
   const sdk = new SmartSpectraSDK({
     apiKey,
     requestedMetrics: [...breathingMetrics, ...cardioMetrics],
-    // Opt out of SDK telemetry, which defaults to on. The README promises this
-    // app makes no network calls of its own; leaving an aggregate telemetry
-    // channel open would make that claim untrue.
+    // Opt out of SDK telemetry, which defaults to on. It does not make the app
+    // offline — the SDK still contacts Presage when a session starts (KV-65) —
+    // but an aggregate telemetry channel is a separate thing to decline.
     enableTelemetry: false,
   })
 
   const collected = createVitalsAccumulator()
   const startedAt = Date.now()
+  // Seconds of *capture*, which is what Vitals.durationSec claims and what
+  // MIN_CAPTURE_SECONDS is compared against. Opening the camera can take
+  // several seconds, and those come straight out of the window a reading has
+  // to appear in — counting them would report a short capture as a full one.
+  let firstFrameAt: number | undefined
 
   return await new Promise<Vitals>((resolve, reject) => {
     const cleanUp = (): void => {
@@ -120,10 +170,19 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
     // NOTE: `on()` REPLACES the callback for an event rather than adding one,
     // so there is exactly one registration per event here. Do not add a second.
     sdk.on('metrics', (buf: Buffer) => {
-      collected.add(decodeMetrics(buf))
+      firstFrameAt ??= Date.now()
+      try {
+        collected.add(decodeMetrics(buf))
+      } catch (err) {
+        // Thrown inside an SDK callback, so nothing here would catch it and
+        // the capture would resolve as if the lost samples never existed.
+        cleanUp()
+        reject(new Error(`SmartSpectra: could not decode metrics — ${String(err)}`))
+      }
     })
 
     sdk.on('validationStatus', (code: ValidationCodeValue, _ts: number, hint: string) => {
+      firstFrameAt ??= Date.now()
       if (code === ValidationCode.kOk) return
       onGuidance?.(VALIDATION_HINTS[code] ?? hint)
     })
@@ -135,7 +194,8 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
 
     const timer = setTimeout(() => {
       cleanUp()
-      resolve(collected.result(Math.round((Date.now() - startedAt) / 1000)))
+      const capturedMs = firstFrameAt === undefined ? 0 : Date.now() - firstFrameAt
+      resolve(collected.result(Math.round(capturedMs / 1000)))
     }, durationSec * 1000)
 
     try {

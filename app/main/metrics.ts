@@ -6,8 +6,14 @@ import type { Vitals } from '@core/session/types'
  * **Imports nothing from the SDK on purpose.** `@smartspectra/node-sdk` loads
  * its native runtime through koffi at import time, so a module that touches it
  * cannot be unit-tested on a machine without a runtime for that platform —
- * there is no darwin-x64 one at all. The shapes below are structural, and the
- * decoded protobuf satisfies them.
+ * there is no darwin-x64 one at all. `vitals.ts` pins these shapes against the
+ * SDK's own types at compile time so the decoupling cannot drift into a typo.
+ *
+ * **A decoded message is a protobufjs instance, not a plain object.** Proto3
+ * defaults live on the prototype, so an unset `value` reads as `0` and an unset
+ * `confidence` reads as `0` — never `undefined`. Presence is therefore decided
+ * by own-property, never by the value itself. Missing is not zero, and here is
+ * where a missing reading would otherwise become a measured zero.
  */
 
 /** One reading of a rate metric: `cardio.pulseRate[]`, `breathing.rate[]`. */
@@ -17,20 +23,18 @@ export interface RateReading {
   confidence?: number | null
   /** Whether the SDK considered this reading settled. */
   stable?: boolean | null
-  /**
-   * Unread here — `capturedAt` is the app's own clock. Typed `unknown` because
-   * the generated type says `number | Long` while the decoded wire data carries
-   * strings; nothing in the app depends on which, so nothing here asserts it.
-   */
+  /** Microseconds since the epoch. Only used to avoid counting a reading twice. */
   timestamp?: unknown
 }
 
-/** One HRV entry. Carries no confidence and no stable flag (KV-1). */
+/** One HRV entry. The schema carries `confidence` and `stable` here too. */
 export interface HrvReading {
   rmssd?: number | null
   sdnn?: number | null
   meanNn?: number | null
   baevsky?: number | null
+  confidence?: number | null
+  stable?: boolean | null
   timestamp?: unknown
 }
 
@@ -47,18 +51,60 @@ export interface MetricsLike {
   } | null
 }
 
-const last = <T,>(xs: readonly T[] | null | undefined): T | undefined =>
-  xs === null || xs === undefined || xs.length === 0 ? undefined : xs[xs.length - 1]
+/**
+ * The field's value, or undefined when the SDK did not set it.
+ *
+ * `reading.value ?? null` cannot do this job: the prototype default answers
+ * first and a reading that reported nothing arrives as a confident zero.
+ */
+function set<T extends object, K extends keyof T>(reading: T, key: K): T[K] | undefined {
+  return Object.hasOwn(reading, key as string) ? reading[key] : undefined
+}
 
-const mean = (xs: number[]): number =>
-  xs.length === 0 ? 0 : xs.reduce((s, v) => s + v, 0) / xs.length
+const num = (v: unknown): number | null => (typeof v === 'number' ? v : null)
 
 /**
- * The SDK reports confidence as a percentage in [0, 100]; everything in core/
- * works in [0, 1]. Convert once, here, at the boundary.
+ * Tracks one metric across the stream: the newest reading, and separately the
+ * newest the SDK marked stable.
  */
-const toUnitConfidence = (percent: number | null | undefined): number | null =>
-  percent === null || percent === undefined ? null : percent / 100
+class Tracked<T extends object> {
+  latest: T | undefined
+  latestStable: T | undefined
+  /** Timestamps already counted, so a repeated reading is not averaged twice. */
+  private readonly counted = new Set<string>()
+
+  /** Returns the confidences this message contributed, in [0, 1]. */
+  observe(readings: readonly T[] | null | undefined): number[] {
+    const confidences: number[] = []
+    if (readings === null || readings === undefined) return confidences
+
+    for (const reading of readings) {
+      // Every reading in the message counts toward the average, not just the
+      // last: a message batching 40%, 45% and 95% must not read as 95%.
+      const stamp = set(reading, 'timestamp' as keyof T)
+      const key = stamp === undefined ? undefined : String(stamp)
+      if (key !== undefined && this.counted.has(key)) continue
+      if (key !== undefined) this.counted.add(key)
+
+      this.latest = reading
+      if (set(reading, 'stable' as keyof T) === true) this.latestStable = reading
+
+      const confidence = set(reading, 'confidence' as keyof T)
+      if (typeof confidence === 'number') confidences.push(confidence / 100)
+    }
+    return confidences
+  }
+
+  /**
+   * The reading to report: the newest one the SDK called stable, falling back
+   * to the newest of any kind. Someone shifting in their chair at the end of a
+   * capture must not overwrite nine settled seconds with one outlier — and no
+   * rule downstream consults `stable`, so this is where that verdict is used.
+   */
+  get chosen(): T | undefined {
+    return this.latestStable ?? this.latest
+  }
+}
 
 export interface VitalsAccumulator {
   add(metrics: MetricsLike): void
@@ -73,49 +119,61 @@ export interface VitalsAccumulator {
  * carried breathing only, 118 cardio only, and 90 both. So each metric is kept
  * as it arrives rather than read off the final message — reading them all off
  * one message returns whatever that message happened to hold and silently
- * discards the rest. In that capture it would have discarded the measured
- * pulse and breathing rate and kept the HRV alone — while `captureIsUsable`
- * still called the check-in usable, so the loss would not have shown up.
+ * discards the rest, while `captureIsUsable` still calls the check-in usable.
  */
 export function createVitalsAccumulator(): VitalsAccumulator {
-  let pulse: RateReading | undefined
-  let breathing: RateReading | undefined
-  let hrv: HrvReading | undefined
+  const pulse = new Tracked<RateReading>()
+  const breathing = new Tracked<RateReading>()
+  const hrv = new Tracked<HrvReading>()
   const confidences: number[] = []
 
   return {
     add(metrics) {
-      const nextPulse = last(metrics.cardio?.pulseRate)
-      if (nextPulse !== undefined) {
-        pulse = nextPulse
-        const c = toUnitConfidence(nextPulse.confidence)
-        if (c !== null) confidences.push(c)
-      }
-
-      const nextBreathing = last(metrics.breathing?.rate)
-      if (nextBreathing !== undefined) breathing = nextBreathing
-
-      const nextHrv = last(metrics.cardio?.hrv)
-      if (nextHrv !== undefined) hrv = nextHrv
+      // Confidence spans every metric that reports one. Pulse alone would make
+      // this a pulse-presence check wearing a confidence threshold's clothes:
+      // a capture with a clean breathing rate and no pulse would average zero
+      // and be discarded as unusable (KV-12).
+      confidences.push(...pulse.observe(metrics.cardio?.pulseRate))
+      confidences.push(...breathing.observe(metrics.breathing?.rate))
+      confidences.push(...hrv.observe(metrics.cardio?.hrv))
     },
 
     result(durationSec) {
+      const chosenPulse = pulse.chosen
+      const chosenBreathing = breathing.chosen
+      const chosenHrv = hrv.chosen
+
       return {
-        pulseRateBpm: pulse?.value ?? null,
-        breathingRateBrpm: breathing?.value ?? null,
-        hrvRmssdMs: hrv?.rmssd ?? null,
-        hrvSdnnMs: hrv?.sdnn ?? null,
-        // Pulse confidence only, which is what this has always averaged in
-        // practice. Breathing carries its own and is the less settled signal —
-        // in the KV-1 capture roughly half the breathing readings were marked
-        // unstable against none of the pulse readings. Whether breathing
-        // belongs in this average is KV-12.
-        confidence: mean(confidences),
-        // The settled flag lives on the per-metric readings, not on HRV.
-        // Pulse is the one every scored vitals rule leans on, so it decides.
-        stable: (pulse ?? breathing)?.stable === true,
+        pulseRateBpm: num(chosenPulse && set(chosenPulse, 'value')),
+        breathingRateBrpm: num(chosenBreathing && set(chosenBreathing, 'value')),
+        hrvRmssdMs: num(chosenHrv && set(chosenHrv, 'rmssd')),
+        hrvSdnnMs: num(chosenHrv && set(chosenHrv, 'sdnn')),
+        // Averaged across the capture rather than taken from the final reading,
+        // so one good moment at the end cannot make a poor capture look clean.
+        // Still one number for the whole session: whether it should be per
+        // metric, and how "none reported" should differ from "zero", is KV-12.
+        confidence: confidences.length === 0 ? 0 : mean(confidences),
+        // True when the reading being reported is one the SDK itself called
+        // settled. Reported per capture; nothing gates on it yet (KV-12).
+        stable: reportedStable(chosenPulse, chosenBreathing),
         durationSec,
       }
     },
   }
+}
+
+const mean = (xs: number[]): number => xs.reduce((s, v) => s + v, 0) / xs.length
+
+/**
+ * Pulse decides when it reported a flag, because every vitals rule leans on it
+ * hardest; breathing answers only when pulse said nothing either way.
+ */
+function reportedStable(
+  pulse: RateReading | undefined,
+  breathing: RateReading | undefined,
+): boolean {
+  const fromPulse = pulse === undefined ? undefined : set(pulse, 'stable')
+  if (typeof fromPulse === 'boolean') return fromPulse
+  const fromBreathing = breathing === undefined ? undefined : set(breathing, 'stable')
+  return fromBreathing === true
 }
