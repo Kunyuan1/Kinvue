@@ -37,6 +37,7 @@ export default function CaptureScreen({
   const [elapsedSec, setElapsedSec] = useState(0)
   const [guidance, setGuidance] = useState<string | null>(null)
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
+  const [previewFailed, setPreviewFailed] = useState(false)
   const latestUrl = useRef<string | null>(null)
 
   useEffect(() => {
@@ -86,12 +87,24 @@ export default function CaptureScreen({
       <h2 className="text-xl font-semibold">Sit comfortably and look at the camera</h2>
 
       <div className="relative mt-6 overflow-hidden rounded-xl border border-(--color-line) bg-(--color-raised)">
-        {frameUrl === null ? (
+        {previewFailed ? (
+          // Said out loud rather than left blank. A picture that silently never
+          // arrives is how the first real run looked, and it took a CSP rule to
+          // explain: the advice below is what matters, and it still works.
+          <p className="px-6 py-16 text-sm text-(--color-muted)">
+            The picture is not available on this machine. The advice below still applies.
+          </p>
+        ) : frameUrl === null ? (
           <p className="px-6 py-16 text-sm text-(--color-muted)">Starting the camera…</p>
         ) : (
           // Mirrored, so moving left moves the picture left: a self-view that
           // reverses your own movements is harder to frame by, not easier.
-          <img src={frameUrl} alt="" className="w-full -scale-x-100" />
+          <img
+            src={frameUrl}
+            alt=""
+            onError={() => setPreviewFailed(true)}
+            className="w-full -scale-x-100"
+          />
         )}
       </div>
 

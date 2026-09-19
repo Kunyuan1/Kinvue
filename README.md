@@ -91,7 +91,8 @@ app/
   preload/
     index.ts             contextBridge surface. The API key never crosses this line.
   renderer/
-    index.html           CSP: default-src 'self' — the UI loads nothing off the network
+    index.html           CSP: default-src 'self' — the UI loads nothing off the
+                         network. img-src also allows blob:, for the self-view.
     App.tsx              caregiver dashboard shell
     components/
       CaptureScreen.tsx  the 30s in front of the camera — the one screen the
