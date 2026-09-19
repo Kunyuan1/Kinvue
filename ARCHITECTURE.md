@@ -169,8 +169,19 @@ compromised, which for an app processing a person's physiological data is not a
 theoretical concern worth accepting for the convenience.
 
 The renderer additionally runs under a `default-src 'self'` CSP, so it cannot load remote
-code or call out to a remote origin. Combined with `enableTelemetry: false` on the SDK,
-the claim "this app makes no network calls of its own" is meant literally.
+code or call out to a remote origin.
+
+**The SDK is a different matter, and this was wrong until a capture was measured.** The
+claim here used to be that `enableTelemetry: false` made "no network calls of its own"
+literally true. It does not. Every real capture opened an outbound TLS connection as the
+session started — before any measurement existed — to an AWS-fronted endpoint, with
+telemetry off; `api.physiology.presagetech.com` is compiled into each platform runtime. A
+control process of the same shape without the SDK opened nothing, so it is the SDK.
+
+What that request carries is not yet known (KV-65). The honest position until it is: the
+app writes and reads check-ins locally and uploads none of them, and the capture itself is
+not offline. Phase 4 and 5 plan around what already leaves the device, so this belongs in
+#32 and #36 rather than being discovered when sync is designed.
 
 The key reaches the main process from `.env`, read at startup by `app/main/env.ts` and
 only when the app is not packaged. It is

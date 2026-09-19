@@ -235,8 +235,13 @@ them checkable:
 
 - **No raw video is stored or transmitted.** Frames go from the camera into the SDK and
   are reduced to a handful of numbers. Nothing writes footage to disk.
-- **No network.** There is no backend. The renderer's CSP is `default-src 'self'`, so the
-  UI cannot load or call out to a remote origin even by accident.
+- **No backend of ours, and no check-in leaves this machine.** Sessions are written and
+  read locally; nothing here uploads them. The renderer's CSP is `default-src 'self'`, so
+  the UI cannot load or call out to a remote origin even by accident.
+- **The SDK itself contacts Presage during a capture.** Measured, not assumed: every
+  capture opens an outbound TLS connection as the session starts, with the SDK's own
+  telemetry switched off. What that request contains has not been established — most
+  likely a key check — and until it has, this app cannot claim to be offline (KV-65).
 - **The API key stays in the main process.** The preload surface exposes named calls only
   — no generic `invoke(channel, ...)` — so a compromised renderer cannot read it.
 - **Session data is local**, under Electron's `userData`, and `.gitignore` covers
