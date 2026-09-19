@@ -15,12 +15,12 @@ This document is the entry point for both humans onboarding and AI agents contri
 It should be enough to understand how the system fits together and where to make a change.
 
 > **Project status: early.** Kinvue is a personal project, developed in the open with no
-> deadline. The repository is scaffolded and the scoring engine and its tests are real,
-> but the app cannot yet record a check-in end to end (KV-2) — nothing in the UI starts a
-> capture. The SmartSpectra capture (`app/main/vitals.ts`) **has now returned real pulse,
-> breathing and HRV from a webcam** (KV-1), on one machine in one room, which corrected
-> several assumptions this code was built on. The capture-length constants (KV-63) and
-> what the SDK sends to Presage (KV-65) are still open.
+> deadline. **The loop closes as of KV-2**: a capture, four questions, a scored session on
+> the dashboard, all on real hardware. The SmartSpectra capture has returned real pulse,
+> breathing and HRV from a webcam (KV-1) — on one machine, in one room, which corrected
+> several assumptions this code was built on. Still open: the capture-length constants
+> (KV-63), what the SDK sends to Presage (KV-65), and how the dashboard handles failures
+> and emptiness (KV-7). Nothing here has been used by anyone it was built for.
 
 ---
 
