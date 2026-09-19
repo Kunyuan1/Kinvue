@@ -35,6 +35,21 @@ describe('classifyCaptureError', () => {
     expect(classifyCaptureError(undefined)).toBe('unknown')
   })
 
+  it('takes the outer tag when a message quotes another tagged error', () => {
+    // Which one wins used to be the order the tags happened to be listed in.
+    // The outer tag is the one the code that threw meant, so position in the
+    // text decides, and the list order stops being load-bearing.
+    const nested = new Error(
+      `${failureTag('camera-unavailable')}: wrapping — ${failureTag('cancelled')}: inner.`,
+    )
+    expect(classifyCaptureError(nested)).toBe('camera-unavailable')
+
+    const other = new Error(
+      `${failureTag('cancelled')}: wrapping — ${failureTag('camera-unavailable')}: inner.`,
+    )
+    expect(classifyCaptureError(other)).toBe('cancelled')
+  })
+
   it('does not depend on the wording after the tag', () => {
     // The point of a tag: the sentence can be rewritten for the person reading
     // it without silently reclassifying the failure.

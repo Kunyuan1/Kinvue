@@ -45,8 +45,9 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
   'camera-unavailable': {
     title: 'The camera could not be used',
     detail:
-      'Another program may have it open — a video call, perhaps. Closing that and trying ' +
-      'again usually does it.',
+      'Another program may have it open — a video call, perhaps — or it may be the ' +
+      'connection. Trying again in a moment is usually enough, and nothing is wrong ' +
+      'on your side.',
   },
   'capture-in-progress': {
     title: 'One moment',

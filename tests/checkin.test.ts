@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { scoreSession } from '@core/scoring'
+import { classifyCaptureError } from '@core/capture/failure'
 import { createCheckIn, PENDING_CAPTURE_TTL_MS, type CheckInDeps } from '@core/session/checkin'
 import type { CheckInAnswers, SessionRecord, Vitals } from '@core/session/types'
 import { session } from './helpers'
@@ -237,5 +238,87 @@ describe('createCheckIn', () => {
   it('rejects an id that was never captured', async () => {
     const { checkIn } = setup()
     await expect(checkIn.submit(PERSON, 'made-up', ANSWERS)).rejects.toThrow('latest capture')
+  })
+})
+
+/**
+ * The tag is the contract, and it lives in the thrown message.
+ *
+ * `tests/failure.test.ts` only proves the classifier can read a tag back out
+ * of a string the test wrote itself. That is `String.includes`. What actually
+ * reaches the screen depends on every throw in here carrying one — and an
+ * untagged throw is not a type error, not a lint error, and not visible until
+ * a person is told the camera failed when a timer did.
+ *
+ * So: classify what `createCheckIn` really throws, never a handmade string.
+ * Drop a tag from any refusal below and one of these goes red (KV-7).
+ */
+describe('createCheckIn tags every refusal it can raise', () => {
+  const failureOf = async (p: Promise<unknown>): Promise<string> => {
+    try {
+      await p
+      return 'did not throw'
+    } catch (err) {
+      return classifyCaptureError(err)
+    }
+  }
+
+  it('tags an id that was never captured', async () => {
+    const { checkIn } = setup()
+    expect(await failureOf(checkIn.submit(PERSON, 'made-up', ANSWERS))).toBe('no-capture')
+  })
+
+  it('tags a capture that was already submitted', async () => {
+    const { checkIn } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+    expect(await failureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('no-capture')
+  })
+
+  it('tags a capture taken for a different person', async () => {
+    const { checkIn } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    expect(await failureOf(checkIn.submit('someone-else', captureId, ANSWERS))).toBe('no-capture')
+  })
+
+  it('tags a reading that outlived its TTL', async () => {
+    const { checkIn, advance } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    advance(PENDING_CAPTURE_TTL_MS + 1)
+    expect(await failureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('expired')
+  })
+
+  it('still says expired when Save is pressed a second time', async () => {
+    // One state, one sentence. Before this the second press fell through to
+    // "that is not the latest capture" and said something else entirely.
+    const { checkIn, advance } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    advance(PENDING_CAPTURE_TTL_MS + 1)
+    await failureOf(checkIn.submit(PERSON, captureId, ANSWERS))
+    expect(await failureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('expired')
+  })
+
+  it('tags a second capture started while one is running', async () => {
+    const { checkIn } = setup()
+    let release: (v: Vitals) => void = () => undefined
+    const slow = async (): Promise<Vitals> =>
+      await new Promise<Vitals>((resolve) => {
+        release = resolve
+      })
+    const running = checkIn.capture(PERSON, slow)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(await failureOf(checkIn.capture(PERSON, measure()))).toBe('capture-in-progress')
+    release(READING)
+    await running
+  })
+
+  it('does not tag a failure that came from the store, so it stays unknown', async () => {
+    // The store and the scorer carry no tag, and must not be guessed at: the
+    // screen says a short honest line rather than blaming the camera.
+    const { checkIn } = setup({
+      store: { list: async () => [], append: async () => Promise.reject(new Error('disk full')) },
+    })
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    expect(await failureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('unknown')
   })
 })

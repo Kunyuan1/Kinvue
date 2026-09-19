@@ -237,11 +237,21 @@ This matters more the further away the caregiver is. From the same room, a faile
 is visible — someone watched it happen. From three hours away, a discarded one is
 indistinguishable from silence, which is what #44 is about.
 
-**The three failures that are not this.** No API key, a camera another application is
-holding, and a reading that has expired are setup and hardware. None of them is about the
-person, none of them is stored as a check-in, and each says so in its own words rather
-than arriving as a raw error string. `core/capture/failure.ts` tells them apart by a tag
-carried inside the message, because an Error crossing IPC keeps nothing else.
+**The failures that are not this.** No API key — or a key the service rejects — is setup;
+a camera another application is holding is hardware. Neither is about the person, neither
+is stored as a check-in, and each says so in its own words rather than arriving as a raw
+error string. `core/capture/failure.ts` tells them apart by a tag carried inside the
+message, because an Error crossing IPC keeps nothing else. The tag is also what keeps a
+*rejected* key from being reported as a busy camera: the SDK only discovers it at session
+start, so it arrives on the same path as a real camera fault and is told apart by the
+SDK's own error code, not by the call site guessing.
+
+**An expired reading is neither of those.** It is a timer, and grouping it with setup and
+hardware hides the harder question: the person sat down, the camera measured well, they
+answered, and a clock ran out. Today that day is discarded, which is the very thing the
+paragraph above argues against. The TTL itself is right — a reading must not be stored
+beside answers about a different moment — but "these two cannot be one check-in" is not
+the same as "neither exists". Left open deliberately, and it belongs with #44.
 
 ---
 

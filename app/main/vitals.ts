@@ -9,7 +9,13 @@ import {
 // protobuf class has been registered with setMetricsClass(). The `/messages`
 // entry point ships the generated class and returns a typed Metrics.
 import { decodeMetrics } from '@smartspectra/node-sdk/messages'
-import { failureTag } from '@core/capture/failure'
+import {
+  CaptureCancelledError,
+  MissingApiKeyError,
+  captureError,
+  sdkErrorCode,
+  sdkFailure,
+} from './capture-errors'
 import type { CaptureGuidance } from '@core/capture/guidance'
 import type { SdkFrame } from './frames'
 import type { Vitals } from '@core/session/types'
@@ -80,15 +86,8 @@ export type SdkShapePinned = [
   Assert<keyof HrvReading extends keyof Entry<SdkCardio['hrv']> ? true : false>,
 ]
 
-export class MissingApiKeyError extends Error {
-  constructor() {
-    super(
-      `${failureTag('no-api-key')}: SMARTSPECTRA_API_KEY is not set. Register free at ` +
-        'https://physiology.presagetech.com/auth/register and put the key in .env',
-    )
-    this.name = 'MissingApiKeyError'
-  }
-}
+// Both live in `capture-errors.ts`, which the SDK-free suite can import.
+export { CaptureCancelledError, MissingApiKeyError }
 
 /**
  * What the person in front of the camera should do differently, in their words.
@@ -166,14 +165,6 @@ export interface CaptureOptions {
   signal?: AbortSignal
 }
 
-/** Thrown when the person stopped the capture. Not a failure to report as one. */
-export class CaptureCancelledError extends Error {
-  constructor() {
-    super(`${failureTag('cancelled')}: the reading was stopped.`)
-    this.name = 'CaptureCancelledError'
-  }
-}
-
 /**
  * Run one measurement and reduce the SDK's sample stream to summary values.
  *
@@ -232,9 +223,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
         // Thrown inside an SDK callback, so nothing here would catch it and
         // the capture would resolve as if the lost samples never existed.
         cleanUp()
-        reject(
-          new Error(`${failureTag('camera-unavailable')}: could not decode metrics — ${String(err)}`),
-        )
+        reject(captureError('camera-unavailable', 'could not decode metrics.', err))
       }
     })
 
@@ -277,11 +266,13 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       { once: true },
     )
 
-    sdk.on('error', (_code: number, message: string) => {
+    sdk.on('error', (code: number, message: string) => {
       cleanUp()
-      // The SDK's own failures are the camera's: a device another application
-      // is holding, a pipeline that gave up. Not a fact about the person.
-      reject(new Error(`${failureTag('camera-unavailable')}: SmartSpectra — ${message}`))
+      // Not all of the SDK's failures are the camera's. A key that is present
+      // but rejected, expired or out of credit surfaces here, and calling that
+      // a busy camera sends the person to close a video call that was never
+      // the problem. `sdkFailure` keeps the two apart (KV-7).
+      reject(captureError(sdkFailure(code), `SmartSpectra — ${message}`))
     })
 
     const timer = setTimeout(() => {
@@ -295,8 +286,14 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       sdk.start()
     } catch (err) {
       cleanUp()
-      // Opening the camera is where "another application is using it" lands.
-      reject(new Error(`${failureTag('camera-unavailable')}: ${String(err)}`))
+      // Opening the camera is where "another application is using it" lands —
+      // but a rejected key throws from `start()` too, so the code decides
+      // which it was rather than the call site assuming. The original error
+      // rides along as `cause`: the tag must be in the message to cross IPC,
+      // the class and stack need not be lost to a log on this side.
+      const code = sdkErrorCode(err)
+      const failure = code === undefined ? 'camera-unavailable' : sdkFailure(code)
+      reject(captureError(failure, 'the camera could not be started.', err))
     }
   })
 }

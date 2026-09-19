@@ -43,7 +43,13 @@ const SUBMIT_FAILURE: Record<CaptureFailure, string> = {
   'camera-unavailable': 'The reading could not be saved. Taking a new one is worth a go.',
   'capture-in-progress': 'One moment — the last reading is still finishing.',
   cancelled: 'The reading was stopped, so there is nothing to save.',
-  unknown: 'The check-in could not be saved. Taking a new reading is worth a go.',
+  // Says nothing about taking a new reading, deliberately. Every untagged
+  // write failure lands here — a full disk, a permission, a corrupt file —
+  // and `createCheckIn` refiles the held reading on exactly that path, so the
+  // answers and the capture are both still submittable. Sending the person to
+  // the camera would spend a good 30-second reading and four answers to fail
+  // in the same way (KV-7).
+  unknown: 'The check-in could not be saved. Trying again is worth a go.',
 }
 
 /** Add a fifth question to `ANSWER_STEPS` and this follows it. */

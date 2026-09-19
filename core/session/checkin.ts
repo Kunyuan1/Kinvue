@@ -57,6 +57,11 @@ export function createCheckIn(deps: CheckInDeps): CheckIn {
   // The newest successful capture, submitted or not. A reading is only ever
   // submittable while it is this one.
   let latestCaptureId: string | null = null
+  // The reading whose TTL ran out, remembered so that pressing Save twice
+  // gives one answer rather than two. Without it the second press falls
+  // through to "that is not the latest capture", and one state has told the
+  // person two different things.
+  let expiredCaptureId: string | null = null
   let capturing = false
 
   return {
@@ -88,6 +93,11 @@ export function createCheckIn(deps: CheckInDeps): CheckIn {
     },
 
     async submit(personId, captureId, answers) {
+      if (captureId === expiredCaptureId) {
+        throw new Error(
+          `${failureTag('expired')}: that capture is too old to go with answers given now.`,
+        )
+      }
       if (captureId !== latestCaptureId) {
         throw new Error(
           `${failureTag('no-capture')}: that is not the latest capture — a newer one replaced ` +
@@ -106,6 +116,7 @@ export function createCheckIn(deps: CheckInDeps): CheckIn {
       }
       if (deps.now().getTime() - Date.parse(pending.capturedAt) > PENDING_CAPTURE_TTL_MS) {
         pending = null
+        expiredCaptureId = captureId
         throw new Error(
           `${failureTag('expired')}: that capture is too old to go with answers given now.`,
         )
