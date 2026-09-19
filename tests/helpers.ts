@@ -25,6 +25,7 @@ export function session(
     capturedAt?: string
     id?: string
     seeded?: true
+    timeZone?: string
   } = {},
 ): SessionRecord {
   const record: SessionRecord = {
@@ -36,6 +37,9 @@ export function session(
   }
   // Set only when true, as core/seed does: absent means measured.
   if (overrides.seeded === true) record.seeded = true
+  // Likewise absent unless asked for: a record with no zone is a real case
+  // (anything written before KV-28, or a device that could not say).
+  if (overrides.timeZone !== undefined) record.timeZone = overrides.timeZone
   return record
 }
 
@@ -51,9 +55,10 @@ export function history(count: number, overrides: Partial<Vitals> = {}): Session
 }
 
 /**
- * The same, but invented — what `core/seed` writes for the demo persona. Dated
- * before `history()`'s days so a mixed history has one check-in per day, as a
- * real store does, rather than pairs sharing an instant.
+ * The same, but invented — the shape `core/seed` writes for the demo persona,
+ * including the zone it stamps on every record. Dated before `history()`'s days
+ * so a mixed history has one check-in per day, as a real store does, rather
+ * than pairs sharing an instant.
  */
 export function seededHistory(count: number, overrides: Partial<Vitals> = {}): SessionRecord[] {
   return Array.from({ length: count }, (_, i) =>
@@ -61,6 +66,7 @@ export function seededHistory(count: number, overrides: Partial<Vitals> = {}): S
       id: `seed-${i}`,
       capturedAt: new Date(Date.UTC(2026, 7, i + 1, 9)).toISOString(),
       seeded: true,
+      timeZone: 'Europe/London',
       vitals: overrides,
     }),
   )

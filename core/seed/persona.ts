@@ -57,6 +57,11 @@ export function seedDemoHistory(
   endingAt: Date = new Date(),
   seed = 20260915,
 ): SessionRecord[] {
+  // The invented days are laid out with setDate/setHours, which are host-local,
+  // so the zone stamped on them has to be the host's too. Taking one as a
+  // parameter would let a caller label 09:15 here as 09:15 somewhere else, and
+  // every seeded day would land on the wrong date (KV-28).
+  const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
   const r = rng(seed)
   const out: SessionRecord[] = []
 
@@ -73,6 +78,7 @@ export function seedDemoHistory(
       id: `seed-${DEMO_PERSON_ID}-${i}`,
       personId: DEMO_PERSON_ID,
       capturedAt: at.toISOString(),
+      timeZone,
       seeded: true,
       vitals: {
         pulseRateBpm: Math.round(USUAL.pulseRateBpm + jitter(4)),

@@ -24,11 +24,29 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
   // Composed from the stored counts, not read out of the summary: it appears
   // only where something on this card actually leans on the baseline (KV-53).
   const seededNote = assessment === undefined ? null : seededBaselineDisclosure(assessment)
-  const when = new Date(capturedAt).toLocaleDateString(undefined, {
+  // The day and time where the person was, not where whoever is reading this
+  // happens to be (KV-28). Formatted in the recorded zone directly — turning it
+  // into a date string and parsing that back would depend on the locale's
+  // format and renders the words "Invalid Date" when it does not match.
+  // A record written before zones existed falls back to the reader's zone,
+  // because nothing better is knowable about it.
+  const zone = session.timeZone === '' ? undefined : session.timeZone
+  const inZone = zone === undefined ? {} : { timeZone: zone }
+  const at = new Date(capturedAt)
+  const when = at.toLocaleDateString(undefined, {
+    ...inZone,
     weekday: 'short',
     month: 'short',
     day: 'numeric',
   })
+  // When the reader is somewhere else, the date alone is ambiguous: "Tue, Sep
+  // 15" could be a day stale or an hour old. The time and place say which, and
+  // are the only thing on the card that shows the zone doing any work.
+  const readerZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  const elsewhere = zone !== undefined && zone !== readerZone
+  const localTime = elsewhere
+    ? `${at.toLocaleTimeString(undefined, { ...inZone, hour: 'numeric', minute: '2-digit' })}, ${zone.split('/').pop()?.replace(/_/g, ' ') ?? zone}`
+    : null
 
   return (
     <article className="rounded-xl border border-(--color-line) bg-(--color-raised) p-5">
@@ -43,6 +61,7 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
         <div className="shrink-0 text-right text-sm text-(--color-muted)">
           <p>{when}</p>
           {/* Seeded demo history is labelled, never passed off as measured. */}
+          {localTime !== null && <p className="text-xs">{localTime}</p>}
           {seeded === true && <p className="text-xs">seeded demo data</p>}
         </div>
       </header>

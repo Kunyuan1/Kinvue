@@ -26,6 +26,14 @@ export interface CheckInDeps {
   score: (session: SessionRecord, history: readonly SessionRecord[]) => Assessment
   now: () => Date
   newId: () => string
+  /**
+   * The device's IANA time zone, read when a capture starts, or undefined when
+   * the device cannot say. Injected rather than read here so the rules stay
+   * testable, and captured with the reading rather than with the answers: a
+   * check-in taken at 23:50 and submitted at 00:05 belongs to the day it was
+   * taken (KV-28).
+   */
+  timeZone: () => string | undefined
 }
 
 export interface CheckIn {
@@ -39,6 +47,7 @@ interface Held {
   captureId: string
   personId: string
   capturedAt: string
+  timeZone: string | undefined
   vitals: Vitals
 }
 
@@ -54,15 +63,20 @@ export function createCheckIn(deps: CheckInDeps): CheckIn {
       // One camera, one capture. A second SDK instance on the same device is not
       // a second reading, it is two broken ones.
       if (capturing) throw new Error('A capture is already running.')
-      capturing = true
+      // Both read before the lock is taken. `now()` cannot throw, but reading a
+      // zone can — and a throw after `capturing = true` would leave the lock set
+      // for the life of the process, so every later capture would fail with "a
+      // capture is already running" about a camera nothing is using.
       const capturedAt = deps.now().toISOString()
+      const timeZone = deps.timeZone()
+      capturing = true
       try {
         // The previous reading stays submittable until this one succeeds. A
         // retake that fails (camera busy, SDK error) must not throw away a good
         // reading the person is still looking at.
         const vitals = await measure()
         const captureId = deps.newId()
-        pending = { captureId, personId, capturedAt, vitals }
+        pending = { captureId, personId, capturedAt, timeZone, vitals }
         latestCaptureId = captureId
         return { captureId, vitals }
       } finally {
@@ -102,6 +116,9 @@ export function createCheckIn(deps: CheckInDeps): CheckIn {
           vitals: held.vitals,
           answers,
         }
+        // Set only when the device could say: a record with no zone is honest,
+        // a record with a guessed one is not (KV-28).
+        if (held.timeZone !== undefined) session.timeZone = held.timeZone
         // Scored against prior sessions only — the new one must not be in its
         // own baseline. See core/baseline.
         session.assessment = deps.score(session, history)

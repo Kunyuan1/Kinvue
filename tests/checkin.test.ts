@@ -24,6 +24,7 @@ function setup(overrides: Partial<CheckInDeps> = {}) {
     score: scoreSession,
     now: () => new Date(clock),
     newId: () => `id-${next++}`,
+    timeZone: () => 'Europe/London',
     ...overrides,
   }
   return {
@@ -51,6 +52,36 @@ describe('createCheckIn', () => {
     expect(record.personId).toBe(PERSON)
     expect(record.capturedAt).toBe(START.toISOString())
     expect(record.assessment).toBeDefined()
+  })
+
+  it('records the zone the capture was taken in', async () => {
+    const { checkIn, stored } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+
+    expect(stored[0]?.timeZone).toBe('Europe/London')
+  })
+
+  it('leaves the zone off when the device cannot say', async () => {
+    // Missing is not zero, and a guessed zone cannot be told from a real one.
+    const { checkIn, stored } = setup({ timeZone: () => undefined })
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+
+    expect(stored[0]).not.toHaveProperty('timeZone')
+  })
+
+  it('does not latch the capture lock when reading the zone throws', async () => {
+    const { checkIn } = setup({
+      timeZone: () => {
+        throw new Error('no tzdata')
+      },
+    })
+
+    await expect(checkIn.capture(PERSON, measure())).rejects.toThrow('no tzdata')
+    // A latched lock would make every later capture fail about a camera that
+    // nothing is using, until the app restarts.
+    await expect(checkIn.capture(PERSON, measure())).rejects.toThrow('no tzdata')
   })
 
   it('stores a double submit once', async () => {

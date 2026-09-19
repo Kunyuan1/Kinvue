@@ -7,6 +7,7 @@ import { createCheckIn } from '@core/session/checkin'
 import type { CaptureResult, SessionRecord } from '@core/session/types'
 import { parseCheckInAnswers, parsePersonId } from '@core/session/validate'
 import { DEMO_PERSON_ID, seedDemoHistory } from '@core/seed/persona'
+import { deviceTimeZone } from './device'
 import { loadDotEnv } from './env'
 import { captureVitals } from './vitals'
 
@@ -79,6 +80,9 @@ function registerIpc(): void {
     score: scoreSession,
     now: () => new Date(),
     newId: randomUUID,
+    // Where the check-in device is, read fresh each capture: a laptop travels.
+    // Undefined when the device cannot establish its zone — see device.ts.
+    timeZone: deviceTimeZone,
   })
 
   ipcMain.handle('sessions:list', async (_e, personId: unknown): Promise<SessionRecord[]> => {

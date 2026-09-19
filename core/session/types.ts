@@ -110,8 +110,23 @@ export interface SessionRecord {
   id: string
   /** Which cared-for person this check-in belongs to. */
   personId: string
-  /** ISO-8601 timestamp of the capture. */
+  /** ISO-8601 timestamp of the capture, in UTC. */
   capturedAt: string
+  /**
+   * IANA time zone of the device that recorded the capture, e.g.
+   * `Europe/London` (KV-28). An IANA name, never a UTC offset: offsets change
+   * with daylight saving and cannot be applied to another date.
+   *
+   * `capturedAt` alone cannot say which day a check-in belongs to for the
+   * person who gave it — 23:30 in one zone is tomorrow in another — and a
+   * caregiver reading from elsewhere needs *their* today, not the reader's.
+   * That meaning cannot be recovered afterwards, so it is recorded at capture.
+   *
+   * Optional because a record written before this existed has no zone, and a
+   * missing zone must not be guessed into a wrong one. Absent means unknown;
+   * `localDateOf` answers null rather than inventing a day.
+   */
+  timeZone?: string
   vitals: Vitals
   answers: CheckInAnswers
   /** Written by the scorer; absent until the session has been scored. */
