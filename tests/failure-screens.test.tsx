@@ -105,10 +105,12 @@ describe('CaptureScreen says which failure it was', () => {
     // wrong yet" and shows a countdown and a Stop button for a capture that is
     // over. `App`'s catch calls `setCapturing(false)` on null for that reason.
     render(<CaptureScreen failure={null} onCancel={noop} />)
-    const text = document.body.textContent ?? ''
-    expect(text).toMatch(/look at the camera/i)
-    expect(text).toMatch(/stop/i)
-    expect(text).not.toMatch(/could not|went wrong|not set up/i)
+    // The live state is asserted through its control rather than its prose:
+    // the guidance wording is meant to be rewritten freely, per the note at the
+    // top of this file, and a Stop button offered for a capture that is over is
+    // the part that would actually mislead.
+    expect(screen.getByRole('button', { name: /stop/i })).toBeDefined()
+    expect(document.body.textContent).not.toMatch(/could not|went wrong|not set up/i)
   })
 
   it('shows nothing at all when there is no failure', () => {
