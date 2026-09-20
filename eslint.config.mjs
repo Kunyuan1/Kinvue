@@ -40,30 +40,46 @@ export default tseslint.config(
      */
     files: ['core/**/*.ts', 'core/**/*.tsx'],
     rules: {
-      '@typescript-eslint/no-restricted-imports': [
+      // The base rule, not `@typescript-eslint/no-restricted-imports`, which is
+      // deprecated as of typescript-eslint 8.64.0 and slated for removal in v9.
+      // The only reason to prefer the plugin version was `allowTypeImports`,
+      // which this config does not use — and **must not gain**. `import type`
+      // is erased, so the argument for allowing it is that it cannot break the
+      // suite; the reason to ban it anyway is above. A React or Electron type
+      // in a signature couples core/ just as firmly, and the next value import
+      // is then a one-word change with nothing objecting. The base rule already
+      // flags type-only imports, verified against each form below.
+      'no-restricted-imports': [
         'error',
         {
-          paths: [
-            {
-              name: 'electron',
-              message:
-                'core/ must not import Electron. Wire it up in app/main instead, and keep the ' +
-                'rule here testable without a harness.',
-            },
-            {
-              name: '@smartspectra/node-sdk',
-              message:
-                'core/ must not import the SDK: the package loads a native runtime through ' +
-                'koffi at import time, so importing it here makes the suite need hardware. ' +
-                'Reduce the SDK shape in app/main, as app/main/metrics.ts does.',
-            },
-          ],
+          // Everything is a pattern rather than a mix of `paths` and
+          // `patterns`. An exact `paths` name matches the package and nothing
+          // under it, which is how `electron/main` walked past this rule while
+          // `@smartspectra/node-sdk/*` — two entries down, written with more
+          // care — did not. One entry per thing banned, stated once, so the
+          // subpath and the bare name cannot drift apart or carry different
+          // reasons (KV-15).
           patterns: [
             {
+              // `electron/main`, `electron/common`, `electron/renderer` and
+              // `electron/utility` are all real modules the typings declare,
+              // and the subpath form is what Electron's own docs push for
+              // main-process code in 28+. This repo is on 44.
+              group: ['electron', 'electron/*'],
+              message:
+                'core/ must not import Electron, including its subpaths. Wire it up in ' +
+                'app/main instead, and keep the rule here testable without a harness.',
+            },
+            {
+              // Matches on path segments, so this also catches
+              // `@testing-library/react` and any future `@scope/react`. That is
+              // the right outcome — none of them belong in core/ — so the
+              // wording covers them rather than naming React alone.
               group: ['react', 'react-dom', 'react/*', 'react-dom/*'],
               message:
-                'core/ must not import React. It is shared by more than one front end, and ' +
-                'the rules here are meant to be tested without rendering anything.',
+                'core/ must not import React or anything named for it, testing libraries ' +
+                'included. It is shared by more than one front end, and the rules here are ' +
+                'meant to be tested without rendering anything.',
             },
             {
               group: ['@renderer', '@renderer/*'],
@@ -72,10 +88,28 @@ export default tseslint.config(
                 'app/renderer imports core/, never the reverse.',
             },
             {
-              group: ['@smartspectra/node-sdk/*'],
+              group: ['@smartspectra/node-sdk', '@smartspectra/node-sdk/*'],
               message:
-                'core/ must not import the SDK, including its subpaths. Reduce the SDK shape ' +
-                'in app/main, as app/main/metrics.ts does.',
+                'core/ must not import the SDK, including its subpaths: the package loads a ' +
+                'native runtime through koffi at import time, so importing it here makes the ' +
+                'suite need hardware. Reduce the SDK shape in app/main, as ' +
+                'app/main/metrics.ts does.',
+            },
+            {
+              // The direction, not another package. Banning the packages left
+              // the shortest route to them open: `../../app/main/metrics` is
+              // lint-clean and imports the SDK, so a test touching that core
+              // module needs hardware without tripping any entry above.
+              //
+              // It is the likelier accident, not the exotic one. `@core/*` and
+              // `@renderer/*` have tsconfig aliases; `app/main` has none, so a
+              // relative path is the only spelling available to someone in
+              // core/ who wants a type from it.
+              group: ['**/app/**', '../app/**', '../../app/**'],
+              message:
+                'core/ must not import from app/, in any spelling. The dependency runs the ' +
+                'other way: app/ imports core/, never the reverse. A relative path into ' +
+                'app/main reaches the SDK and makes the suite need hardware.',
             },
           ],
         },

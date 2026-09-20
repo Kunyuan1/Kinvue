@@ -30,6 +30,7 @@
     "app/**/*.ts",
     "app/**/*.tsx",
     "core/**/*.ts",
+    "core/**/*.tsx",
     "tests/**/*.ts",
     "tests/**/*.tsx",
     "*.config.ts"

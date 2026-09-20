@@ -160,9 +160,17 @@ nothing else: the capture and its guidance carry on.
 ## Why `core/` has no framework imports
 
 `core/` is plain TypeScript: no Electron, no React, no DOM. **ESLint enforces it** (KV-15):
-`eslint.config.mjs` restricts `electron`, `react`, `react-dom`, `@renderer/*` and the
-SmartSpectra SDK inside `core/**`, and `npm run lint` is part of the check set the
-pre-commit hook and CI both run. Type-only imports are restricted too — `import type` is
+`eslint.config.mjs` restricts `electron`, `react`, `react-dom`, `@renderer/*`, the
+SmartSpectra SDK and **any import from `app/`** inside `core/**`, and `npm run lint` is
+part of the check set the pre-commit hook and CI both run.
+
+The last of those is the one that makes it a rule about direction rather than a list of
+today's offenders. Banning the packages alone left the shortest route to them open: a
+relative `../../app/main/metrics` is not any of the restricted names, and that module
+imports the SDK, so a test touching the core file that imported it would need hardware.
+It is also the likelier accident rather than the exotic one, because `@core/*` and
+`@renderer/*` have tsconfig aliases and `app/main` has none — a relative path is the only
+spelling available to someone who wants a type from it. Type-only imports are restricted too — `import type` is
 erased and would not break the suite, but a React type in a signature couples `core/` to
 the framework just as firmly, and the next value import would then be a one-word change
 with nothing objecting.
@@ -170,6 +178,12 @@ with nothing objecting.
 It was enforced socially until then, which was the risk: the day it broke would be the
 day the tests started needing a harness, and nothing would have announced it. The rule
 buys two things.
+
+**What the rule does not see:** any `import()` expression, including one with a literal
+specifier — `await import('electron')` in `core/` lints clean. That is a limitation of
+`no-restricted-imports` rather than of this config, and it is the honest edge of the
+guard: it catches someone adding a normal import, which is the realistic case, not
+someone routing around it.
 
 - **The rules are testable without a harness.** `npm test` runs in a plain node
   environment with no camera, no API key and no Electron. A suite that needed a window
