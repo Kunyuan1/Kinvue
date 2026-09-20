@@ -33,10 +33,23 @@ export interface Vitals {
    * reported a confidence at all. It says how far to trust the numbers beside
    * it, not what share of the capture was usable.
    *
-   * Zero when nothing reported a confidence at all, which is not the same as
-   * a measured zero and is still conflated with one; see KV-12.
+   * **Null when nothing reported a confidence at all, which is not zero.** A
+   * capture can produce a rate carrying no confidence and no stable flag —
+   * a value and a timestamp and nothing else, seen in a real run. Reporting
+   * that as `0` claimed the SDK had rated the reading and found it worthless.
+   * A capture nothing vouched for has its verdict withheld rather than scored:
+   * saying "we cannot tell you today" is truer than implying a number can be
+   * trusted because nothing contradicted it.
+   *
+   * **The verdict is withheld; the reading is not.** The card still shows the
+   * rate, because the reading is real and hiding a measurement the camera
+   * actually took would be its own dishonesty — what must not happen is the
+   * *comparison*, which is the part that would treat an unvouched-for number as
+   * reliable. The sentence under the number says so outright.
+   *
+   * Records written before this carry a number and never null.
    */
-  confidence: number
+  confidence: number | null
   /**
    * Whether the SDK marked the reading being reported as settled. The flag is
    * declared on the rate readings and on HRV alike, but in the KV-1 capture

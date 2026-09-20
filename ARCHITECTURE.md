@@ -69,6 +69,32 @@ was too low, or there is not yet enough history. All three mean the same thing t
 caregiver — *we cannot tell you today* — and none of them should be rendered as a green
 tick.
 
+A fourth produces it as of KV-12: the camera measured something and **nothing rated it**.
+A rate can arrive carrying a value and a timestamp and nothing else — no confidence, no
+stable flag — and scoring that would present a number as reliable on the grounds that
+nothing said otherwise.
+
+The card says which one happened, because they are different things for a caregiver to be
+told and collapsing them hides which. The four sentences, verbatim, are the ones in
+`UNUSABLE_SUMMARY`:
+
+| Reason | What the card says |
+|---|---|
+| Nothing measured | *"The camera ran but no reading came out of it, so today is not being compared."* |
+| Capture too short | *"The camera did not run for long enough to use, so today is not being compared."* |
+| Nothing rated it | *"The camera did not say how reliable this reading was, so today is not being compared."* |
+| Rated, and poor | *"The camera reading was not clear enough to use, so today is not being compared."* |
+
+Each states its own consequence rather than describing the failure and stopping — the
+consequence is the part a caregiver acts on. The reason is picked in that order, which is
+not the order of the thresholds: a capture cut short is reported as short even when it
+also arrived unrated, because the duration explains the missing rating and is the one
+thing the person in front of the camera could have done differently.
+
+The verdict is withheld; the reading is not. The rate is still shown, because it is real
+— what is withheld is the comparison against their usual, which is the part that would
+treat an unvouched-for number as reliable.
+
 The tempting shortcut is to score the four questions alone when the camera reading fails
 and call the result `normal`. That would quietly redefine what the flag means, on exactly
 the days the measurement failed, without telling anyone. The rules that fired are still
@@ -96,7 +122,7 @@ written against the type definitions and got this wrong:
   them. Over one 60-second capture: 1309 messages carried breathing only, 118 cardio
   only, 90 both. Reading every vital off the final message therefore returns whatever
   that one happened to hold and silently drops the rest — which is exactly what the code
-  did, and `captureIsUsable` still called the result usable, so nothing surfaced the loss.
+  did, and the scorer still found no reason to withhold, so nothing surfaced the loss.
 - **Only the rate readings actually reported `stable` and `confidence`** —
   `cardio.pulseRate[]` and `breathing.rate[]`. The schema declares both on HRV too, but
   across that capture no HRV entry set either, so a rule keyed on "the last HRV the SDK

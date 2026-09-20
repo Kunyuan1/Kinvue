@@ -171,9 +171,12 @@ export interface CaptureOptions {
  * Reduction rules, and why: each metric keeps the newest reading the SDK marked
  * stable — falling back to the newest of any kind — because a metrics message
  * carries only what was ready at that instant, and the last thing to arrive can
- * be an outlier the SDK itself distrusted. Confidence is averaged across the
- * whole capture rather than taken from the final reading, so one good moment at
- * the end cannot make a poor capture look clean. See `createVitalsAccumulator`.
+ * be an outlier the SDK itself distrusted. Confidence comes from the readings
+ * being reported rather than from the whole capture (#70): per metric, averaged
+ * over the ones the SDK called settled, then averaged across the metrics that
+ * rated anything — and `null`, not `0`, when none of them did (KV-12), because
+ * a rating nobody gave is not a rating of worthless. See
+ * `createVitalsAccumulator`.
  */
 export async function captureVitals(options: CaptureOptions = {}): Promise<Vitals> {
   const { durationSec = 30, onProgress, onGuidance, onFrame, signal } = options
