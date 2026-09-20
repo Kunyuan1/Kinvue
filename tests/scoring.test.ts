@@ -123,6 +123,7 @@ describe('scoreSession', () => {
     expect(assessment.flag).toBe('insufficient-signal')
     expect(assessment.baselineSeededSessions).toBe(MIN_BASELINE_SESSIONS - 1)
   })
+
   it('withholds a verdict on a reading nothing rated', () => {
     // A rate can arrive with no confidence and no stable flag at all. Scoring
     // it would present a number as reliable because nothing contradicted it,
@@ -133,23 +134,71 @@ describe('scoreSession', () => {
     expect(assessment.summary).toContain('did not say how reliable')
   })
 
-  it('says something different about a reading it judged and found poor', () => {
-    const assessment = scoreSession(session({ vitals: { confidence: 0.2 } }), history(5))
+  it('treats a confidence the record never carried as unrated', () => {
+    // `store.ts` casts parsed JSON to SessionRecord without validating it, so a
+    // record missing the key reads as undefined rather than null. `undefined <
+    // MIN_CAPTURE_CONFIDENCE` is false, so a strict null check would score it as
+    // fully vouched-for — the exact failure KV-12 closes.
+    const record = session()
+    delete (record.vitals as { confidence?: number | null }).confidence
+    const assessment = scoreSession(record, history(5))
 
     expect(assessment.flag).toBe('insufficient-signal')
-    expect(assessment.summary).toContain('not clear enough')
+    expect(assessment.summary).toContain('did not say how reliable')
+  })
+
+  it('still scores a record written before confidence could be null', () => {
+    // A pre-KV-12 record carries a number and never null. The null handling must
+    // not have changed what those records do.
+    const assessment = scoreSession(session({ vitals: { confidence: 0.9 } }), history(5))
+
+    expect(assessment.flag).toBe('normal')
+    expect(assessment.summary).not.toContain('camera')
   })
 
   it('does not call an empty capture unrated', () => {
     // Nothing measured is its own thing; "the camera did not say how reliable
-    // this reading was" would be describing a reading that does not exist.
+    // this reading was" would be describing a reading that does not exist — and
+    // so would "not clear enough to use", which is what this used to borrow.
     const nothing = { pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null }
     const assessment = scoreSession(
       session({ vitals: { ...nothing, confidence: null } }),
       history(5),
     )
 
-    expect(assessment.summary).toContain('not clear enough')
+    expect(assessment.summary).toContain('no reading came out of it')
+    expect(assessment.summary).not.toContain('not clear enough')
+    expect(assessment.summary).not.toContain('did not say how reliable')
+  })
+
+  it('names the short capture rather than the reading it cut off', () => {
+    // A capture stopped early can also arrive unrated. The duration is the one
+    // thing the person in front of the camera could have done differently, and
+    // it is why the reading is thin — so it is the reason worth giving.
+    const assessment = scoreSession(
+      session({ vitals: { durationSec: MIN_CAPTURE_SECONDS - 12, confidence: null } }),
+      history(5),
+    )
+
+    expect(assessment.summary).toContain('long enough')
+    expect(assessment.summary).not.toContain('did not say how reliable')
+  })
+
+  it('tells the caregiver what every unusable capture means for the day', () => {
+    // Three of these described the failure and stopped; only the unrated one
+    // said what followed from it. The consequence is the part a caregiver acts
+    // on, so each sentence carries it.
+    const nothing = { pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null }
+    const cases = [
+      session({ vitals: { ...nothing, confidence: null } }),
+      session({ vitals: { durationSec: MIN_CAPTURE_SECONDS - 1 } }),
+      session({ vitals: { confidence: null } }),
+      session({ vitals: { confidence: 0.2 } }),
+    ]
+
+    for (const s of cases) {
+      expect(scoreSession(s, history(5)).summary).toContain('today is not being compared')
+    }
   })
 
   it('does not let the scored session contaminate its own baseline', () => {

@@ -145,7 +145,7 @@ export interface VitalsAccumulator {
  * carried breathing only, 118 cardio only, and 90 both. So each metric is kept
  * as it arrives rather than read off the final message — reading them all off
  * one message returns whatever that message happened to hold and silently
- * discards the rest, while `captureIsUsable` still calls the check-in usable.
+ * discards the rest, while `unusableReason` still finds no reason to withhold.
  */
 export function createVitalsAccumulator(): VitalsAccumulator {
   const pulse = new Tracked<RateReading>()
@@ -192,9 +192,15 @@ export function createVitalsAccumulator(): VitalsAccumulator {
         // What it is not: a measure of how much of the capture was usable. A
         // metric that settled once after a noisy minute reports that settled
         // reading and its confidence, because that reading is what the card
-        // shows. Whether a metric whose own confidence is poor should be
-        // nulled instead of counted here is left open, because it changes when
-        // rules fire.
+        // shows.
+        //
+        // Left open, because it changes which rules fire rather than whether a
+        // verdict is given: whether a metric whose own confidence is absent or
+        // poor should be nulled here instead of averaged over. The absent case
+        // is the one KV-12 is about, and at capture granularity it is closed
+        // while at metric granularity it is not — a capture where pulse rated
+        // 0.9 and breathing rated nothing averages to 0.9, passes the gate, and
+        // lets a rule quote a breathing rate nothing vouched for.
         confidence: averageOf(definedConfidences(tracked)),
         // True when the reading being reported is one the SDK itself called
         // settled. Reported per capture; nothing gates on it yet (KV-12).

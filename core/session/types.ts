@@ -41,6 +41,12 @@ export interface Vitals {
    * saying "we cannot tell you today" is truer than implying a number can be
    * trusted because nothing contradicted it.
    *
+   * **The verdict is withheld; the reading is not.** The card still shows the
+   * rate, because the reading is real and hiding a measurement the camera
+   * actually took would be its own dishonesty — what must not happen is the
+   * *comparison*, which is the part that would treat an unvouched-for number as
+   * reliable. The sentence under the number says so outright.
+   *
    * Records written before this carry a number and never null.
    */
   confidence: number | null

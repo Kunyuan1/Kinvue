@@ -35,20 +35,58 @@ export function hasScorableVitals(vitals: Vitals): boolean {
   )
 }
 
-function captureIsUsable(session: SessionRecord): boolean {
+/** Why a capture cannot be scored. Null means it can. */
+type UnusableReason = 'nothing-measured' | 'too-short' | 'unrated' | 'low-confidence'
+
+/**
+ * The first reason this capture cannot be scored, or null when it can.
+ *
+ * A reason rather than a boolean because the card has to say which one
+ * happened. A capture cut short at 8s and a capture the SDK rated 0.2 are
+ * different things for a caregiver to be told, and the same argument that
+ * separates "unrated" from "judged and found poor" separates these.
+ *
+ * Order is deliberate, and it is not the order of the thresholds. The reason
+ * given is the one that explains the most and that someone could act on:
+ * nothing measured at all comes first because the other three describe a
+ * reading; a short capture comes before either confidence branch because a
+ * camera that ran for 8s is *why* the reading is thin or unrated, and it is
+ * the one thing the person in front of it could have done differently.
+ */
+function unusableReason(session: SessionRecord): UnusableReason | null {
   const { confidence, durationSec } = session.vitals
+  if (!hasScorableVitals(session.vitals)) return 'nothing-measured'
+  if (durationSec < MIN_CAPTURE_SECONDS) return 'too-short'
   // Unrated is not usable (KV-12). The SDK sometimes reports a rate without
   // rating it at all, and scoring that would present a number as reliable on
   // the grounds that nothing said otherwise — the reassuring direction, which
   // is the worse one. Withholding says the true thing: we cannot tell today.
-  if (confidence === null || confidence < MIN_CAPTURE_CONFIDENCE) return false
-  if (durationSec < MIN_CAPTURE_SECONDS) return false
-  return hasScorableVitals(session.vitals)
+  //
+  // Tested for shape, not for null: `store.ts` casts parsed JSON to
+  // `SessionRecord` unvalidated, so a record missing the key reads as
+  // `undefined`, and `undefined < 0.5` is false — an absent confidence would
+  // otherwise score as fully vouched-for, the exact failure KV-12 closes.
+  if (typeof confidence !== 'number') return 'unrated'
+  if (confidence < MIN_CAPTURE_CONFIDENCE) return 'low-confidence'
+  return null
 }
 
-/** True when the camera measured something that nothing then rated. */
-function isUnrated(session: SessionRecord): boolean {
-  return session.vitals.confidence === null && hasScorableVitals(session.vitals)
+/**
+ * What the card says when the capture could not be used.
+ *
+ * Each states its own consequence. Three of these used to describe the failure
+ * and stop, leaving the caregiver to infer what it meant for the day; the
+ * fourth said it outright. Saying it every time costs four words and removes
+ * the inference.
+ */
+const UNUSABLE_SUMMARY: Record<UnusableReason, string> = {
+  'nothing-measured':
+    'The camera ran but no reading came out of it, so today is not being compared.',
+  'too-short': 'The camera did not run for long enough to use, so today is not being compared.',
+  unrated:
+    'The camera did not say how reliable this reading was, so today is not being compared.',
+  'low-confidence':
+    'The camera reading was not clear enough to use, so today is not being compared.',
 }
 
 function fire(rules: readonly Rule[], session: SessionRecord, baseline: Baseline): FiredRule[] {
@@ -130,15 +168,15 @@ export function scoreSession(
   // An unusable capture is reported as such rather than scored on the answers
   // alone — a flag that silently means "we only asked three questions" would
   // misrepresent what the app actually measured.
-  if (!captureIsUsable(session)) {
+  const unusable = unusableReason(session)
+  if (unusable !== null) {
     return {
       flag: 'insufficient-signal',
       firedRules: [],
-      // Two different things, said differently: a reading the camera judged and
-      // found poor, and one it never judged at all.
-      summary: isUnrated(session)
-        ? 'The camera did not say how reliable this reading was, so today is not being compared.'
-        : 'The camera reading was not clear enough to use today.',
+      // Four different things, said differently: nothing measured, a capture cut
+      // short, a reading the camera judged and found poor, and one it never
+      // judged at all. Collapsing any of them hides which one happened.
+      summary: UNUSABLE_SUMMARY[unusable],
       baselineSessions: baseline.sessions,
       baselineSeededSessions: baseline.seededSessions,
     }
