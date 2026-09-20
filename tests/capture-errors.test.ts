@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 // Type-only, so it is erased and the native runtime is never loaded. The
 // values it describes could not be imported here for that reason.
 import type { SmartSpectraErrorCodeValue } from '@smartspectra/node-sdk'
-import { classifyCaptureError } from '@core/capture/failure'
+import { classifyCaptureError, taggedFailure } from '@core/capture/failure'
 import {
   CaptureCancelledError,
   MissingApiKeyError,
@@ -32,8 +32,14 @@ describe('the errors the capture throws', () => {
     expect(classifyCaptureError(new MissingApiKeyError())).toBe('no-api-key')
   })
 
-  it('tags a stopped reading as cancelled', () => {
-    expect(classifyCaptureError(new CaptureCancelledError())).toBe('cancelled')
+  it('tags a stopped reading as cancelled, and shows the person nothing', () => {
+    // The tag is still emitted — that contract is unchanged, and something
+    // reading the wire can tell a stop from a fault. What changed in KV-75 is
+    // that the capture screen is given null rather than a sentence: the person
+    // pressed stop, so they already know.
+    const stopped = new CaptureCancelledError()
+    expect(taggedFailure(stopped)).toBe('cancelled')
+    expect(classifyCaptureError(stopped)).toBeNull()
   })
 
   it('tags what captureError builds, and keeps the original as cause', () => {

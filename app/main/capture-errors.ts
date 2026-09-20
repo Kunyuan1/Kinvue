@@ -1,4 +1,4 @@
-import { failureTag, type CaptureFailure } from '@core/capture/failure'
+import { failureTag, type TaggedFailure } from '@core/capture/failure'
 
 /**
  * The errors the capture throws, and what the SDK's own error codes mean.
@@ -56,7 +56,7 @@ const ACCOUNT_CODES: ReadonlySet<number> = new Set([
  */
 export function sdkFailure(
   code: number,
-): Extract<CaptureFailure, 'no-api-key' | 'camera-unavailable'> {
+): Extract<TaggedFailure, 'no-api-key' | 'camera-unavailable'> {
   return ACCOUNT_CODES.has(code) ? 'no-api-key' : 'camera-unavailable'
 }
 
@@ -75,7 +75,7 @@ export function sdkErrorCode(err: unknown): number | undefined {
  * rides along rather than being flattened into the text.
  */
 export function captureError(
-  failure: CaptureFailure,
+  failure: TaggedFailure,
   detail: string,
   cause?: unknown,
 ): Error {

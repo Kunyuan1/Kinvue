@@ -1,7 +1,11 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
-import { classifyCaptureError, type CaptureFailure } from '@core/capture/failure'
+import {
+  classifyCaptureError,
+  type CaptureFailure,
+  type SubmitFailure,
+} from '@core/capture/failure'
 import CaptureScreen from '@renderer/components/CaptureScreen'
 import QuestionFlow from '@renderer/components/QuestionFlow'
 
@@ -44,6 +48,8 @@ afterEach(cleanup)
 const noop = (): void => undefined
 
 describe('CaptureScreen says which failure it was', () => {
+  // Only what the capture path can raise. The submit-path entries this table
+  // used to carry were copy no press could reach (KV-75).
   const cases: [CaptureFailure, RegExp][] = [
     // Check 1: rename .env. Not a registration URL and a dotfile instruction.
     ['no-api-key', /not set up yet/i],
@@ -51,8 +57,6 @@ describe('CaptureScreen says which failure it was', () => {
     ['camera-unavailable', /camera could not be used/i],
     // Check 3: Take a reading pressed twice.
     ['capture-in-progress', /one moment/i],
-    ['no-capture', /no longer available/i],
-    ['expired', /no longer current/i],
     ['unknown', /could not be taken/i],
   ]
 
@@ -82,6 +86,33 @@ describe('CaptureScreen says which failure it was', () => {
     }
   })
 
+  it('classifies a capture the person stopped themselves as nothing to say', () => {
+    // The flat union carried a "Stopped — the camera is off" card that nothing
+    // could ever render (KV-75). This is the half of that worth pinning: the
+    // classifier answers null, which is the no-failure state.
+    const failure = classifyCaptureError(new Error('kinvue/cancelled: the reading was stopped.'))
+    expect(failure).toBeNull()
+  })
+
+  it('renders the live capture, not an error, when there is no failure to show', () => {
+    // What `failure={null}` actually produces — asserted rather than assumed.
+    // An earlier version of this test looked for the deleted "stopped" copy,
+    // which no longer exists in `FAILURE` and so could not have appeared
+    // whatever the component did; it passed by describing absent strings.
+    //
+    // This is also why `App` must not mount this screen on a cancellation: null
+    // means the capture ended, but the component reads it as "nothing has gone
+    // wrong yet" and shows a countdown and a Stop button for a capture that is
+    // over. `App`'s catch calls `setCapturing(false)` on null for that reason.
+    render(<CaptureScreen failure={null} onCancel={noop} />)
+    // The live state is asserted through its control rather than its prose:
+    // the guidance wording is meant to be rewritten freely, per the note at the
+    // top of this file, and a Stop button offered for a capture that is over is
+    // the part that would actually mislead.
+    expect(screen.getByRole('button', { name: /stop/i })).toBeDefined()
+    expect(document.body.textContent).not.toMatch(/could not|went wrong|not set up/i)
+  })
+
   it('shows nothing at all when there is no failure', () => {
     render(<CaptureScreen failure={null} onCancel={noop} />)
     expect(screen.queryByText(/not set up yet/i)).toBeNull()
@@ -89,7 +120,7 @@ describe('CaptureScreen says which failure it was', () => {
 })
 
 describe('QuestionFlow says which failure it was', () => {
-  const show = (failure: CaptureFailure): string => {
+  const show = (failure: SubmitFailure): string => {
     render(<QuestionFlow failure={failure} onDone={noop} onCancel={noop} submitting={false} />)
     return document.body.textContent ?? ''
   }
@@ -113,7 +144,7 @@ describe('QuestionFlow says which failure it was', () => {
   })
 
   it('leaks no tag into what the person reads', () => {
-    for (const failure of ['expired', 'no-capture', 'unknown', 'no-api-key'] as const) {
+    for (const failure of ['expired', 'no-capture', 'unknown'] as const) {
       cleanup()
       expect(show(failure)).not.toMatch(/kinvue\//)
     }
@@ -127,7 +158,9 @@ describe('end to end, from the thrown error to the sentence', () => {
       "Error invoking remote method 'checkin:capture': Error: kinvue/no-api-key: " +
         'SMARTSPECTRA_API_KEY is not set.',
     )
-    render(<CaptureScreen failure={classifyCaptureError(overIpc)} onCancel={noop} />)
+    const failure = classifyCaptureError(overIpc)
+    expect(failure).toBe('no-api-key')
+    render(<CaptureScreen failure={failure} onCancel={noop} />)
 
     expect(screen.getByText(/not set up yet/i)).toBeDefined()
     // The old behaviour: this exact string in front of the cared-for person.
