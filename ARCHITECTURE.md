@@ -159,8 +159,17 @@ nothing else: the capture and its guidance carry on.
 
 ## Why `core/` has no framework imports
 
-`core/` is plain TypeScript: no Electron, no React, no DOM. This is enforced socially
-rather than by tooling right now, and it buys two things.
+`core/` is plain TypeScript: no Electron, no React, no DOM. **ESLint enforces it** (KV-15):
+`eslint.config.mjs` restricts `electron`, `react`, `react-dom`, `@renderer/*` and the
+SmartSpectra SDK inside `core/**`, and `npm run lint` is part of the check set the
+pre-commit hook and CI both run. Type-only imports are restricted too — `import type` is
+erased and would not break the suite, but a React type in a signature couples `core/` to
+the framework just as firmly, and the next value import would then be a one-word change
+with nothing objecting.
+
+It was enforced socially until then, which was the risk: the day it broke would be the
+day the tests started needing a harness, and nothing would have announced it. The rule
+buys two things.
 
 - **The rules are testable without a harness.** `npm test` runs in a plain node
   environment with no camera, no API key and no Electron. A suite that needed a window
@@ -171,7 +180,9 @@ rather than by tooling right now, and it buys two things.
 
 `core/session/store.ts` is the one exception: it imports `node:fs` and is main-process
 only. It is kept in `core/` because it is a domain concern rather than an Electron one,
-and the file says so at the top.
+and the file says so at the top. Node built-ins are deliberately *not* restricted — the
+rule bans frameworks and the SDK, not the platform — so that exception needs no carve-out
+in the config. If `core/` is ever wanted in a browser, that is the line to revisit.
 
 ---
 
