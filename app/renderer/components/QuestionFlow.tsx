@@ -45,6 +45,13 @@ const SUBMIT_FAILURE: Record<SubmitFailure, string> = {
   // answers and the capture are both still submittable. Sending the person to
   // the camera would spend a good 30-second reading and four answers to fail
   // in the same way (KV-7).
+  //
+  // Since KV-75 this bucket also holds capture-path tags, which `ON_SUBMIT`
+  // routes here because this screen has no words for them. The refiling
+  // argument above does not cover those — it is about untagged write failures
+  // — and nothing can raise one on this path today, because the camera has
+  // been closed since before the questions were asked. If that ever changes,
+  // this sentence needs revisiting rather than widening (KV-80).
   unknown: 'The check-in could not be saved. Trying again is worth a go.',
 }
 

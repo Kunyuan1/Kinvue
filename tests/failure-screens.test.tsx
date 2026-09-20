@@ -86,15 +86,29 @@ describe('CaptureScreen says which failure it was', () => {
     }
   })
 
-  it('shows nothing for a capture the person stopped themselves', () => {
-    // `classifyCaptureError` returns null for cancellation, and null is the
-    // no-failure state, so the stop the person asked for produces no error
-    // screen. The flat union carried a "Stopped — the camera is off" card here
-    // that nothing could ever render (KV-75).
+  it('classifies a capture the person stopped themselves as nothing to say', () => {
+    // The flat union carried a "Stopped — the camera is off" card that nothing
+    // could ever render (KV-75). This is the half of that worth pinning: the
+    // classifier answers null, which is the no-failure state.
     const failure = classifyCaptureError(new Error('kinvue/cancelled: the reading was stopped.'))
     expect(failure).toBeNull()
-    render(<CaptureScreen failure={failure} onCancel={noop} />)
-    expect(document.body.textContent).not.toMatch(/stopped|camera is off/i)
+  })
+
+  it('renders the live capture, not an error, when there is no failure to show', () => {
+    // What `failure={null}` actually produces — asserted rather than assumed.
+    // An earlier version of this test looked for the deleted "stopped" copy,
+    // which no longer exists in `FAILURE` and so could not have appeared
+    // whatever the component did; it passed by describing absent strings.
+    //
+    // This is also why `App` must not mount this screen on a cancellation: null
+    // means the capture ended, but the component reads it as "nothing has gone
+    // wrong yet" and shows a countdown and a Stop button for a capture that is
+    // over. `App`'s catch calls `setCapturing(false)` on null for that reason.
+    render(<CaptureScreen failure={null} onCancel={noop} />)
+    const text = document.body.textContent ?? ''
+    expect(text).toMatch(/look at the camera/i)
+    expect(text).toMatch(/stop/i)
+    expect(text).not.toMatch(/could not|went wrong|not set up/i)
   })
 
   it('shows nothing at all when there is no failure', () => {

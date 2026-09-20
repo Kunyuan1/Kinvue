@@ -18,7 +18,7 @@ import {
 const overIpc = (message: string): Error =>
   new Error(`Error invoking remote method 'checkin:capture': Error: ${message}`)
 
-describe('classifyCaptureError', () => {
+describe('reading a failure off the wire', () => {
   it('finds the tag inside what IPC wraps around it', () => {
     const thrown = overIpc(`${failureTag('no-api-key')}: SMARTSPECTRA_API_KEY is not set.`)
     expect(classifyCaptureError(thrown)).toBe('no-api-key')

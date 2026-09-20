@@ -67,24 +67,54 @@ export type SubmitFailure =
 export const failureTag = (failure: TaggedFailure): string => `kinvue/${failure}`
 
 /**
- * Every failure a throw can carry a tag for.
+ * Where every tag goes on the capture path. `null` means say nothing.
  *
- * A record rather than an array: `readonly TaggedFailure[]` accepts any subset,
- * so a member added to the union could be tagged correctly at the throw and
- * still be missing here — classified as `unknown` at the screen, with no
- * compile error anywhere to say so. A record makes that a type error in this
- * file, beside the type it belongs to.
+ * **Total over `TaggedFailure`, and that is the point.** Listing only the tags
+ * a screen has words for left the *routing* decision unenforced: a member added
+ * to the union could be tagged correctly at the throw, read back correctly off
+ * the wire, and then classified `unknown` on both screens with no compile error
+ * anywhere saying nobody had decided where it belonged. That is the KV-7 bug
+ * with a different table forgetting it — same tagged throw, same `unknown` at
+ * the screen, same silence from the compiler.
+ *
+ * A total record makes adding a tag an error *here*, beside the type, and the
+ * error is "you have not said what this means on each path" rather than "you
+ * have not listed it". It also removes the cast this used to need, which is
+ * what let `CaptureFailure` drift out of `TaggedFailure` unnoticed: the value
+ * side is checked against `CaptureFailure`, so a member of one that is not a
+ * member of the other no longer compiles.
  */
-const TAGGABLE: Record<TaggedFailure, true> = {
-  'no-api-key': true,
-  'camera-unavailable': true,
-  'capture-in-progress': true,
-  cancelled: true,
-  expired: true,
-  'no-capture': true,
+const ON_CAPTURE: Record<TaggedFailure, CaptureFailure | null> = {
+  'no-api-key': 'no-api-key',
+  'camera-unavailable': 'camera-unavailable',
+  'capture-in-progress': 'capture-in-progress',
+  // They pressed stop, so they already know. Null, not a sentence.
+  cancelled: null,
+  // The capture path cannot raise these. If one ever arrives it is not a
+  // capture failure this screen has words for, so it gets the same answer as
+  // an untagged throw. See the note on `classifyCaptureError` about what that
+  // answer currently says out loud.
+  expired: 'unknown',
+  'no-capture': 'unknown',
 }
 
-const TAGGED = Object.keys(TAGGABLE) as readonly TaggedFailure[]
+/** Where every tag goes on the submit path. Never null: see `classifySubmitError`. */
+const ON_SUBMIT: Record<TaggedFailure, SubmitFailure> = {
+  // The submit path cannot raise any of these — they are all about the camera,
+  // which has been closed since before the questions were asked.
+  'no-api-key': 'unknown',
+  'camera-unavailable': 'unknown',
+  'capture-in-progress': 'unknown',
+  cancelled: 'unknown',
+  expired: 'expired',
+  'no-capture': 'no-capture',
+}
+
+/**
+ * Derived from the routing rather than from a third list: a tag that nothing
+ * routes is a tag no screen decided about, and that is now impossible to write.
+ */
+const TAGGED = Object.keys(ON_CAPTURE) as readonly TaggedFailure[]
 
 /**
  * The tag a thrown message carries, or null when it carries none.
@@ -117,32 +147,25 @@ export function taggedFailure(error: unknown): TaggedFailure | null {
   return found
 }
 
-/** Which tags the capture screen has words for. */
-const SHOWN_ON_CAPTURE: Record<Exclude<CaptureFailure, 'unknown'>, true> = {
-  'no-api-key': true,
-  'camera-unavailable': true,
-  'capture-in-progress': true,
-}
-
-/** Which tags the questions screen has words for. */
-const SHOWN_ON_SUBMIT: Record<Exclude<SubmitFailure, 'unknown'>, true> = {
-  expired: true,
-  'no-capture': true,
-}
-
 /**
  * What a failed capture should say, or null when it should say nothing.
  *
  * Null is cancellation: the person stopped the reading themselves and does not
- * need to be told what they just did. Everything the capture path cannot
- * produce — an expired reading, a missing one — is `unknown` rather than a
- * confident wrong sentence, on the same principle as an untagged throw.
+ * need to be told what they just did. A caller that gets null has nothing to
+ * show *and nothing left to show it on* — see `App`, which leaves the capture
+ * screen rather than rendering it with no failure.
+ *
+ * A tag belonging to the other path answers `unknown`, the same as an untagged
+ * throw. Worth being honest about what that means today: `unknown` on this
+ * screen reads "Something went wrong with the camera", which is a claim, not a
+ * shrug. It is the right answer for a genuinely unknown failure and the wrong
+ * one for a reading that merely aged out. Nothing can reach it on this path as
+ * the code stands — the partition holds — so this is a hazard in the copy, not
+ * a live bug, and it is KV-80 rather than a sentence changed here.
  */
 export function classifyCaptureError(error: unknown): CaptureFailure | null {
   const tag = taggedFailure(error)
-  if (tag === 'cancelled') return null
-  if (tag === null) return 'unknown'
-  return tag in SHOWN_ON_CAPTURE ? (tag as CaptureFailure) : 'unknown'
+  return tag === null ? 'unknown' : ON_CAPTURE[tag]
 }
 
 /**
@@ -153,6 +176,5 @@ export function classifyCaptureError(error: unknown): CaptureFailure | null {
  */
 export function classifySubmitError(error: unknown): SubmitFailure {
   const tag = taggedFailure(error)
-  if (tag === null) return 'unknown'
-  return tag in SHOWN_ON_SUBMIT ? (tag as SubmitFailure) : 'unknown'
+  return tag === null ? 'unknown' : ON_SUBMIT[tag]
 }

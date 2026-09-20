@@ -260,12 +260,18 @@ describe('createCheckIn tags every refusal it can raise', () => {
    * `unknown` rather than quietly passing.
    */
   const thrownBy = async (p: Promise<unknown>): Promise<unknown> => {
-    try {
-      await p
-      return new Error('did not throw')
-    } catch (err) {
-      return err
-    }
+    // The sentinel must not be something a classifier can answer for. Returning
+    // an untagged Error here made "it resolved" and "it threw without a tag"
+    // both read as `unknown`, so a refusal could stop happening altogether and
+    // the assertions below would stay green — the block's whole claim is that
+    // dropping a tag turns one of them red.
+    const resolved = Symbol('resolved')
+    const settled: unknown = await p.then(
+      () => resolved,
+      (err: unknown) => err,
+    )
+    if (settled === resolved) throw new Error('expected a rejection, but the promise resolved')
+    return settled
   }
   const submitFailureOf = async (p: Promise<unknown>): Promise<string> =>
     classifySubmitError(await thrownBy(p))

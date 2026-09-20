@@ -158,7 +158,20 @@ export default function App(): React.JSX.Element {
       })
       .catch((e: unknown) => {
         if (started !== captureGeneration.current) return
-        setCaptureFailure(classifyCaptureError(e))
+        const failure = classifyCaptureError(e)
+        // Null is cancellation: nothing to say, and nothing left to show it on
+        // either. Leaving `capturing` true would keep the capture screen up —
+        // frozen self-view, a countdown stuck at its last tick and a Stop button
+        // — for a capture that has already ended, shown to the one person in
+        // this app who is being filmed. Today the generation guard in
+        // `stopCapture` means a user-pressed stop never reaches here, but that
+        // is an invariant in another file, and a cancellation the person did
+        // not ask for would arrive on exactly this path.
+        if (failure === null) {
+          setCapturing(false)
+          return
+        }
+        setCaptureFailure(failure)
       })
   }, [])
 
