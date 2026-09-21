@@ -287,7 +287,7 @@ export default function App(): React.JSX.Element {
           Take a reading
         </button>
         <span className="text-sm text-(--color-muted)">
-          Up to {captureSeconds} seconds in front of the camera — usually less.
+          Up to {captureSeconds} seconds in front of the camera.
         </span>
       </div>
 

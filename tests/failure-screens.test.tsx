@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, render, screen } from '@testing-library/react'
 import {
   classifyCaptureError,
   type CaptureFailure,
@@ -34,6 +34,7 @@ beforeEach(() => {
     configurable: true,
     value: {
       onCaptureProgress: vi.fn(() => off),
+      onCaptureSettling: vi.fn(() => off),
       onCaptureGuidance: vi.fn(() => off),
       onCaptureFrame: vi.fn(() => off),
     },
@@ -147,6 +148,37 @@ describe('CaptureScreen says which failure it was', () => {
     // arrived, which is usually sooner (#63).
     expect(document.body.textContent).toMatch(/up to/i)
     expect(document.body.textContent).not.toMatch(/about \d+ seconds/i)
+  })
+
+  it('stops promising seconds once main says the capture is finishing', () => {
+    // The countdown is derived from the ceiling, so a capture that collected
+    // everything at 40s of a 90s ceiling read "Up to 50 seconds left" and then
+    // vanished — wrong by most of a minute on exactly the runs the early stop
+    // is for, and leaving "Finishing up" reachable only when something never
+    // arrived (#63).
+    let announceSettling = (): void => undefined
+    const off = (): void => undefined
+    Object.defineProperty(window, 'kinvue', {
+      configurable: true,
+      value: {
+        onCaptureProgress: vi.fn(() => off),
+        onCaptureSettling: vi.fn((fn: () => void) => {
+          announceSettling = fn
+          return off
+        }),
+        onCaptureGuidance: vi.fn(() => off),
+        onCaptureFrame: vi.fn(() => off),
+      },
+    })
+
+    render(<CaptureScreen failure={null} onCancel={noop} captureSeconds={90} />)
+    expect(document.body.textContent).toMatch(/up to 90 seconds/i)
+
+    act(() => {
+      announceSettling()
+    })
+    expect(document.body.textContent).toMatch(/finishing up/i)
+    expect(document.body.textContent).not.toMatch(/seconds left/i)
   })
 
   it('shows nothing at all when there is no failure', () => {

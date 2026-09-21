@@ -314,13 +314,54 @@ describe('hasEveryMetric', () => {
   it('does not wait for sdnn, which nothing scores on', () => {
     // `hasScorableVitals` leaves hrvSdnnMs out for the same reason; waiting for
     // it would be waiting for something no rule will read.
+    //
+    // `hrvMsg(41, 52)` sets both fields, so it could not have failed for the
+    // reason it names — requiring sdnn too would have left it green. An entry
+    // with rmssd and no sdnn is what actually tests the claim.
     const acc = createVitalsAccumulator()
     acc.add(breathingMsg(15))
     acc.add(pulseMsg(72))
-    acc.add(hrvMsg(41, 52))
-    const result = acc.result(60)
-    expect(result.hrvSdnnMs).not.toBeNull()
+    acc.add({ cardio: { hrv: [{ rmssd: 41, meanNn: 600, baevsky: 2.5 }] } } as MetricsLike)
+
+    expect(acc.result(60).hrvSdnnMs).toBeNull()
     expect(acc.hasEveryMetric()).toBe(true)
+  })
+
+  it('is false for an HRV entry that never set its own rmssd', () => {
+    // The inverse, and the one that matters: `Tracked.observe` sets `latest`
+    // for any entry that arrives, so `chosen` was defined the moment *any* HRV
+    // appeared — while `result` reads the field with `Object.hasOwn`. proto3
+    // omits `rmssd` when it is zero, so this shape made the predicate true
+    // while `hrvRmssdMs` came back null: the capture stopped believing HRV had
+    // arrived, the card showed nothing for it, and `hrv-drop` could not fire.
+    const acc = createVitalsAccumulator()
+    acc.add(breathingMsg(15))
+    acc.add(pulseMsg(72))
+    acc.add({ cardio: { hrv: [{ sdnn: 52, meanNn: 600, baevsky: 2.5 }] } } as MetricsLike)
+
+    expect(acc.result(60).hrvRmssdMs).toBeNull()
+    expect(acc.hasEveryMetric()).toBe(false)
+  })
+
+  it('cannot disagree with what the card would show, for any metric', () => {
+    // Derived from `result` rather than asserted beside it, so a future field
+    // change cannot make the two drift apart again.
+    const shapes: MetricsLike[] = [
+      { cardio: { hrv: [{ sdnn: 52 }] } } as MetricsLike,
+      { cardio: { pulseRate: [{ confidence: 90, stable: true }] } } as MetricsLike,
+      { breathing: { rate: [{ confidence: 70 }] } } as MetricsLike,
+    ]
+    for (const shape of shapes) {
+      const acc = createVitalsAccumulator()
+      acc.add(breathingMsg(15))
+      acc.add(pulseMsg(72))
+      acc.add(hrvMsg(41, 52))
+      acc.add(shape)
+      const { pulseRateBpm, breathingRateBrpm, hrvRmssdMs } = acc.result(60)
+      expect(acc.hasEveryMetric()).toBe(
+        pulseRateBpm !== null && breathingRateBrpm !== null && hrvRmssdMs !== null,
+      )
+    }
   })
 
   it('agrees with what the card would show', () => {

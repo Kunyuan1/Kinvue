@@ -178,10 +178,20 @@ export function createVitalsAccumulator(): VitalsAccumulator {
     },
 
     hasEveryMetric() {
-      // `chosen` rather than a reading count: it is what `result` reports, so
-      // this answers "would a card have all three" rather than "did something
-      // arrive on each channel".
-      return pulse.chosen !== undefined && breathing.chosen !== undefined && hrv.chosen !== undefined
+      // Asked *through* `result`, not alongside it. A separate presence test
+      // drifted from the one that decides the reported value: `chosen` is set
+      // by `Tracked.observe` for any entry that arrives, while `result` reads
+      // the field with `Object.hasOwn` — so an HRV entry carrying `sdnn` and
+      // no own `rmssd`, which is what proto3 sends when rmssd is zero, made
+      // this true while `hrvRmssdMs` came back null. The capture then stopped
+      // believing HRV had arrived, the card showed nothing for it, and
+      // `hrv-drop` could not fire: the failure this predicate exists to end,
+      // reached faster and with the capture asserting it had not happened.
+      //
+      // Deriving it means the two cannot disagree. The duration is irrelevant
+      // to presence, so it is passed as zero.
+      const { pulseRateBpm, breathingRateBrpm, hrvRmssdMs } = this.result(0)
+      return pulseRateBpm !== null && breathingRateBrpm !== null && hrvRmssdMs !== null
     },
 
     result(durationSec) {

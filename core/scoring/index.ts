@@ -15,7 +15,16 @@ export const ELEVATED_SEVERITY_THRESHOLD = 0.6
 /** Below this mean SDK confidence the capture is not scored at all. */
 export const MIN_CAPTURE_CONFIDENCE = 0.5
 
-/** Captures shorter than this are not scored. The UI asks for ~30s. */
+/**
+ * Captures shorter than this are not scored.
+ *
+ * Load-bearing since captures became adaptive (KV-63). A fixed clock plus
+ * `SHORTEST_USEFUL_SECONDS` made this unreachable; an early stop can end a
+ * capture as soon as every metric has arrived, so `captureVitals` checks the
+ * seconds recorded so far against this before it stops. Without that, a
+ * capture that collected all three metrics quickly would be stored as
+ * `too-short` — the verdict for one that collected nothing.
+ */
 export const MIN_CAPTURE_SECONDS = 20
 
 /**
@@ -36,7 +45,7 @@ export function hasScorableVitals(vitals: Vitals): boolean {
 }
 
 /** Why a capture cannot be scored. Null means it can. */
-type UnusableReason = 'nothing-measured' | 'too-short' | 'unrated' | 'low-confidence'
+export type UnusableReason = 'nothing-measured' | 'too-short' | 'unrated' | 'low-confidence'
 
 /**
  * The first reason this capture cannot be scored, or null when it can.
@@ -53,9 +62,9 @@ type UnusableReason = 'nothing-measured' | 'too-short' | 'unrated' | 'low-confid
  * camera that ran for 8s is *why* the reading is thin or unrated, and it is
  * the one thing the person in front of it could have done differently.
  */
-function unusableReason(session: SessionRecord): UnusableReason | null {
-  const { confidence, durationSec } = session.vitals
-  if (!hasScorableVitals(session.vitals)) return 'nothing-measured'
+export function unusableReason(vitals: Vitals): UnusableReason | null {
+  const { confidence, durationSec } = vitals
+  if (!hasScorableVitals(vitals)) return 'nothing-measured'
   if (durationSec < MIN_CAPTURE_SECONDS) return 'too-short'
   // Unrated is not usable (KV-12). The SDK sometimes reports a rate without
   // rating it at all, and scoring that would present a number as reliable on
@@ -174,7 +183,7 @@ export function scoreSession(
   // An unusable capture is reported as such rather than scored on the answers
   // alone — a flag that silently means "we only asked three questions" would
   // misrepresent what the app actually measured.
-  const unusable = unusableReason(session)
+  const unusable = unusableReason(session.vitals)
   if (unusable !== null) {
     return {
       flag: 'insufficient-signal',

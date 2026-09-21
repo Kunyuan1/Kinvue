@@ -90,6 +90,10 @@ export default function CaptureScreen({
   captureSeconds: number
 }): React.JSX.Element {
   const [elapsedSec, setElapsedSec] = useState(0)
+  // Main says so once every metric has arrived. Without it the countdown runs
+  // off the ceiling, so a capture that finished at 40s read "Up to 50 seconds
+  // left" and then vanished (#63).
+  const [settling, setSettling] = useState(false)
   const [guidance, setGuidance] = useState<string | null>(null)
   const [frameUrl, setFrameUrl] = useState<string | null>(null)
   const [previewFailed, setPreviewFailed] = useState(false)
@@ -99,6 +103,7 @@ export default function CaptureScreen({
   useEffect(() => {
     // Subscriptions only, which are safe to set up and tear down twice.
     const offProgress = window.kinvue.onCaptureProgress(setElapsedSec)
+    const offSettling = window.kinvue.onCaptureSettling(() => setSettling(true))
     const offGuidance = window.kinvue.onCaptureGuidance(setGuidance)
     const offFrame = window.kinvue.onCaptureFrame((jpeg) => {
       // Main says null when this camera's frames cannot be converted. Nothing
@@ -123,6 +128,7 @@ export default function CaptureScreen({
 
     return () => {
       offProgress()
+      offSettling()
       offGuidance()
       offFrame()
       for (const url of [latestUrl.current, previousUrl.current]) {
@@ -195,7 +201,7 @@ export default function CaptureScreen({
       )}
 
       <p className="mt-2 text-sm text-(--color-muted)">
-        {remaining > 0 ? `Up to ${remaining} seconds left` : 'Finishing up…'}
+        {settling || remaining === 0 ? 'Finishing up…' : `Up to ${remaining} seconds left`}
       </p>
 
       {/* Stops the camera for real: main abandons the capture and releases the

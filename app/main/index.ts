@@ -157,6 +157,11 @@ function registerIpc(): void {
             },
             // The mitigation for the likeliest capture failure: bad framing the
             // person cannot see. Best-effort for the same reason as progress.
+            onSettling: () => {
+              if (!event.sender.isDestroyed()) {
+                event.sender.send("checkin:settling");
+              }
+            },
             onGuidance: (advice) => {
               // Checked before the gate is consulted, not after: offering advice
               // records it as shown, so asking a dead window afterwards would let
