@@ -10,6 +10,7 @@ import { DEMO_PERSON_ID, seedDemoHistory } from "@core/seed/persona";
 import { createGuidanceGate } from "@core/capture/guidance";
 import { deviceTimeZone } from "./device";
 import { createFrameThrottle, toPreview } from "./frames";
+import { createInFlightCapture } from "./in-flight";
 import { loadDotEnv } from "./env";
 import { captureVitals } from "./vitals";
 
@@ -98,11 +99,12 @@ function registerIpc(): void {
   );
 
   // The capture currently running, so it can be abandoned. One at a time is
-  // already enforced in core/session/checkin.ts.
-  let inFlight: AbortController | null = null;
+  // already enforced in core/session/checkin.ts, and the slot is claimed only
+  // once that lock is taken — see `in-flight.ts` for why the order matters.
+  const inFlight = createInFlightCapture();
 
   ipcMain.handle("checkin:cancel", (): void => {
-    inFlight?.abort();
+    inFlight.abort();
   });
 
   ipcMain.handle(
@@ -119,11 +121,16 @@ function registerIpc(): void {
       let toldNoPreview = false;
 
       const controller = new AbortController();
-      inFlight = controller;
 
       try {
-        return await checkIn.capture(id, () =>
-          captureVitals({
+        return await checkIn.capture(id, () => {
+          // Claimed here, not before the call: `checkIn.capture` refuses a
+          // second capture while one is running, and claiming first took the
+          // slot from the capture doing the refusing — leaving the running one
+          // with nothing able to abort it and the camera on for its full run
+          // (KV-76). This callback only runs once the lock is held.
+          inFlight.claim(controller);
+          return captureVitals({
             signal: controller.signal,
             onProgress: (elapsedSec) => {
               // Progress is best-effort: a closed window must not fail the capture.
@@ -182,10 +189,12 @@ function registerIpc(): void {
               if (jpeg.length === 0) return;
               event.sender.send("checkin:frame", jpeg);
             },
-          }),
-        );
+          });
+        });
       } finally {
-        inFlight = null;
+        // Only when it is still ours: a refused capture must not release the
+        // slot belonging to the capture that refused it.
+        inFlight.release(controller);
       }
     },
   );

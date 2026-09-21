@@ -50,8 +50,24 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
       'on your side.',
   },
   'capture-in-progress': {
-    title: 'One moment',
-    detail: 'The last reading is still finishing. Try again in a few seconds.',
+    // Says what the button does, because the button is the only way out of
+    // this state (KV-76). The previous reading is still running, but waiting
+    // for it gains nothing — by the time it finishes this screen has moved on
+    // and its result is dropped — and this screen offers no way to retry. So
+    // "try again in a few seconds" asked for a wait that led nowhere, next to
+    // the one control that ends the thing being waited for.
+    //
+    // "in a moment" is load-bearing and not hedging. Stopping frees the *lock*
+    // at once, but `cleanUp` in app/main/vitals.ts tears the device down with
+    // an unawaited `stopAsync().then(destroy)`, so pressing Take a reading
+    // instantly can still find the camera held and land the person on "another
+    // program may have it open" — pointed at a video call that was never the
+    // problem, moments after being told a new reading can start. Awaiting the
+    // teardown before the lock clears is the real fix (KV-84).
+    title: 'The camera is still busy',
+    detail:
+      'It has not finished with the reading before this one. Going back will stop that ' +
+      'reading and release the camera, so a new one can start in a moment.',
   },
   unknown: {
     title: 'The reading could not be taken',

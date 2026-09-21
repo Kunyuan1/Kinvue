@@ -56,13 +56,29 @@ describe('CaptureScreen says which failure it was', () => {
     // Check 2: the camera held by something else.
     ['camera-unavailable', /camera could not be used/i],
     // Check 3: Take a reading pressed twice.
-    ['capture-in-progress', /one moment/i],
+    ['capture-in-progress', /camera is still busy/i],
     ['unknown', /could not be taken/i],
   ]
 
   it.each(cases)('renders %s as its own sentence', (failure, expected) => {
     render(<CaptureScreen failure={failure} onCancel={noop} />)
     expect(screen.getByText(expected)).toBeDefined()
+  })
+
+  it('does not ask the person to wait for a reading that is being discarded', () => {
+    // The only control here is Go back, which stops the running capture. The
+    // copy used to say "try again in a few seconds" beside it: a wait that
+    // gains nothing, since the reading is dropped when it lands and this
+    // screen offers no way to retry (KV-76).
+    render(<CaptureScreen failure="capture-in-progress" onCancel={noop} />)
+    const text = document.body.textContent ?? ''
+
+    // The negative half carries the KV-76 decision: no wait is asked for.
+    // The positive half says only that the copy names what the button does —
+    // pinning the sentence around it would make a reword a chore, which the
+    // note at the top of this file asks tests here not to do.
+    expect(text).not.toMatch(/try again|wait a few|in a few seconds/i)
+    expect(text).toMatch(/stop/i)
   })
 
   it('names no condition and shows no raw error string', () => {
