@@ -30,6 +30,13 @@ export function createInFlightCapture(): InFlightCapture {
   let current: AbortController | null = null
   return {
     claim(controller) {
+      // A claim while one is held is a caller that claimed too early — the
+      // capture already running is the one that owns the slot, and it keeps it.
+      // Without this the rule in the docblock lived only in *where* `index.ts`
+      // calls this, and `index.ts` imports Electron so nothing can test it:
+      // moving the call back above `checkIn.capture` reinstated KV-76 in full
+      // with every test still green.
+      if (current !== null) return
       current = controller
     },
     release(controller) {
@@ -39,6 +46,14 @@ export function createInFlightCapture(): InFlightCapture {
     },
     abort() {
       current?.abort()
+      // Cleared here rather than left to the owner's `release`. That release
+      // does happen today — `captureVitals` always settles on abort — but it
+      // happens in the module with no tests, and a capture path that ever
+      // swallowed an abort would leave the slot pointing at a dead controller
+      // and every later abort a silent no-op: the KV-76 symptom from the other
+      // end. `release` is identity-guarded, so the owner's later call is a
+      // harmless no-op.
+      current = null
     },
   }
 }

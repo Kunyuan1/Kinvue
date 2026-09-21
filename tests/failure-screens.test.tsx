@@ -73,8 +73,12 @@ describe('CaptureScreen says which failure it was', () => {
     render(<CaptureScreen failure="capture-in-progress" onCancel={noop} />)
     const text = document.body.textContent ?? ''
 
-    expect(text).not.toMatch(/try again|wait a|in a few seconds/i)
-    expect(text).toMatch(/going back will stop/i)
+    // The negative half carries the KV-76 decision: no wait is asked for.
+    // The positive half says only that the copy names what the button does —
+    // pinning the sentence around it would make a reword a chore, which the
+    // note at the top of this file asks tests here not to do.
+    expect(text).not.toMatch(/try again|wait a few|in a few seconds/i)
+    expect(text).toMatch(/stop/i)
   })
 
   it('names no condition and shows no raw error string', () => {
