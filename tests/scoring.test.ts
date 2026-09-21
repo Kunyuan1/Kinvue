@@ -201,6 +201,43 @@ describe('scoreSession', () => {
     }
   })
 
+  it('does not compare against a usual it does not have yet', () => {
+    // The card used to withhold the comparison and make it in consecutive
+    // sentences: "1 of 3 check-ins needed before daily comparisons start",
+    // then "Breathing was 16 breaths/min, above their usual 15" (KV-71).
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 16 } }), history(1))
+
+    expect(assessment.flag).toBe('insufficient-signal')
+    expect(assessment.summary).toContain('comparisons start')
+    expect(assessment.firedRules).toEqual([])
+  })
+
+  it('runs the answer rules while the baseline is building, and says so truthfully', () => {
+    // The sentence has always claimed the answer rules are what still ran.
+    // Until KV-71 every rule ran; now the claim is true.
+    const assessment = scoreSession(
+      session({ vitals: { breathingRateBrpm: 16 }, answers: { eatenToday: false } }),
+      history(1),
+    )
+
+    expect(assessment.firedRules.map((r) => r.id)).toEqual(['not-eaten'])
+  })
+
+  it('starts comparing on the check-in that makes the baseline mature', () => {
+    // The suppression is exactly as wide as MIN_BASELINE_SESSIONS, not wider.
+    const thin = scoreSession(
+      session({ vitals: { breathingRateBrpm: 16 } }),
+      history(MIN_BASELINE_SESSIONS - 1),
+    )
+    const mature = scoreSession(
+      session({ vitals: { breathingRateBrpm: 16 } }),
+      history(MIN_BASELINE_SESSIONS),
+    )
+
+    expect(thin.firedRules).toEqual([])
+    expect(mature.firedRules.map((r) => r.id)).toContain('breathing-elevated')
+  })
+
   it('does not let the scored session contaminate its own baseline', () => {
     const past = history(5)
     const before = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), past)
@@ -270,11 +307,21 @@ describe('seededBaselineDisclosure', () => {
     expect(note).toContain('seeded demo data')
   })
 
-  it('discloses when a withheld verdict still shows a rule quoting their usual', () => {
-    // The baseline is too thin for a verdict, but hrv-drop fires anyway and its
-    // explanation cites an invented "usual". The card must not stay silent.
+  it('has no rule quoting their usual to disclose while the baseline is thin', () => {
+    // This pinned the opposite until KV-71: hrv-drop fired against a two-session
+    // seeded baseline and its explanation cited an invented "usual", so the card
+    // had to disclose. A rule that quotes their usual no longer runs before
+    // there is a usual, so the situation needing disclosure cannot arise.
     const assessment = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), seededHistory(2))
     expect(assessment.flag).toBe('insufficient-signal')
+    expect(assessment.firedRules.map((r) => r.id)).not.toContain('hrv-drop')
+    expect(seededBaselineDisclosure(assessment)).toBeNull()
+  })
+
+  it('still discloses once the baseline is mature enough to be quoted', () => {
+    // The disclosure itself is untouched: the moment a rule can quote their
+    // usual, the card says whose usual it is.
+    const assessment = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), seededHistory(3))
     expect(assessment.firedRules.map((r) => r.id)).toContain('hrv-drop')
     expect(seededBaselineDisclosure(assessment)).toContain('seeded demo data')
   })

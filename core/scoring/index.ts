@@ -182,11 +182,28 @@ export function scoreSession(
     }
   }
 
-  const fired = fire(ALL_RULES, session, baseline)
+  // A rule that quotes "their usual" is not run until there is a usual to
+  // quote (KV-71). The sentence below has always said the answer rules are what
+  // still ran; until this, every rule ran and the card made the comparison it
+  // had just said it could not make, in the next breath.
+  //
+  // Not merely premature — meaningless. `stat` reports `sd: 0` for a sample of
+  // one, so `MIN_SD_FRACTION_OF_MEAN` floors it at 2% of the mean and *that*
+  // becomes the scale the z is measured on. A one-session baseline cannot
+  // produce a small z, because nothing about the person is setting the spread.
+  // The floor exists to guard against an unusually consistent fortnight, which
+  // is a different problem with the same shape.
+  //
+  // The reading itself is still shown, and the answer rules still fire, so this
+  // withholds the comparison rather than the card.
+  const mature = baseline.sessions >= MIN_BASELINE_SESSIONS
+  const fired = fire(
+    mature ? ALL_RULES : ALL_RULES.filter((rule) => rule.usesBaseline !== true),
+    session,
+    baseline,
+  )
 
-  // Without enough history there is no "usual" to deviate from. The
-  // answer-based rules still ran and are still shown; the verdict is withheld.
-  if (baseline.sessions < MIN_BASELINE_SESSIONS) {
+  if (!mature) {
     return {
       flag: 'insufficient-signal',
       firedRules: fired,
