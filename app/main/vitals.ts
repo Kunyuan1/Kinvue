@@ -9,7 +9,7 @@ import {
 // protobuf class has been registered with setMetricsClass(). The `/messages`
 // entry point ships the generated class and returns a typed Metrics.
 import { decodeMetrics } from '@smartspectra/node-sdk/messages'
-import { awaitRelease } from './release'
+import { askedForCaptureLog, awaitRelease, releaseLogLine } from './release'
 import {
   CaptureCancelledError,
   MissingApiKeyError,
@@ -320,6 +320,17 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
     // Nothing consumes the outcome yet — `app/main` has no logger — but it is
     // returned rather than swallowed, which is what `.catch(() => undefined)`
     // was doing before.
-    if (releasing !== undefined) await awaitRelease(releasing)
+    if (releasing === undefined) return
+    const startedReleaseAt = Date.now()
+    const outcome = await awaitRelease(releasing)
+    const line = releaseLogLine(
+      outcome,
+      Date.now() - startedReleaseAt,
+      askedForCaptureLog(process.env),
+    )
+    // The only place app/main prints anything. `KINVUE_LOG_CAPTURE=1 npm run
+    // dev` is how the number behind DEVICE_RELEASE_TIMEOUT_MS gets measured on
+    // real hardware, which is what #63 needs and nobody could see before.
+    if (line !== null) console.warn(line)
   })
 }

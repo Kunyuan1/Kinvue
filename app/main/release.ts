@@ -28,6 +28,41 @@ export const DEVICE_RELEASE_TIMEOUT_MS = 2000
 /** Whether the device reported itself free before the wait ran out. */
 export type ReleaseOutcome = 'released' | 'failed' | 'timed-out'
 
+/** Set this to any non-empty value to print how long the camera took to close. */
+export const RELEASE_LOG_ENV = 'KINVUE_LOG_CAPTURE'
+
+/**
+ * The line to print for a finished teardown, or null when there is nothing to
+ * say (KV-84).
+ *
+ * `DEVICE_RELEASE_TIMEOUT_MS` is a guess and #63 owns settling it, which needs
+ * a number from real hardware that nobody can currently see: the outcome was
+ * returned and dropped, because `app/main` has no logger and this PR is not
+ * the place to invent a logging policy. So the happy path stays silent unless
+ * asked, and the two outcomes that mean something went wrong always speak — a
+ * camera that failed to close or outran the wait is the thing the next capture
+ * will blame on another program.
+ *
+ * Returned rather than printed so the decision is testable without capturing
+ * stdout.
+ */
+export function releaseLogLine(
+  outcome: ReleaseOutcome,
+  elapsedMs: number,
+  asked: boolean,
+): string | null {
+  if (outcome === 'released' && !asked) return null
+  const suffix =
+    outcome === 'timed-out' ? ` (gave up after ${DEVICE_RELEASE_TIMEOUT_MS}ms)` : ''
+  return `[capture] camera release: ${outcome} in ${elapsedMs}ms${suffix}`
+}
+
+/** Whether the run was asked for capture timings. */
+export const askedForCaptureLog = (env: NodeJS.ProcessEnv): boolean => {
+  const value = env[RELEASE_LOG_ENV]
+  return value !== undefined && value !== ''
+}
+
 /**
  * Wait for a teardown, bounded, and report how it went.
  *
