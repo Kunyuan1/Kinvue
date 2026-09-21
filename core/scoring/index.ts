@@ -114,8 +114,14 @@ function summarise(flag: Assessment['flag'], fired: FiredRule[]): string {
 /** True when anything this assessment says out loud rests on the baseline. */
 function restsOnBaseline(assessment: Assessment): boolean {
   if (assessment.flag !== 'insufficient-signal') return true
-  // A withheld verdict still shows its fired rules, and some of those quote
-  // "their usual" — an unusable capture compared nothing with anything.
+  // **Unreachable for anything scored from now on, and load-bearing anyway.**
+  // Since KV-71 no withheld verdict this scorer produces carries a rule that
+  // quotes "their usual": the unusable-capture path fires nothing, and a rule
+  // with no usual to quote does not fire. Records scored *before* KV-71 can
+  // carry one, and those are exactly what reaches this line — the disclosure
+  // is composed where the card is shown, not frozen into the record, so old
+  // assessments are read by today's code. Deleting this would silently drop
+  // the seeded disclosure from stored history.
   return assessment.firedRules.some((r) => BASELINE_RULE_IDS.has(r.id))
 }
 
@@ -182,10 +188,17 @@ export function scoreSession(
     }
   }
 
+  // Every rule runs. A rule that quotes "their usual" decides for itself
+  // whether it has one, per metric, in `canBeCalledUsual` (KV-71) — and since
+  // a metric's `Stat.n` can never exceed `baseline.sessions`, a metric is never
+  // mature on a card that is not. Filtering here as well would restate that
+  // more weakly, in sessions rather than in readings.
+  //
+  // The sentence below has always said the answer rules are what still ran.
+  // Until KV-71 every rule ran, and the card made the comparison it had just
+  // said it could not make, in the next breath.
   const fired = fire(ALL_RULES, session, baseline)
 
-  // Without enough history there is no "usual" to deviate from. The
-  // answer-based rules still ran and are still shown; the verdict is withheld.
   if (baseline.sessions < MIN_BASELINE_SESSIONS) {
     return {
       flag: 'insufficient-signal',

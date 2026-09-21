@@ -100,6 +100,32 @@ and call the result `normal`. That would quietly redefine what the flag means, o
 the days the measurement failed, without telling anyone. The rules that fired are still
 shown in this state; only the verdict is withheld.
 
+**With one exception, added in KV-71: a rule that quotes "their usual" does not fire
+until that metric has at least `MIN_BASELINE_SESSIONS` readings of its own.** Until then
+`scoreSession` ran every rule before the maturity check, so a card could say *"1 of 3
+check-ins needed before daily comparisons start"* and, in the next sentence, *"Breathing
+was 16 breaths/min, above their usual 15"*. Both halves on screen, one denying the other.
+
+**Counted per metric, not per card, and the distinction is the whole of it.**
+`Baseline.sessions` counts sessions that produced *some* reading, and a capture routinely
+produces some vitals and not others — `Vitals` says so, and HRV is the standing example.
+Three sessions can therefore back a pulse mean and a single breathing reading, and gating
+on the session count would let the card quote "their usual 15 breaths/min" off one
+morning. `Stat.n` is the count that actually backs the number being quoted. It can never
+exceed `Baseline.sessions`, so the per-metric gate subsumes the card-level one rather
+than sitting beside it, and `scoreSession` does not filter the rule list at all.
+
+The comparison at that point is not merely early, it is meaningless. `stat` reports an
+`sd` of 0 for a sample of one, so `MIN_SD_FRACTION_OF_MEAN` floors it at 2% of the mean
+and that floor becomes the scale the z is measured against — a one-session baseline
+cannot produce a small z, because nothing about the person is setting the spread. The
+floor was written to stop an unusually consistent fortnight making every reading a
+6-sigma event; applied to a sample with no spread because it has one member, it
+manufactures the deviation it is meant to damp.
+
+So the answer rules still fire and the reading is still shown. What is withheld is the
+comparison, which is the part there is no evidence for.
+
 ---
 
 ## Why Electron, and where the camera runs
