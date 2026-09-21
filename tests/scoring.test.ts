@@ -5,6 +5,7 @@ import {
   MIN_CAPTURE_SECONDS,
   scoreSession,
   seededBaselineDisclosure,
+  unusableReason,
 } from '@core/scoring'
 import type { Assessment } from '@core/session/types'
 import { ALL_RULES, BASELINE_RULE_IDS } from '@core/scoring'
@@ -461,5 +462,55 @@ describe('seededBaselineDisclosure', () => {
     const scored = scoreSession(session(), history(5))
     const { baselineSeededSessions: _absent, ...older } = scored
     expect(seededBaselineDisclosure(older)).toContain('not recorded')
+  })
+})
+
+/**
+ * Exported so the capture can ask the scorer whether a reading would be
+ * accepted, rather than restating the gates and drifting from them (KV-63).
+ */
+describe('unusableReason', () => {
+  it('accepts a capture the scorer would score', () => {
+    expect(unusableReason(session().vitals)).toBeNull()
+  })
+
+  it('names a capture too short to score', () => {
+    // The gate an early stop can now reach, which a fixed clock could not.
+    expect(
+      unusableReason(session({ vitals: { durationSec: MIN_CAPTURE_SECONDS - 1 } }).vitals),
+    ).toBe('too-short')
+  })
+
+  it('names a capture the SDK rated poorly', () => {
+    expect(unusableReason(session({ vitals: { confidence: 0.2 } }).vitals)).toBe(
+      'low-confidence',
+    )
+  })
+
+  it('names a capture nothing rated', () => {
+    expect(unusableReason(session({ vitals: { confidence: null } }).vitals)).toBe('unrated')
+  })
+
+  it('names a capture that measured nothing, ahead of anything else', () => {
+    const nothing = { pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null }
+    expect(unusableReason(session({ vitals: { ...nothing, durationSec: 1 } }).vitals)).toBe(
+      'nothing-measured',
+    )
+  })
+
+  it('is what scoreSession itself uses, so a caller cannot drift from it', () => {
+    // Every unusable shape must produce insufficient-signal, and every usable
+    // one must not — otherwise the capture could stop on a reading the scorer
+    // then discards.
+    const cases = [
+      session(),
+      session({ vitals: { durationSec: MIN_CAPTURE_SECONDS - 1 } }),
+      session({ vitals: { confidence: 0.2 } }),
+      session({ vitals: { confidence: null } }),
+    ]
+    for (const s of cases) {
+      const scored = scoreSession(s, history(5))
+      expect(scored.flag === 'insufficient-signal').toBe(unusableReason(s.vitals) !== null)
+    }
   })
 })

@@ -41,6 +41,17 @@ const api = {
   },
 
   /**
+   * Fired once when every metric has arrived and the capture is finishing up,
+   * so the countdown stops promising seconds it will not use (#63). Returns an
+   * unsubscribe function.
+   */
+  onCaptureSettling: (fn: () => void): (() => void) => {
+    const listener = (): void => fn()
+    ipcRenderer.on('checkin:settling', listener)
+    return () => ipcRenderer.off('checkin:settling', listener)
+  },
+
+  /**
    * What the person should do differently, in their words — "sit back a
    * little", "too dark" — or null when the shot is fine again and whatever is
    * on screen should go. Main decides when advice is worth showing and when it

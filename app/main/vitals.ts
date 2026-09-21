@@ -9,8 +9,10 @@ import {
 // protobuf class has been registered with setMetricsClass(). The `/messages`
 // entry point ships the generated class and returns a typed Metrics.
 import { decodeMetrics } from '@smartspectra/node-sdk/messages'
-import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
+
 import { askedForCaptureLog, awaitRelease, releaseLogLine, teardown } from './release'
+import { DEFAULT_CAPTURE_SECONDS, SETTLE_AFTER_COMPLETE_SECONDS } from '@core/capture/length'
+import { unusableReason } from '@core/scoring'
 import {
   CaptureCancelledError,
   MissingApiKeyError,
@@ -150,6 +152,16 @@ export interface CaptureOptions {
    */
   onGuidance?: (advice: CaptureGuidance | null) => void
   /**
+   * Fired once, when every metric has arrived and the capture is running out
+   * its settle margin (KV-63).
+   *
+   * The countdown is derived from the ceiling, so without this the person read
+   * "Up to 50 seconds left" and the screen vanished — wrong by most of a
+   * minute on exactly the runs this feature is for, and leaving "Finishing
+   * up…" reachable only when something never arrived.
+   */
+  onSettling?: () => void
+  /**
    * Each processed frame, for the person's own self-view (KV-3). The SDK docs
    * call `videoOutput` "mainly useful for the custom-input / headless path",
    * but it fires under `useCamera()` — confirmed against real hardware in KV-1,
@@ -181,7 +193,14 @@ export interface CaptureOptions {
  * `createVitalsAccumulator`.
  */
 export async function captureVitals(options: CaptureOptions = {}): Promise<Vitals> {
-  const { durationSec = DEFAULT_CAPTURE_SECONDS, onProgress, onGuidance, onFrame, signal } = options
+  const {
+    durationSec = DEFAULT_CAPTURE_SECONDS,
+    onProgress,
+    onGuidance,
+    onFrame,
+    onSettling,
+    signal,
+  } = options
   if (signal?.aborted === true) throw new CaptureCancelledError()
 
   const apiKey = process.env.SMARTSPECTRA_API_KEY
@@ -234,8 +253,65 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       releasing = teardown(sdk)
     }
 
+    /**
+     * Seconds of capture so far — the same figure `finish` records, measured
+     * from the first frame rather than from the request, so the early stop is
+     * judged against what the scorer will actually be handed.
+     */
+    const capturedSec = (): number =>
+      firstFrameAt === undefined ? 0 : (Date.now() - firstFrameAt) / 1000
+
+    /** The whole-second duration `result` will be given, for the gate above. */
+    const recorded = (): number => Math.round(capturedSec())
+
+    /** Ends the capture with whatever has been collected. */
+    const finish = (): void => {
+      cleanUp()
+      resolve(collected.result(recorded()))
+    }
+
+    // When every scorable metric had arrived, or undefined while one is still
+    // missing. The capture runs on for a settle margin after this rather than
+    // stopping on the instant, because the metric that completes the set is
+    // the slowest one and its first reading is its noisiest.
+    let completeAt: number | undefined
+
     const ticker = setInterval(() => {
       onProgress?.(Math.round((Date.now() - startedAt) / 1000))
+
+      // Asked on the clock that was already running, so nothing new polls.
+      if (completeAt === undefined) {
+        // Complete *and* something the scorer would accept — asked of the
+        // scorer itself rather than restated here, so the two cannot drift.
+        //
+        // A clock plus `SHORTEST_USEFUL_SECONDS` made the duration gate
+        // unreachable; an early stop can record a duration below it, and a
+        // capture that collected all three metrics would be stored as
+        // `too-short` — the verdict for one that collected nothing, with
+        // advice the person cannot act on because it is wrong.
+        //
+        // Confidence is the same trade. The notes in `metrics.ts` record real
+        // runs whose early readings sat at 0.45 and were pulled up later, so
+        // stopping the moment three readings exist can bank a capture the
+        // scorer then discards as `low-confidence` when the remaining minute
+        // would have settled it. An unrated capture keeps going for the same
+        // reason: something may yet rate it (KV-63).
+        if (collected.hasEveryMetric() && unusableReason(collected.result(recorded())) === null) {
+          completeAt = Date.now()
+          // Best-effort, like progress and guidance: a closed window must not
+          // fail the capture.
+          try {
+            onSettling?.()
+          } catch {
+            /* the reading matters more than the countdown */
+          }
+        }
+        return
+      }
+      // Checked on the next tick after `completeAt` is set, so the margin runs
+      // a second longer than the constant names. Harmless while it is an
+      // admitted guess, but the constant is not the whole story.
+      if (Date.now() - completeAt >= SETTLE_AFTER_COMPLETE_SECONDS * 1000) finish()
     }, 1000)
 
     // NOTE: `on()` REPLACES the callback for an event rather than adding one,
@@ -300,11 +376,10 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       reject(captureError(sdkFailure(code), `SmartSpectra — ${message}`))
     })
 
-    const timer = setTimeout(() => {
-      cleanUp()
-      const capturedMs = firstFrameAt === undefined ? 0 : Date.now() - firstFrameAt
-      resolve(collected.result(Math.round(capturedMs / 1000)))
-    }, durationSec * 1000)
+    // The ceiling. Reaching it means something never arrived, and the capture
+    // is scored on what did — which is the behaviour a fixed clock had for
+    // every capture, now reserved for the ones that need it.
+    const timer = setTimeout(finish, durationSec * 1000)
 
     try {
       sdk.useCamera()

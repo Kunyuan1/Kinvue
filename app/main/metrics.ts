@@ -135,6 +135,19 @@ class Tracked<T extends object> {
 export interface VitalsAccumulator {
   add(metrics: MetricsLike): void
   result(durationSec: number): Vitals
+  /**
+   * Whether every metric a rule can read has produced at least one reading.
+   *
+   * What a capture is actually waiting for. Duration was only ever a proxy for
+   * this: the KV-1 run put breathing at ~13s, pulse at ~20s and HRV at ~34s,
+   * so a fixed clock either cuts off the slow run or charges the fast one for
+   * it. Asked directly, the capture can stop when it has what it came for.
+   *
+   * `hrvSdnnMs` is deliberately not in the list, for the same reason
+   * `hasScorableVitals` leaves it out: nothing scores on it, so waiting for it
+   * would be waiting for something no rule will read.
+   */
+  hasEveryMetric(): boolean
 }
 
 /**
@@ -162,6 +175,23 @@ export function createVitalsAccumulator(): VitalsAccumulator {
       pulse.observe(metrics.cardio?.pulseRate)
       breathing.observe(metrics.breathing?.rate)
       hrv.observe(metrics.cardio?.hrv)
+    },
+
+    hasEveryMetric() {
+      // Asked *through* `result`, not alongside it. A separate presence test
+      // drifted from the one that decides the reported value: `chosen` is set
+      // by `Tracked.observe` for any entry that arrives, while `result` reads
+      // the field with `Object.hasOwn` — so an HRV entry carrying `sdnn` and
+      // no own `rmssd`, which is what proto3 sends when rmssd is zero, made
+      // this true while `hrvRmssdMs` came back null. The capture then stopped
+      // believing HRV had arrived, the card showed nothing for it, and
+      // `hrv-drop` could not fire: the failure this predicate exists to end,
+      // reached faster and with the capture asserting it had not happened.
+      //
+      // Deriving it means the two cannot disagree. The duration is irrelevant
+      // to presence, so it is passed as zero.
+      const { pulseRateBpm, breathingRateBrpm, hrvRmssdMs } = this.result(0)
+      return pulseRateBpm !== null && breathingRateBrpm !== null && hrvRmssdMs !== null
     },
 
     result(durationSec) {
