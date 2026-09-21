@@ -16,41 +16,63 @@
  *
  * Not a tuned constant yet. #63 is where the default gets settled once there
  * are timings to settle it against.
+ *
+ * The numbers live in `core/capture/length.ts` so the renderer's countdown and
+ * `captureVitals`' own default reference the same one. Reading the environment
+ * is a main-process concern and stays here.
  */
+import {
+  DEFAULT_CAPTURE_SECONDS,
+  LONGEST_REASONABLE_SECONDS,
+  SHORTEST_USEFUL_SECONDS,
+} from '@core/capture/length'
 
-/** Seconds of capture when nothing says otherwise. */
-export const DEFAULT_CAPTURE_SECONDS = 30
+export {
+  CAMERA_OPEN_ALLOWANCE_SECONDS,
+  DEFAULT_CAPTURE_SECONDS,
+  LONGEST_REASONABLE_SECONDS,
+  SHORTEST_USEFUL_SECONDS,
+} from '@core/capture/length'
 
 /** Set this to run longer or shorter captures, e.g. for #63. */
 export const CAPTURE_SECONDS_ENV = 'KINVUE_CAPTURE_SECONDS'
 
 /**
- * Below this the scorer would reject every capture as too short.
- * `MIN_CAPTURE_SECONDS` in `core/scoring` is 20, and a capture also loses a
- * few seconds to the camera opening, so anything under this is a setting that
- * cannot produce a scoreable check-in.
- */
-export const SHORTEST_USEFUL_SECONDS = 25
-
-/** Above this nobody is going to sit still, whatever the metrics want. */
-export const LONGEST_REASONABLE_SECONDS = 180
-
-/**
- * The capture length for this run.
+ * The capture length for this run, and whether the request was honoured.
  *
  * Falls back to the default for anything unusable rather than throwing: a typo
- * in an env var must not stop the app recording a check-in, and a capture at
- * the default is the behaviour that already existed. Out-of-range values are
- * clamped rather than rejected for the same reason — someone trying 200 wants
- * a long capture, not the default.
+ * in an env var must not stop the app recording a check-in. Out-of-range values
+ * are clamped rather than rejected — someone trying 200 wants a long capture,
+ * not the default — but the clamp is reported, because silently running 30s
+ * captures when the file says 10 leaves the mismatch with `.env` as the only
+ * evidence.
  */
 export function captureSeconds(env: NodeJS.ProcessEnv): number {
+  return resolveCaptureSeconds(env).seconds
+}
+
+/** What `captureSeconds` decided, and why. Separated so it can be reported. */
+export interface CaptureLengthChoice {
+  seconds: number
+  /** The raw setting, when it was replaced by something else. */
+  replaced?: string
+}
+
+export function resolveCaptureSeconds(env: NodeJS.ProcessEnv): CaptureLengthChoice {
   const raw = env[CAPTURE_SECONDS_ENV]
-  if (raw === undefined || raw.trim() === '') return DEFAULT_CAPTURE_SECONDS
+  if (raw === undefined || raw.trim() === '') return { seconds: DEFAULT_CAPTURE_SECONDS }
   const parsed = Number(raw)
-  if (!Number.isFinite(parsed)) return DEFAULT_CAPTURE_SECONDS
+  if (!Number.isFinite(parsed)) return { seconds: DEFAULT_CAPTURE_SECONDS, replaced: raw }
   const whole = Math.round(parsed)
-  if (whole < SHORTEST_USEFUL_SECONDS) return SHORTEST_USEFUL_SECONDS
-  if (whole > LONGEST_REASONABLE_SECONDS) return LONGEST_REASONABLE_SECONDS
-  return whole
+  if (whole < SHORTEST_USEFUL_SECONDS) return { seconds: SHORTEST_USEFUL_SECONDS, replaced: raw }
+  if (whole > LONGEST_REASONABLE_SECONDS) {
+    return { seconds: LONGEST_REASONABLE_SECONDS, replaced: raw }
+  }
+  return { seconds: whole }
+}
+
+/** The line to print when a setting was not honoured, or null when it was. */
+export function captureLengthLogLine(choice: CaptureLengthChoice): string | null {
+  if (choice.replaced === undefined) return null
+  return `[capture] KINVUE_CAPTURE_SECONDS=${choice.replaced} is not usable; running ${choice.seconds}s`
 }

@@ -95,7 +95,7 @@ app/
                          network. img-src also allows blob:, for the self-view.
     App.tsx              caregiver dashboard shell
     components/
-      CaptureScreen.tsx  the 30s in front of the camera — the one screen the
+      CaptureScreen.tsx  the ~30s in front of the camera (settable) — the one screen the
                          cared-for person reads, not the caregiver
       QuestionFlow.tsx   the four questions, also addressed to them
       SessionCard.tsx    one check-in + the rules that fired
@@ -189,6 +189,7 @@ Everything is env-driven and read in the main process only.
 | Variable | Default | Purpose |
 |---|---|---|
 | `SMARTSPECTRA_API_KEY` | — | SmartSpectra SDK key. Free from the [Presage portal](https://physiology.presagetech.com/auth/register). Read in `app/main` and never exposed to the renderer. |
+| `KINVUE_CAPTURE_SECONDS` | `30` | Seconds of capture. Clamped to `SHORTEST_USEFUL_SECONDS`–`LONGEST_REASONABLE_SECONDS`; a value outside that, or one that cannot be read, is replaced and the replacement is printed at startup. The countdown and the sentence under the button both follow it. Raising this is how #63 gets the timings it needs — HRV did not arrive at 43s of capture and did at 58s. |
 | `KINVUE_LOG_CAPTURE` | unset | Any non-empty value prints how long the camera took to close after each capture — `[capture] camera release: released in 340ms`. That figure is what `DEVICE_RELEASE_TIMEOUT_MS` is guessing at, and #63 is where it gets settled. A release that failed or outran the wait prints whether or not this is set. |
 
 `app/main/env.ts` loads `.env` into `process.env` at startup, **in development only** — a
@@ -218,7 +219,9 @@ Tuned constants live in code, not env, because changing one changes what the app
 |---|---|---|
 | `ELEVATED_SEVERITY_THRESHOLD` | `core/scoring` | `0.6` — summed severity at or above this is `elevated` |
 | `MIN_CAPTURE_CONFIDENCE` | `core/scoring` | `0.5` — below this the capture is not scored |
-| `MIN_CAPTURE_SECONDS` | `core/scoring` | `20` — the UI asks for ~30 |
+| `MIN_CAPTURE_SECONDS` | `core/scoring` | `20` — below this a capture is not scored. The gate is on the *recorded* duration, which excludes camera-open time |
+| `DEFAULT_CAPTURE_SECONDS` | `core/capture/length.ts` | `30 s` — seconds of capture when `KINVUE_CAPTURE_SECONDS` is unset. In `core/` so the renderer's countdown, `captureVitals` and the scorer all reference one number |
+| `CAMERA_OPEN_ALLOWANCE_SECONDS` | `core/capture/length.ts` | `10 s` — how much the camera may eat before the first frame. `SHORTEST_USEFUL_SECONDS` is `MIN_CAPTURE_SECONDS` plus this, so no setting can record a duration the scorer rejects |
 | `MIN_BASELINE_SESSIONS` | `core/baseline` | `3` — below this the verdict is withheld |
 | `BASELINE_WINDOW_SESSIONS` | `core/baseline` | `14` — trailing sessions in the baseline |
 | `HRV_DROP_FIRES_AT` | `core/scoring/rules.ts` | `0.25` — fractional drop from baseline HRV |

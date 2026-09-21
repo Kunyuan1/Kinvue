@@ -135,12 +135,14 @@ describe('CaptureScreen says which failure it was', () => {
     expect(document.body.textContent).not.toMatch(/could not|went wrong|not set up/i)
   })
 
-  it('counts down from the length main is actually running', () => {
+  it.each([30, 45, 60])('counts down from the %ss main is actually running', (seconds) => {
     // The countdown used to be its own constant, so changing the capture
-    // length in main left the screen promising the old one (#63).
-    render(<CaptureScreen failure={null} onCancel={noop} captureSeconds={45} />)
-    expect(document.body.textContent).toMatch(/45 seconds/i)
-    expect(document.body.textContent).not.toMatch(/30 seconds/i)
+    // length in main left the screen promising the old one (#63). Two lengths
+    // rather than one negative assertion: nothing else renders a seconds
+    // string here, so `not.toMatch(/30 seconds/)` could not have failed
+    // whether or not the constant came back.
+    render(<CaptureScreen failure={null} onCancel={noop} captureSeconds={seconds} />)
+    expect(document.body.textContent).toMatch(new RegExp(`${String(seconds)} seconds`, 'i'))
   })
 
   it('shows nothing at all when there is no failure', () => {

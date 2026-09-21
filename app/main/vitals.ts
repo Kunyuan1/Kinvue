@@ -9,6 +9,7 @@ import {
 // protobuf class has been registered with setMetricsClass(). The `/messages`
 // entry point ships the generated class and returns a typed Metrics.
 import { decodeMetrics } from '@smartspectra/node-sdk/messages'
+import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
 import { askedForCaptureLog, awaitRelease, releaseLogLine, teardown } from './release'
 import {
   CaptureCancelledError,
@@ -180,7 +181,7 @@ export interface CaptureOptions {
  * `createVitalsAccumulator`.
  */
 export async function captureVitals(options: CaptureOptions = {}): Promise<Vitals> {
-  const { durationSec = 30, onProgress, onGuidance, onFrame, signal } = options
+  const { durationSec = DEFAULT_CAPTURE_SECONDS, onProgress, onGuidance, onFrame, signal } = options
   if (signal?.aborted === true) throw new CaptureCancelledError()
 
   const apiKey = process.env.SMARTSPECTRA_API_KEY

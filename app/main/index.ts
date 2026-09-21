@@ -11,7 +11,11 @@ import { createGuidanceGate } from "@core/capture/guidance";
 import { deviceTimeZone } from "./device";
 import { createFrameThrottle, toPreview } from "./frames";
 import { createInFlightCapture } from "./in-flight";
-import { captureSeconds } from "./capture-length";
+import {
+  captureLengthLogLine,
+  captureSeconds,
+  resolveCaptureSeconds,
+} from "./capture-length";
 import { loadDotEnv } from "./env";
 import { captureVitals } from "./vitals";
 
@@ -112,6 +116,12 @@ function registerIpc(): void {
   // have to be the length main will actually run (#63). One number, asked for
   // rather than duplicated.
   ipcMain.handle("capture:seconds", (): number => captureSeconds(process.env));
+
+  // Said once, at startup, rather than per capture: a setting that was not
+  // honoured is a fact about this run, and the only other evidence of it is a
+  // mismatch between `.env` and a countdown.
+  const lengthNotice = captureLengthLogLine(resolveCaptureSeconds(process.env));
+  if (lengthNotice !== null) console.warn(lengthNotice);
 
   ipcMain.handle(
     "checkin:capture",
