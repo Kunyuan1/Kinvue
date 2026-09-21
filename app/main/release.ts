@@ -25,8 +25,42 @@
  */
 export const DEVICE_RELEASE_TIMEOUT_MS = 2000
 
-/** Whether the device reported itself free before the wait ran out. */
+/**
+ * Whether the device reported itself free before the wait ran out.
+ *
+ * **The two failures are not the same kind of thing, and `timed-out` is the
+ * worse one.** `failed` means both teardown calls ran and something complained:
+ * the device is probably down. `timed-out` means the wait ran out with the
+ * teardown still in flight, so the lock is dropped while the camera may well
+ * still be held — which is the state the next capture blames on another
+ * program. Nothing branches on this yet; it decides what gets said.
+ */
 export type ReleaseOutcome = 'released' | 'failed' | 'timed-out'
+
+/** The part of the SDK a teardown needs. Narrow, so it can be faked in a test. */
+export interface Teardownable {
+  stopAsync(): Promise<void>
+  destroy(): Promise<void>
+}
+
+/**
+ * Stop the session and tear it down, in that order, **both of them**.
+ *
+ * `destroy()` is what actually frees the device — the SDK's own typing calls
+ * it the teardown, says it is idempotent, and warns that native SDK state is
+ * process-global. So it runs on `finally` rather than `then`: a stop that
+ * rejected is the one case where the camera is certainly still held, and
+ * chaining on success skipped the teardown on exactly that branch.
+ *
+ * The rejection still propagates, so a teardown that complained is still
+ * reported as `failed` — what changes is that the device was actually let go
+ * first.
+ */
+export async function teardown(sdk: Teardownable): Promise<void> {
+  await sdk.stopAsync().finally(async () => {
+    await sdk.destroy()
+  })
+}
 
 /** Set this to any non-empty value to print how long the camera took to close. */
 export const RELEASE_LOG_ENV = 'KINVUE_LOG_CAPTURE'
@@ -50,11 +84,21 @@ export function releaseLogLine(
   outcome: ReleaseOutcome,
   elapsedMs: number,
   asked: boolean,
+  afterStop = false,
 ): string | null {
   if (outcome === 'released' && !asked) return null
-  const suffix =
-    outcome === 'timed-out' ? ` (gave up after ${DEVICE_RELEASE_TIMEOUT_MS}ms)` : ''
-  return `[capture] camera release: ${outcome} in ${elapsedMs}ms${suffix}`
+  // Stopping mid-capture tears a running pipeline down out of order, so a
+  // teardown that complains there is a different thing from one that complains
+  // on a capture that ran to the end — and "the person pressed stop" is the
+  // distinction a reader needs before deciding the device is stuck.
+  const cause = afterStop ? ' (after a stop)' : ''
+  // `timed-out` resolves *at* the bound, so its elapsed is the bound plus
+  // jitter by construction and printing both invites a reader to find meaning
+  // in the difference. The outcome carries which number it is.
+  if (outcome === 'timed-out') {
+    return `[capture] camera release: gave up waiting after ${DEVICE_RELEASE_TIMEOUT_MS}ms${cause}`
+  }
+  return `[capture] camera release: ${outcome} in ${elapsedMs}ms${cause}`
 }
 
 /** Whether the run was asked for capture timings. */

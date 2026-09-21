@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   askedForCaptureLog,
   awaitRelease,
+  teardown,
   DEVICE_RELEASE_TIMEOUT_MS,
   releaseLogLine,
   RELEASE_LOG_ENV,
@@ -86,10 +87,20 @@ describe('releaseLogLine', () => {
     expect(releaseLogLine('failed', 30, false)).toContain('failed')
   })
 
-  it('speaks up about a camera that outran the wait, and names the bound', () => {
-    const line = releaseLogLine('timed-out', DEVICE_RELEASE_TIMEOUT_MS, false)
+  it('speaks up about a camera that outran the wait, and names the bound once', () => {
+    // The elapsed for a timeout is the bound plus jitter by construction, so
+    // printing both invited a reader to find meaning in the difference.
+    const line = releaseLogLine('timed-out', DEVICE_RELEASE_TIMEOUT_MS + 1, false)
     expect(line).not.toBeNull()
     expect(line).toContain(String(DEVICE_RELEASE_TIMEOUT_MS))
+    expect(line).not.toContain(String(DEVICE_RELEASE_TIMEOUT_MS + 1))
+  })
+
+  it('says when a complaining teardown followed a stop', () => {
+    // Stopping mid-capture tears a running pipeline down out of order, so this
+    // is not the same news as a teardown failing on a capture that ran out.
+    expect(releaseLogLine('failed', 30, false, true)).toContain('after a stop')
+    expect(releaseLogLine('failed', 30, false, false)).not.toContain('after a stop')
   })
 })
 
@@ -102,5 +113,60 @@ describe('askedForCaptureLog', () => {
   it('is on for any non-empty value', () => {
     expect(askedForCaptureLog({ [RELEASE_LOG_ENV]: '1' })).toBe(true)
     expect(askedForCaptureLog({ [RELEASE_LOG_ENV]: 'yes' })).toBe(true)
+  })
+})
+
+/**
+ * The composition, which is where the bug was. `destroy()` frees the device
+ * and the SDK's typing calls it idempotent, so it has to run whether or not
+ * the stop drained cleanly (KV-84).
+ */
+describe('teardown', () => {
+  const fake = (opts: { stopRejects?: boolean; destroyRejects?: boolean } = {}) => {
+    const calls: string[] = []
+    return {
+      calls,
+      async stopAsync(): Promise<void> {
+        calls.push('stopAsync')
+        if (opts.stopRejects === true) throw new Error('stop failed')
+      },
+      async destroy(): Promise<void> {
+        calls.push('destroy')
+        if (opts.destroyRejects === true) throw new Error('destroy failed')
+      },
+    }
+  }
+
+  it('stops then destroys, in that order', async () => {
+    const sdk = fake()
+    await teardown(sdk)
+    expect(sdk.calls).toEqual(['stopAsync', 'destroy'])
+  })
+
+  it('destroys even when the stop rejects', async () => {
+    // The bug. Chaining with `.then` skipped `destroy()` on exactly the branch
+    // where the camera is certainly still held, and the lock then dropped in
+    // ~0ms reporting 'failed' — so the next capture met a live session and was
+    // told another program had the camera.
+    const sdk = fake({ stopRejects: true })
+    await expect(teardown(sdk)).rejects.toThrow('stop failed')
+    expect(sdk.calls).toEqual(['stopAsync', 'destroy'])
+  })
+
+  it('still reports a rejected stop rather than hiding it', async () => {
+    // Destroying anyway must not turn a complaining teardown into a clean one:
+    // `awaitRelease` still has to see this as `failed`.
+    const sdk = fake({ stopRejects: true })
+    expect(await awaitRelease(teardown(sdk))).toBe('failed')
+    expect(sdk.calls).toContain('destroy')
+  })
+
+  it('reports a destroy that rejects', async () => {
+    const sdk = fake({ destroyRejects: true })
+    expect(await awaitRelease(teardown(sdk))).toBe('failed')
+  })
+
+  it('reports a clean teardown as released', async () => {
+    expect(await awaitRelease(teardown(fake()))).toBe('released')
   })
 })

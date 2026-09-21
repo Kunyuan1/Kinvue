@@ -9,7 +9,7 @@ import {
 // protobuf class has been registered with setMetricsClass(). The `/messages`
 // entry point ships the generated class and returns a typed Metrics.
 import { decodeMetrics } from '@smartspectra/node-sdk/messages'
-import { askedForCaptureLog, awaitRelease, releaseLogLine } from './release'
+import { askedForCaptureLog, awaitRelease, releaseLogLine, teardown } from './release'
 import {
   CaptureCancelledError,
   MissingApiKeyError,
@@ -211,6 +211,15 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
   // program had the camera. Holding the lock until the device is down makes
   // that sentence mean what it says.
   let releasing: Promise<unknown> | undefined
+  // When the teardown began, so the figure #63 acts on measures the teardown
+  // rather than the gap between settling and asking about it. The same tick on
+  // every path today, which makes it correct by coincidence rather than by
+  // construction.
+  let releaseStartedAt = 0
+  // Whether the SDK ever opened the camera. `useCamera()` only selects an
+  // input — the typing says the device is opened on `start()` — so a throw
+  // from `start()` leaves nothing of ours holding it.
+  let opened = false
 
   return await new Promise<Vitals>((resolve, reject) => {
     const cleanUp = (): void => {
@@ -219,7 +228,9 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       // Once only. Five call sites settle this promise and the SDK can raise an
       // error after one of them has; a second `stopAsync()` on a device already
       // closing is not something to find out about in the field.
-      releasing ??= sdk.stopAsync().then(async () => await sdk.destroy())
+      if (releasing !== undefined) return
+      releaseStartedAt = Date.now()
+      releasing = teardown(sdk)
     }
 
     const ticker = setInterval(() => {
@@ -297,6 +308,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
     try {
       sdk.useCamera()
       sdk.start()
+      opened = true
     } catch (err) {
       cleanUp()
       // Opening the camera is where "another application is using it" lands —
@@ -321,12 +333,21 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
     // returned rather than swallowed, which is what `.catch(() => undefined)`
     // was doing before.
     if (releasing === undefined) return
-    const startedReleaseAt = Date.now()
+    if (!opened) {
+      // `start()` threw, so the camera was never ours to release — and this is
+      // the likeliest failure the app has. Waiting up to the whole bound before
+      // "The camera could not be used" reaches the screen would make the common
+      // case the slow one. The teardown still runs, unobserved, as it did
+      // before any of this.
+      void releasing.catch(() => undefined)
+      return
+    }
     const outcome = await awaitRelease(releasing)
     const line = releaseLogLine(
       outcome,
-      Date.now() - startedReleaseAt,
+      Date.now() - releaseStartedAt,
       askedForCaptureLog(process.env),
+      signal?.aborted === true,
     )
     // The only place app/main prints anything. `KINVUE_LOG_CAPTURE=1 npm run
     // dev` is how the number behind DEVICE_RELEASE_TIMEOUT_MS gets measured on
