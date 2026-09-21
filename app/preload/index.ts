@@ -10,6 +10,13 @@ const api = {
   listSessions: (personId: string): Promise<SessionRecord[]> =>
     ipcRenderer.invoke('sessions:list', personId),
 
+  /**
+   * How long a capture runs. Asked for rather than assumed, so the countdown
+   * and the sentence under the button cannot drift from what main will do
+   * (#63).
+   */
+  captureSeconds: (): Promise<number> => ipcRenderer.invoke('capture:seconds'),
+
   /** The reading is held in main for this person; `submit` must name the same one. */
   capture: (personId: string): Promise<CaptureResult> =>
     ipcRenderer.invoke('checkin:capture', personId),
