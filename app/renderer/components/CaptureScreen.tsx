@@ -133,6 +133,9 @@ export default function CaptureScreen({
     }
   }, [])
 
+  // A ceiling, not a duration: the capture ends as soon as every metric has
+  // arrived, which is usually sooner (#63). So this counts down the longest it
+  // could take, and finishing early is the common case rather than a surprise.
   const remaining = Math.max(0, captureSeconds - elapsedSec)
 
   if (failure !== null) {
@@ -192,7 +195,7 @@ export default function CaptureScreen({
       )}
 
       <p className="mt-2 text-sm text-(--color-muted)">
-        {remaining > 0 ? `About ${remaining} seconds left` : 'Finishing up…'}
+        {remaining > 0 ? `Up to ${remaining} seconds left` : 'Finishing up…'}
       </p>
 
       {/* Stops the camera for real: main abandons the capture and releases the

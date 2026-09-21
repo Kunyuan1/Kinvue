@@ -11,6 +11,7 @@ import {
 import { decodeMetrics } from '@smartspectra/node-sdk/messages'
 import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
 import { askedForCaptureLog, awaitRelease, releaseLogLine, teardown } from './release'
+import { SETTLE_AFTER_COMPLETE_SECONDS } from '@core/capture/length'
 import {
   CaptureCancelledError,
   MissingApiKeyError,
@@ -234,8 +235,28 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       releasing = teardown(sdk)
     }
 
+    /** Ends the capture with whatever has been collected. */
+    const finish = (): void => {
+      cleanUp()
+      const capturedMs = firstFrameAt === undefined ? 0 : Date.now() - firstFrameAt
+      resolve(collected.result(Math.round(capturedMs / 1000)))
+    }
+
+    // When every scorable metric had arrived, or undefined while one is still
+    // missing. The capture runs on for a settle margin after this rather than
+    // stopping on the instant, because the metric that completes the set is
+    // the slowest one and its first reading is its noisiest.
+    let completeAt: number | undefined
+
     const ticker = setInterval(() => {
       onProgress?.(Math.round((Date.now() - startedAt) / 1000))
+
+      // Asked on the clock that was already running, so nothing new polls.
+      if (completeAt === undefined) {
+        if (collected.hasEveryMetric()) completeAt = Date.now()
+        return
+      }
+      if (Date.now() - completeAt >= SETTLE_AFTER_COMPLETE_SECONDS * 1000) finish()
     }, 1000)
 
     // NOTE: `on()` REPLACES the callback for an event rather than adding one,
@@ -300,11 +321,10 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       reject(captureError(sdkFailure(code), `SmartSpectra — ${message}`))
     })
 
-    const timer = setTimeout(() => {
-      cleanUp()
-      const capturedMs = firstFrameAt === undefined ? 0 : Date.now() - firstFrameAt
-      resolve(collected.result(Math.round(capturedMs / 1000)))
-    }, durationSec * 1000)
+    // The ceiling. Reaching it means something never arrived, and the capture
+    // is scored on what did — which is the behaviour a fixed clock had for
+    // every capture, now reserved for the ones that need it.
+    const timer = setTimeout(finish, durationSec * 1000)
 
     try {
       sdk.useCamera()

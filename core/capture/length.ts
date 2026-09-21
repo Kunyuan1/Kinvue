@@ -14,8 +14,32 @@ import { MIN_CAPTURE_SECONDS } from '../scoring'
  * stays in `app/main/capture-length.ts`; this is only the numbers.
  */
 
-/** Seconds of capture when nothing says otherwise. */
-export const DEFAULT_CAPTURE_SECONDS = 30
+/**
+ * The longest a capture runs when nothing says otherwise — a **ceiling**, not
+ * a duration.
+ *
+ * A capture ends as soon as every scorable metric has reported, so most runs
+ * finish well before this. The ceiling can therefore be generous, which is the
+ * point: a number tuned for the average cuts off the person whose signal was
+ * slow, and a number tuned for the worst case takes that long from everyone.
+ *
+ * 90 rather than 60 because the one measured run that collected HRV took 58s
+ * of capture, and one sample is not a distribution. A run that reaches this is
+ * one where something did not arrive at all, and it is scored on what did.
+ */
+export const DEFAULT_CAPTURE_SECONDS = 90
+
+/**
+ * How long to keep going after the last metric arrives.
+ *
+ * Stopping the instant HRV first appears would report its first reading, and a
+ * first reading is the noisiest one — `Tracked` prefers the newest the SDK
+ * called settled, which needs more than one to choose from. A few seconds buys
+ * that without costing the person a minute.
+ *
+ * A guess, like the ceiling. #63 owns both.
+ */
+export const SETTLE_AFTER_COMPLETE_SECONDS = 5
 
 /**
  * How much of a capture the camera can eat before the first reading lands.

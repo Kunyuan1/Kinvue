@@ -135,6 +135,19 @@ class Tracked<T extends object> {
 export interface VitalsAccumulator {
   add(metrics: MetricsLike): void
   result(durationSec: number): Vitals
+  /**
+   * Whether every metric a rule can read has produced at least one reading.
+   *
+   * What a capture is actually waiting for. Duration was only ever a proxy for
+   * this: the KV-1 run put breathing at ~13s, pulse at ~20s and HRV at ~34s,
+   * so a fixed clock either cuts off the slow run or charges the fast one for
+   * it. Asked directly, the capture can stop when it has what it came for.
+   *
+   * `hrvSdnnMs` is deliberately not in the list, for the same reason
+   * `hasScorableVitals` leaves it out: nothing scores on it, so waiting for it
+   * would be waiting for something no rule will read.
+   */
+  hasEveryMetric(): boolean
 }
 
 /**
@@ -162,6 +175,13 @@ export function createVitalsAccumulator(): VitalsAccumulator {
       pulse.observe(metrics.cardio?.pulseRate)
       breathing.observe(metrics.breathing?.rate)
       hrv.observe(metrics.cardio?.hrv)
+    },
+
+    hasEveryMetric() {
+      // `chosen` rather than a reading count: it is what `result` reports, so
+      // this answers "would a card have all three" rather than "did something
+      // arrive on each channel".
+      return pulse.chosen !== undefined && breathing.chosen !== undefined && hrv.chosen !== undefined
     },
 
     result(durationSec) {

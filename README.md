@@ -219,8 +219,9 @@ Tuned constants live in code, not env, because changing one changes what the app
 |---|---|---|
 | `ELEVATED_SEVERITY_THRESHOLD` | `core/scoring` | `0.6` — summed severity at or above this is `elevated` |
 | `MIN_CAPTURE_CONFIDENCE` | `core/scoring` | `0.5` — below this the capture is not scored |
-| `MIN_CAPTURE_SECONDS` | `core/scoring` | `20` — below this a capture is not scored. The gate is on the *recorded* duration, which excludes camera-open time |
-| `DEFAULT_CAPTURE_SECONDS` | `core/capture/length.ts` | `30 s` — seconds of capture when `KINVUE_CAPTURE_SECONDS` is unset. In `core/` so the renderer's countdown, `captureVitals` and the scorer all reference one number |
+| `MIN_CAPTURE_SECONDS` | `core/scoring` | `20` — below this a capture is not scored. The gate is on the *recorded* duration, which excludes camera-open time. Less load-bearing since captures became adaptive: duration used to proxy for "did we collect anything", and completeness is now measured directly |
+| `DEFAULT_CAPTURE_SECONDS` | `core/capture/length.ts` | `90 s` — the **ceiling**, not the duration. A capture ends when every scorable metric has reported; reaching this means one never did. In `core/` so the renderer's countdown, `captureVitals` and the scorer all reference one number. Settable via `KINVUE_CAPTURE_SECONDS` |
+| `SETTLE_AFTER_COMPLETE_SECONDS` | `core/capture/length.ts` | `5 s` — how long a capture runs on after the last metric arrives, so the slowest one is not reported on its first and noisiest reading |
 | `CAMERA_OPEN_ALLOWANCE_SECONDS` | `core/capture/length.ts` | `10 s` — how much the camera may eat before the first frame. `SHORTEST_USEFUL_SECONDS` is `MIN_CAPTURE_SECONDS` plus this, so no setting can record a duration the scorer rejects |
 | `MIN_BASELINE_SESSIONS` | `core/baseline` | `3` — below this the verdict is withheld |
 | `BASELINE_WINDOW_SESSIONS` | `core/baseline` | `14` — trailing sessions in the baseline |

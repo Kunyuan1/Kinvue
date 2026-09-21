@@ -277,3 +277,62 @@ describe('createVitalsAccumulator, against real decoded messages', () => {
     expect(result.hrvSdnnMs).toBe(52)
   })
 })
+
+/**
+ * What a capture is actually waiting for (#63). Duration was only ever a proxy
+ * for this: breathing arrives first, pulse next, HRV last and much later, so a
+ * fixed clock either cuts off a slow run or charges a fast one for it.
+ */
+describe('hasEveryMetric', () => {
+  it('is false before anything has arrived', () => {
+    expect(createVitalsAccumulator().hasEveryMetric()).toBe(false)
+  })
+
+  it('is false while only breathing has arrived', () => {
+    const acc = createVitalsAccumulator()
+    acc.add(breathingMsg(15))
+    expect(acc.hasEveryMetric()).toBe(false)
+  })
+
+  it('is false with pulse and breathing but no HRV', () => {
+    // The real shape: five captures on hardware produced breathing 5/5,
+    // pulse 3/5, HRV 0/5, because the clock ran out before HRV arrived.
+    const acc = createVitalsAccumulator()
+    acc.add(breathingMsg(15))
+    acc.add(pulseMsg(72))
+    expect(acc.hasEveryMetric()).toBe(false)
+  })
+
+  it('is true once HRV completes the set', () => {
+    const acc = createVitalsAccumulator()
+    acc.add(breathingMsg(15))
+    acc.add(pulseMsg(72))
+    acc.add(hrvMsg(41, 52))
+    expect(acc.hasEveryMetric()).toBe(true)
+  })
+
+  it('does not wait for sdnn, which nothing scores on', () => {
+    // `hasScorableVitals` leaves hrvSdnnMs out for the same reason; waiting for
+    // it would be waiting for something no rule will read.
+    const acc = createVitalsAccumulator()
+    acc.add(breathingMsg(15))
+    acc.add(pulseMsg(72))
+    acc.add(hrvMsg(41, 52))
+    const result = acc.result(60)
+    expect(result.hrvSdnnMs).not.toBeNull()
+    expect(acc.hasEveryMetric()).toBe(true)
+  })
+
+  it('agrees with what the card would show', () => {
+    // `chosen` rather than a reading count, so this answers "would all three
+    // appear" rather than "did something arrive on each channel".
+    const acc = createVitalsAccumulator()
+    acc.add(breathingMsg(15))
+    acc.add(pulseMsg(72))
+    acc.add(hrvMsg(41, 52))
+    const { pulseRateBpm, breathingRateBrpm, hrvRmssdMs } = acc.result(60)
+    expect(acc.hasEveryMetric()).toBe(
+      pulseRateBpm !== null && breathingRateBrpm !== null && hrvRmssdMs !== null,
+    )
+  })
+})
