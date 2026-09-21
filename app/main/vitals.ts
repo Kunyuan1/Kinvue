@@ -9,6 +9,7 @@ import {
 // protobuf class has been registered with setMetricsClass(). The `/messages`
 // entry point ships the generated class and returns a typed Metrics.
 import { decodeMetrics } from '@smartspectra/node-sdk/messages'
+import { awaitRelease } from './release'
 import {
   CaptureCancelledError,
   MissingApiKeyError,
@@ -202,14 +203,23 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
   // to appear in — counting them would report a short capture as a full one.
   let firstFrameAt: number | undefined
 
+  // The teardown this capture started, so the capture can wait for it before
+  // it settles (KV-84). Until then the *lock* cleared the moment the promise
+  // did while the *device* closed whenever `stopAsync` and `destroy` happened
+  // to finish — so `capture-in-progress` meant "the lock is still held", and
+  // a person told a new reading could start could be told instead that another
+  // program had the camera. Holding the lock until the device is down makes
+  // that sentence mean what it says.
+  let releasing: Promise<unknown> | undefined
+
   return await new Promise<Vitals>((resolve, reject) => {
     const cleanUp = (): void => {
       clearInterval(ticker)
       clearTimeout(timer)
-      void sdk
-        .stopAsync()
-        .then(async () => await sdk.destroy())
-        .catch(() => undefined)
+      // Once only. Five call sites settle this promise and the SDK can raise an
+      // error after one of them has; a second `stopAsync()` on a device already
+      // closing is not something to find out about in the field.
+      releasing ??= sdk.stopAsync().then(async () => await sdk.destroy())
     }
 
     const ticker = setInterval(() => {
@@ -298,5 +308,18 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       const failure = code === undefined ? 'camera-unavailable' : sdkFailure(code)
       reject(captureError(failure, 'the camera could not be started.', err))
     }
+  }).finally(async () => {
+    // `finally` waits for a promise the callback returns, so the capture does
+    // not settle — and `checkIn.capture` does not drop its lock — until the
+    // camera is actually free or the wait has run out. Bounded, because a
+    // teardown that hangs would otherwise become a lock nobody can clear.
+    //
+    // The outcome is deliberately not thrown: a capture that produced a good
+    // reading must not become an error because the camera took an odd route to
+    // closing, and one that already failed has its own reason to report.
+    // Nothing consumes the outcome yet — `app/main` has no logger — but it is
+    // returned rather than swallowed, which is what `.catch(() => undefined)`
+    // was doing before.
+    if (releasing !== undefined) await awaitRelease(releasing)
   })
 }
