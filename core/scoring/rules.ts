@@ -1,4 +1,4 @@
-import type { Baseline } from '../baseline'
+import { MIN_BASELINE_SESSIONS, type Baseline, type Stat } from '../baseline'
 import type { FiredRule, SessionRecord } from '../session/types'
 
 /**
@@ -38,13 +38,29 @@ const round = (n: number, dp = 0): number => Number(n.toFixed(dp))
 const HRV_DROP_FIRES_AT = 0.25
 const HRV_DROP_FULL_SEVERITY_AT = 0.5
 
+/**
+ * Whether a metric's own history is deep enough to be called "their usual".
+ *
+ * Counted per metric rather than per session (KV-71). `Baseline.sessions` counts
+ * sessions that produced *some* reading, and a capture routinely produces some
+ * vitals and not others — `Vitals` says so, and HRV is the standing example. So
+ * three sessions can back a pulse mean and a single breathing reading, and the
+ * card would quote "their usual 15 breaths/min" off one morning.
+ *
+ * `Stat.n` is the count that actually backs the number being quoted, and it is
+ * never greater than `Baseline.sessions`, so this gate subsumes the session
+ * count rather than sitting beside it.
+ */
+const canBeCalledUsual = (usual: Stat | null): usual is Stat =>
+  usual !== null && usual.n >= MIN_BASELINE_SESSIONS
+
 export const hrvDrop: Rule = {
   id: 'hrv-drop',
   usesBaseline: true,
   evaluate({ session, baseline }) {
     const value = session.vitals.hrvRmssdMs
     const usual = baseline.hrvRmssdMs
-    if (value === null || usual === null || usual.mean <= 0) return null
+    if (value === null || !canBeCalledUsual(usual) || usual.mean <= 0) return null
 
     const drop = (usual.mean - value) / usual.mean
     if (drop < HRV_DROP_FIRES_AT) return null
@@ -84,8 +100,11 @@ function zRule(
     evaluate({ session, baseline }) {
       const value = get(session)
       const usual = usualOf(baseline)
-      if (value === null || usual === null) return null
+      if (value === null || !canBeCalledUsual(usual)) return null
 
+      // The floor below only damps a real spread. On one or two readings there
+      // is no spread to damp and the floor *is* the scale, which is why the
+      // gate above is about this metric's own n (KV-71).
       const sd = Math.max(usual.sd, usual.mean * MIN_SD_FRACTION_OF_MEAN)
       if (sd <= 0) return null
 
@@ -186,11 +205,6 @@ export const lowMood: Rule = {
 }
 
 /** Evaluation order is irrelevant to the result; output is sorted by severity. */
-/** Rules whose explanation quotes the baseline. See `Rule.usesBaseline`. */
-export const BASELINE_RULE_IDS: ReadonlySet<string> = new Set(
-  [hrvDrop, pulseElevated, breathingElevated].map((r) => r.id),
-)
-
 export const ALL_RULES: readonly Rule[] = [
   hrvDrop,
   pulseElevated,
@@ -200,3 +214,16 @@ export const ALL_RULES: readonly Rule[] = [
   notEaten,
   lowMood,
 ]
+
+/**
+ * Rules whose explanation quotes the baseline. See `Rule.usesBaseline`.
+ *
+ * Derived rather than listed, so `usesBaseline` is the single place the concept
+ * is stated. Two hand-kept encodings agreed today and had nothing checking they
+ * still would: a fourth comparison rule added with the flag and missing from
+ * the list would disclose nothing on a seeded baseline, which is the failure
+ * KV-53 exists to prevent.
+ */
+export const BASELINE_RULE_IDS: ReadonlySet<string> = new Set(
+  ALL_RULES.filter((rule) => rule.usesBaseline === true).map((rule) => rule.id),
+)

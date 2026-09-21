@@ -114,8 +114,14 @@ function summarise(flag: Assessment['flag'], fired: FiredRule[]): string {
 /** True when anything this assessment says out loud rests on the baseline. */
 function restsOnBaseline(assessment: Assessment): boolean {
   if (assessment.flag !== 'insufficient-signal') return true
-  // A withheld verdict still shows its fired rules, and some of those quote
-  // "their usual" — an unusable capture compared nothing with anything.
+  // **Unreachable for anything scored from now on, and load-bearing anyway.**
+  // Since KV-71 no withheld verdict this scorer produces carries a rule that
+  // quotes "their usual": the unusable-capture path fires nothing, and a rule
+  // with no usual to quote does not fire. Records scored *before* KV-71 can
+  // carry one, and those are exactly what reaches this line — the disclosure
+  // is composed where the card is shown, not frozen into the record, so old
+  // assessments are read by today's code. Deleting this would silently drop
+  // the seeded disclosure from stored history.
   return assessment.firedRules.some((r) => BASELINE_RULE_IDS.has(r.id))
 }
 
@@ -182,28 +188,18 @@ export function scoreSession(
     }
   }
 
-  // A rule that quotes "their usual" is not run until there is a usual to
-  // quote (KV-71). The sentence below has always said the answer rules are what
-  // still ran; until this, every rule ran and the card made the comparison it
-  // had just said it could not make, in the next breath.
+  // Every rule runs. A rule that quotes "their usual" decides for itself
+  // whether it has one, per metric, in `canBeCalledUsual` (KV-71) — and since
+  // a metric's `Stat.n` can never exceed `baseline.sessions`, a metric is never
+  // mature on a card that is not. Filtering here as well would restate that
+  // more weakly, in sessions rather than in readings.
   //
-  // Not merely premature — meaningless. `stat` reports `sd: 0` for a sample of
-  // one, so `MIN_SD_FRACTION_OF_MEAN` floors it at 2% of the mean and *that*
-  // becomes the scale the z is measured on. A one-session baseline cannot
-  // produce a small z, because nothing about the person is setting the spread.
-  // The floor exists to guard against an unusually consistent fortnight, which
-  // is a different problem with the same shape.
-  //
-  // The reading itself is still shown, and the answer rules still fire, so this
-  // withholds the comparison rather than the card.
-  const mature = baseline.sessions >= MIN_BASELINE_SESSIONS
-  const fired = fire(
-    mature ? ALL_RULES : ALL_RULES.filter((rule) => rule.usesBaseline !== true),
-    session,
-    baseline,
-  )
+  // The sentence below has always said the answer rules are what still ran.
+  // Until KV-71 every rule ran, and the card made the comparison it had just
+  // said it could not make, in the next breath.
+  const fired = fire(ALL_RULES, session, baseline)
 
-  if (!mature) {
+  if (baseline.sessions < MIN_BASELINE_SESSIONS) {
     return {
       flag: 'insufficient-signal',
       firedRules: fired,

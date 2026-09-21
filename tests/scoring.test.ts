@@ -7,6 +7,7 @@ import {
   seededBaselineDisclosure,
 } from '@core/scoring'
 import type { Assessment } from '@core/session/types'
+import { ALL_RULES, BASELINE_RULE_IDS } from '@core/scoring'
 import { history, seededHistory, session } from './helpers'
 
 const ids = (a: Assessment): string[] => a.firedRules.map((r) => r.id)
@@ -238,6 +239,81 @@ describe('scoreSession', () => {
     expect(mature.firedRules.map((r) => r.id)).toContain('breathing-elevated')
   })
 
+  it('does not call one reading a usual, however many sessions there were', () => {
+    // `baseline.sessions` counts sessions that produced *some* reading, and a
+    // capture routinely produces some vitals and not others. Three sessions can
+    // back a pulse mean and a single breathing reading, and the card would
+    // quote "their usual 15 breaths/min" off one morning (KV-71).
+    const past = [
+      session({ id: 'h-0', capturedAt: '2026-09-01T09:00:00.000Z' }),
+      session({
+        id: 'h-1',
+        capturedAt: '2026-09-02T09:00:00.000Z',
+        vitals: { breathingRateBrpm: null },
+      }),
+      session({
+        id: 'h-2',
+        capturedAt: '2026-09-03T09:00:00.000Z',
+        vitals: { breathingRateBrpm: null },
+      }),
+    ]
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 16 } }), past)
+
+    expect(assessment.baselineSessions).toBe(3)
+    expect(ids(assessment)).not.toContain('breathing-elevated')
+  })
+
+  it('still compares the metrics that do have a usual on the same history', () => {
+    // The gate is per metric, not a blanket suppression: on the history above,
+    // pulse has three readings and breathing has one.
+    const past = [
+      session({ id: 'h-0', capturedAt: '2026-09-01T09:00:00.000Z' }),
+      session({
+        id: 'h-1',
+        capturedAt: '2026-09-02T09:00:00.000Z',
+        vitals: { breathingRateBrpm: null },
+      }),
+      session({
+        id: 'h-2',
+        capturedAt: '2026-09-03T09:00:00.000Z',
+        vitals: { breathingRateBrpm: null },
+      }),
+    ]
+    const assessment = scoreSession(
+      session({ vitals: { breathingRateBrpm: 16, pulseRateBpm: 90 } }),
+      past,
+    )
+
+    expect(ids(assessment)).toContain('pulse-elevated')
+    expect(ids(assessment)).not.toContain('breathing-elevated')
+  })
+
+  it('does not let a one-reading usual push a day to elevated', () => {
+    // The severity is not cosmetic: 0.333 alongside not-eaten's 0.3 clears
+    // ELEVATED_SEVERITY_THRESHOLD, so a usual built from one morning could
+    // decide the verdict.
+    const past = [
+      session({ id: 'h-0', capturedAt: '2026-09-01T09:00:00.000Z' }),
+      session({
+        id: 'h-1',
+        capturedAt: '2026-09-02T09:00:00.000Z',
+        vitals: { breathingRateBrpm: null },
+      }),
+      session({
+        id: 'h-2',
+        capturedAt: '2026-09-03T09:00:00.000Z',
+        vitals: { breathingRateBrpm: null },
+      }),
+    ]
+    const assessment = scoreSession(
+      session({ vitals: { breathingRateBrpm: 16 }, answers: { eatenToday: false } }),
+      past,
+    )
+
+    expect(assessment.flag).toBe('normal')
+    expect(ids(assessment)).toEqual(['not-eaten'])
+  })
+
   it('does not let the scored session contaminate its own baseline', () => {
     const past = history(5)
     const before = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), past)
@@ -340,6 +416,43 @@ describe('seededBaselineDisclosure', () => {
     )
     expect(assessment.firedRules.map((r) => r.id)).toEqual(['not-eaten'])
     expect(seededBaselineDisclosure(assessment)).toBeNull()
+  })
+
+  it('derives the disclosure set from the flag the rules already carry', () => {
+    // Two hand-kept encodings of "quotes their usual" — `usesBaseline` gating
+    // suppression and `BASELINE_RULE_IDS` gating disclosure — agreed by hand
+    // with nothing checking they still would. A fourth comparison rule added
+    // with the flag and forgotten from the list would suppress correctly, so
+    // every thin-baseline test would pass, and then quote an invented usual on
+    // a mature seeded baseline with no disclosure (KV-71).
+    const flagged = ALL_RULES.filter((rule) => rule.usesBaseline === true).map((r) => r.id)
+
+    expect(flagged.length).toBeGreaterThan(0)
+    expect([...BASELINE_RULE_IDS].sort()).toEqual([...flagged].sort())
+  })
+
+  it('still discloses on a record scored before rules were gated', () => {
+    // `restsOnBaseline`'s second branch is unreachable for anything scored now,
+    // and load-bearing for stored history: a pre-KV-71 record can carry a rule
+    // quoting a usual it should not have had, and the disclosure is composed
+    // where the card is shown rather than frozen into the record. Built as a
+    // literal because `scoreSession` can no longer produce one.
+    const older: Assessment = {
+      flag: 'insufficient-signal',
+      firedRules: [
+        {
+          id: 'hrv-drop',
+          title: 'Heart-rate variability below usual',
+          explanation: 'HRV was 20 ms today, about 41% below their usual 34 ms.',
+          severity: 0.4,
+        },
+      ],
+      summary: 'Still learning their normal — 2 of 3 check-ins needed before daily comparisons start.',
+      baselineSessions: 2,
+      baselineSeededSessions: 2,
+    }
+
+    expect(seededBaselineDisclosure(older)).toContain('seeded demo data')
   })
 
   it('reports an older record as unrecorded rather than as none', () => {
