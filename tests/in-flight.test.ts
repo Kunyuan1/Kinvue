@@ -8,7 +8,6 @@ import { createInFlightCapture } from '../app/main/in-flight'
 describe('createInFlightCapture', () => {
   it('aborts nothing when nothing is running', () => {
     const inFlight = createInFlightCapture()
-    expect(inFlight.running).toBe(false)
     expect(() => inFlight.abort()).not.toThrow()
   })
 
@@ -38,7 +37,6 @@ describe('createInFlightCapture', () => {
 
     expect(running.signal.aborted).toBe(true)
     expect(refused.signal.aborted).toBe(false)
-    expect(inFlight.running).toBe(true)
   })
 
   it('releases the slot when the capture that owns it finishes', () => {
@@ -48,7 +46,8 @@ describe('createInFlightCapture', () => {
 
     inFlight.release(running)
 
-    expect(inFlight.running).toBe(false)
+    // Asserted through what the slot does, not by inspecting it: nothing owns
+    // it, so an abort reaches nobody.
     inFlight.abort()
     expect(running.signal.aborted).toBe(false)
   })

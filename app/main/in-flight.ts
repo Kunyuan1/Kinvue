@@ -24,8 +24,6 @@ export interface InFlightCapture {
   release(controller: AbortController): void
   /** Abandon whatever is running. Does nothing when nothing is. */
   abort(): void
-  /** Whether a capture currently owns the slot. */
-  readonly running: boolean
 }
 
 export function createInFlightCapture(): InFlightCapture {
@@ -41,9 +39,6 @@ export function createInFlightCapture(): InFlightCapture {
     },
     abort() {
       current?.abort()
-    },
-    get running() {
-      return current !== null
     },
   }
 }
