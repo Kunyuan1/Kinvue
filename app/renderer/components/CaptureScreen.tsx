@@ -17,8 +17,6 @@ import type { CaptureFailure } from '@core/capture/failure'
  * point of this screen, not decoration around a countdown.
  */
 
-const CAPTURE_SECONDS = 30
-
 /**
  * Shows a capture that is **already running**. Starting one is deliberately not
  * done here: a capture cannot be cancelled once the camera is open, and React
@@ -83,9 +81,13 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
 export default function CaptureScreen({
   failure,
   onCancel,
+  captureSeconds,
 }: {
   failure: CaptureFailure | null
   onCancel: () => void
+  /** What main will actually run, so the countdown cannot promise a different
+   *  number from the capture (#63). */
+  captureSeconds: number
 }): React.JSX.Element {
   const [elapsedSec, setElapsedSec] = useState(0)
   const [guidance, setGuidance] = useState<string | null>(null)
@@ -131,7 +133,7 @@ export default function CaptureScreen({
     }
   }, [])
 
-  const remaining = Math.max(0, CAPTURE_SECONDS - elapsedSec)
+  const remaining = Math.max(0, captureSeconds - elapsedSec)
 
   if (failure !== null) {
     const { title, detail } = FAILURE[failure]

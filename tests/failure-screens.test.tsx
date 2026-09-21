@@ -47,6 +47,12 @@ afterEach(cleanup)
 
 const noop = (): void => undefined
 
+/** The capture length is main's to decide (#63); these tests are about copy. */
+const CAPTURE_SECONDS = 30
+const renderCapture = (failure: CaptureFailure | null): void => {
+  render(<CaptureScreen failure={failure} onCancel={noop} captureSeconds={CAPTURE_SECONDS} />)
+}
+
 describe('CaptureScreen says which failure it was', () => {
   // Only what the capture path can raise. The submit-path entries this table
   // used to carry were copy no press could reach (KV-75).
@@ -61,7 +67,7 @@ describe('CaptureScreen says which failure it was', () => {
   ]
 
   it.each(cases)('renders %s as its own sentence', (failure, expected) => {
-    render(<CaptureScreen failure={failure} onCancel={noop} />)
+    renderCapture(failure)
     expect(screen.getByText(expected)).toBeDefined()
   })
 
@@ -70,7 +76,7 @@ describe('CaptureScreen says which failure it was', () => {
     // copy used to say "try again in a few seconds" beside it: a wait that
     // gains nothing, since the reading is dropped when it lands and this
     // screen offers no way to retry (KV-76).
-    render(<CaptureScreen failure="capture-in-progress" onCancel={noop} />)
+    renderCapture('capture-in-progress')
     const text = document.body.textContent ?? ''
 
     // The negative half carries the KV-76 decision: no wait is asked for.
@@ -84,7 +90,7 @@ describe('CaptureScreen says which failure it was', () => {
   it('names no condition and shows no raw error string', () => {
     for (const [failure] of cases) {
       cleanup()
-      render(<CaptureScreen failure={failure} onCancel={noop} />)
+      renderCapture(failure)
       const text = document.body.textContent ?? ''
       // The whole point of the tag is that it never reaches a person.
       expect(text).not.toMatch(/kinvue\//)
@@ -97,7 +103,7 @@ describe('CaptureScreen says which failure it was', () => {
     // screen is the one addressed to the cared-for person.
     for (const failure of ['no-api-key', 'camera-unavailable'] as const) {
       cleanup()
-      render(<CaptureScreen failure={failure} onCancel={noop} />)
+      renderCapture(failure)
       expect(document.body.textContent).toMatch(/nothing is wrong on your side/i)
     }
   })
@@ -120,7 +126,7 @@ describe('CaptureScreen says which failure it was', () => {
     // means the capture ended, but the component reads it as "nothing has gone
     // wrong yet" and shows a countdown and a Stop button for a capture that is
     // over. `App`'s catch calls `setCapturing(false)` on null for that reason.
-    render(<CaptureScreen failure={null} onCancel={noop} />)
+    renderCapture(null)
     // The live state is asserted through its control rather than its prose:
     // the guidance wording is meant to be rewritten freely, per the note at the
     // top of this file, and a Stop button offered for a capture that is over is
@@ -129,8 +135,18 @@ describe('CaptureScreen says which failure it was', () => {
     expect(document.body.textContent).not.toMatch(/could not|went wrong|not set up/i)
   })
 
+  it.each([30, 45, 60])('counts down from the %ss main is actually running', (seconds) => {
+    // The countdown used to be its own constant, so changing the capture
+    // length in main left the screen promising the old one (#63). Two lengths
+    // rather than one negative assertion: nothing else renders a seconds
+    // string here, so `not.toMatch(/30 seconds/)` could not have failed
+    // whether or not the constant came back.
+    render(<CaptureScreen failure={null} onCancel={noop} captureSeconds={seconds} />)
+    expect(document.body.textContent).toMatch(new RegExp(`${String(seconds)} seconds`, 'i'))
+  })
+
   it('shows nothing at all when there is no failure', () => {
-    render(<CaptureScreen failure={null} onCancel={noop} />)
+    renderCapture(null)
     expect(screen.queryByText(/not set up yet/i)).toBeNull()
   })
 })
@@ -176,7 +192,7 @@ describe('end to end, from the thrown error to the sentence', () => {
     )
     const failure = classifyCaptureError(overIpc)
     expect(failure).toBe('no-api-key')
-    render(<CaptureScreen failure={failure} onCancel={noop} />)
+    renderCapture(failure)
 
     expect(screen.getByText(/not set up yet/i)).toBeDefined()
     // The old behaviour: this exact string in front of the cared-for person.

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
 import { hasScorableVitals } from '@core/scoring'
+import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
 import {
   classifyCaptureError,
   classifySubmitError,
@@ -106,6 +107,11 @@ export default function App(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [capturing, setCapturing] = useState(false)
+  // Asked of main rather than assumed: the countdown and the sentence under
+  // the button both have to be the length a capture will actually run (#63).
+  // The same constant main defaults to, so the one render before the answer
+  // arrives is right whenever the setting is unset.
+  const [captureSeconds, setCaptureSeconds] = useState(DEFAULT_CAPTURE_SECONDS)
   const [captureFailure, setCaptureFailure] = useState<CaptureFailure | null>(null)
   const [answering, setAnswering] = useState<CaptureResult | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -120,6 +126,17 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     void refresh().catch((e: unknown) => setError(String(e)))
   }, [refresh])
+
+  useEffect(() => {
+    // Not worth a screen: the fallback is the default, so a failure here is
+    // invisible when the setting is unset. It is *not* harmless when it is set
+    // — the button would promise 30 seconds while the capture runs 60, and the
+    // countdown would reach "Finishing up" half a minute early — so the failure
+    // is recorded rather than swallowed.
+    void window.kinvue.captureSeconds().then(setCaptureSeconds, (err: unknown) => {
+      console.error('Could not read the capture length; using the default.', err)
+    })
+  }, [])
 
   const seed = async (): Promise<void> => {
     await window.kinvue.seedDemo()
@@ -219,7 +236,11 @@ export default function App(): React.JSX.Element {
   if (capturing) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-10">
-        <CaptureScreen failure={captureFailure} onCancel={stopCapture} />
+        <CaptureScreen
+          failure={captureFailure}
+          onCancel={stopCapture}
+          captureSeconds={captureSeconds}
+        />
       </main>
     )
   }
@@ -266,7 +287,7 @@ export default function App(): React.JSX.Element {
           Take a reading
         </button>
         <span className="text-sm text-(--color-muted)">
-          About 30 seconds in front of the camera.
+          About {captureSeconds} seconds in front of the camera.
         </span>
       </div>
 
