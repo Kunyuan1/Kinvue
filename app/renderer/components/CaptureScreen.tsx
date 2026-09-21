@@ -57,13 +57,18 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
     // "try again in a few seconds" asked for a wait that led nowhere, next to
     // the one control that ends the thing being waited for.
     //
-    // "in a moment" is load-bearing and not hedging. Stopping frees the *lock*
-    // at once, but `cleanUp` in app/main/vitals.ts tears the device down with
-    // an unawaited `stopAsync().then(destroy)`, so pressing Take a reading
-    // instantly can still find the camera held and land the person on "another
-    // program may have it open" — pointed at a video call that was never the
-    // problem, moments after being told a new reading can start. Awaiting the
-    // teardown before the lock clears is the real fix (KV-84).
+    // "in a moment" is describing a real short wait rather than hedging around
+    // a race. Since KV-84 a capture does not settle, and so does not drop its
+    // lock, until the camera is free *or a two-second wait has run out*, so
+    // pressing Take a reading too soon lands back on this screen rather than on
+    // "another program may have it open", which pointed at a video call that
+    // was never the problem.
+    //
+    // Not a guarantee, and saying so is the stronger argument: on a timeout the
+    // lock drops with the device possibly still held, and that press does get
+    // the wrong sentence. The bound is chosen so that is rare — measured
+    // releases on real hardware ran 416–593ms against it — not so it is
+    // impossible. #63 owns the number.
     title: 'The camera is still busy',
     detail:
       'It has not finished with the reading before this one. Going back will stop that ' +

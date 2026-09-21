@@ -189,6 +189,7 @@ Everything is env-driven and read in the main process only.
 | Variable | Default | Purpose |
 |---|---|---|
 | `SMARTSPECTRA_API_KEY` | — | SmartSpectra SDK key. Free from the [Presage portal](https://physiology.presagetech.com/auth/register). Read in `app/main` and never exposed to the renderer. |
+| `KINVUE_LOG_CAPTURE` | unset | Any non-empty value prints how long the camera took to close after each capture — `[capture] camera release: released in 340ms`. That figure is what `DEVICE_RELEASE_TIMEOUT_MS` is guessing at, and #63 is where it gets settled. A release that failed or outran the wait prints whether or not this is set. |
 
 `app/main/env.ts` loads `.env` into `process.env` at startup, **in development only** — a
 packaged app is launched from wherever its shortcut points, and reading whatever `.env`
@@ -227,6 +228,7 @@ Tuned constants live in code, not env, because changing one changes what the app
 | `GUIDANCE_REPEAT_MS` | `core/capture/guidance.ts` | `4 s` — a line already on screen is not re-sent more often than this |
 | `FRAME_INTERVAL_MS` | `app/main/frames.ts` | `100 ms` — how often a self-view frame is sent, against the camera's ~30/s |
 | `FRAME_WIDTH` | `app/main/frames.ts` | `320 px` — frames are sampled down to this during conversion, not after |
+| `DEVICE_RELEASE_TIMEOUT_MS` | `app/main/release.ts` | `2 s` — how long a capture waits for the camera to actually close before dropping its lock. Measured releases on one machine ran 416–593 ms; the bound is unmeasured elsewhere and #63 owns it. Set `KINVUE_LOG_CAPTURE` to see the real figure. |
 
 ---
 
