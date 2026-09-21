@@ -314,6 +314,58 @@ describe('scoreSession', () => {
     expect(ids(assessment)).toEqual(['not-eaten'])
   })
 
+  it('says how far out a z-rule reading is, not just that it is out', () => {
+    // "Pulse was 75 bpm, above their usual 72 bpm" invites "three beats, so
+    // what?" when the point is that three beats is a lot for them. hrv-drop
+    // never had this problem because a percentage carries its own magnitude.
+    const past = [72, 78, 69, 81, 75].map((pulse, i) =>
+      session({
+        id: `h-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { pulseRateBpm: pulse },
+      }),
+    )
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 95 } }), past)
+    const rule = assessment.firedRules.find((r) => r.id === 'pulse-elevated')
+
+    expect(rule?.explanation).toContain('95 bpm')
+    expect(rule?.explanation).toContain('75 bpm')
+    // The spread, which is what makes 95 checkable rather than assertable.
+    expect(rule?.explanation).toMatch(/vary by about 5 bpm/i)
+  })
+
+  it('does not quote a spread the floor invented', () => {
+    // On an unvarying baseline `Stat.sd` is 0 and MIN_SD_FRACTION_OF_MEAN
+    // becomes the scale. Reporting that back as "they usually vary by about
+    // 1.4 bpm" would present a floor as a measurement — a number nobody
+    // produced, which is the one thing this scorer must never do.
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 75 } }), history(5))
+    const rule = assessment.firedRules.find((r) => r.id === 'pulse-elevated')
+
+    expect(rule?.explanation).toBeDefined()
+    expect(rule?.explanation).not.toMatch(/vary by about/i)
+    expect(rule?.explanation).toMatch(/steady/i)
+  })
+
+  it('names the metric from its own field, not from the first word of its title', () => {
+    // `title.split(' ')[0]` worked only because every title began with its
+    // noun. "Unusually fast breathing" would have read "Unusually was 40".
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 30 } }), history(5))
+    const rule = assessment.firedRules.find((r) => r.id === 'breathing-elevated')
+
+    expect(rule?.explanation).toMatch(/^Breathing was /)
+    expect(rule?.title).toBe('Breathing above usual')
+  })
+
+  it('leaves hrv-drop saying what it already said well', () => {
+    // A percentage already carries its own magnitude, so it needs no spread.
+    const assessment = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), history(5))
+    const rule = assessment.firedRules.find((r) => r.id === 'hrv-drop')
+
+    expect(rule?.explanation).toContain('%')
+    expect(rule?.explanation).not.toMatch(/vary by about|steady/i)
+  })
+
   it('does not let the scored session contaminate its own baseline', () => {
     const past = history(5)
     const before = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), past)

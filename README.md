@@ -133,7 +133,11 @@ tests/                   Vitest. Covers baseline, scoring, validation, check-in,
   behind it is a black box asking a family member to worry. Every rule that fires carries
   a plain-language sentence naming the actual values, and `firedRules` is rendered even
   when the verdict is `normal` — "normal, and here are the two things that did register"
-  is more trustworthy than a bare green tick.
+  is more trustworthy than a bare green tick. The comparison rules also say how far out
+  the reading is, because "75 bpm, above their usual 72" reads as trivially true when the
+  point is that three beats is a lot *for them* — and they say it without quoting a spread
+  the `MIN_SD_FRACTION_OF_MEAN` floor invented, since a floor presented as a measurement
+  is a number nobody produced.
 - **Rules, not a trained model — on purpose.** There is no labelled dataset of "days
   before an older adult got ill", and a model trained on synthetic data would be a
   confident guess dressed as evidence. See `ARCHITECTURE.md`.

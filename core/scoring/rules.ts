@@ -86,14 +86,49 @@ const Z_FULL_SEVERITY_AT = 4
 /** Guards against a near-zero sd from an unusually consistent fortnight. */
 const MIN_SD_FRACTION_OF_MEAN = 0.02
 
-function zRule(
-  id: string,
-  title: string,
-  unit: string,
-  peakSeverity: number,
-  get: (s: SessionRecord) => number | null,
-  usualOf: (b: Baseline) => Baseline['pulseRateBpm'],
-): Rule {
+interface ZRuleSpec {
+  id: string
+  title: string
+  /**
+   * What the explanation calls the thing, e.g. "Breathing".
+   *
+   * Stated rather than taken from `title.split(' ')[0]`, which happened to
+   * work only because every title began with its own noun (KV-11). A title
+   * reworded to "Unusually fast breathing" would have produced "Unusually was
+   * 40 breaths/min".
+   */
+  noun: string
+  unit: string
+  peakSeverity: number
+  get: (s: SessionRecord) => number | null
+  usualOf: (b: Baseline) => Stat | null
+}
+
+/**
+ * How far out the reading is, in words a caregiver can check.
+ *
+ * A z-rule fires on deviation relative to this person's own spread, so the
+ * bare numbers can read as trivially true: "Pulse was 75 bpm, above their
+ * usual 72 bpm" invites the answer "three beats, so what?" when the point is
+ * that three beats is a lot *for them*. `hrv-drop` never had this problem
+ * because a percentage carries its own magnitude.
+ *
+ * **Reports the observed spread only when there is one.** When
+ * `MIN_SD_FRACTION_OF_MEAN` floors the sd, the number being divided by is one
+ * the code invented rather than one the person produced, and quoting it back
+ * as "they usually vary by about 1.4 bpm" would be presenting a floor as a
+ * measurement. The steadiness is the true thing to say in that case, and it is
+ * also the more useful one.
+ */
+function howFarOut(usual: Stat, unit: string): string {
+  const floor = usual.mean * MIN_SD_FRACTION_OF_MEAN
+  if (usual.sd < floor) {
+    return `Their readings have been unusually steady, so a small difference is a large one for them.`
+  }
+  return `They usually vary by about ${round(usual.sd)} ${unit} either way.`
+}
+
+function zRule({ id, title, noun, unit, peakSeverity, get, usualOf }: ZRuleSpec): Rule {
   return {
     id,
     usesBaseline: true,
@@ -115,8 +150,8 @@ function zRule(
         id,
         title,
         explanation:
-          `${title.split(' ')[0]} was ${round(value)} ${unit}, above their ` +
-          `usual ${round(usual.mean)} ${unit}.`,
+          `${noun} was ${round(value)} ${unit} today, above their ` +
+          `usual ${round(usual.mean)} ${unit}. ${howFarOut(usual, unit)}`,
         severity:
           peakSeverity *
           clamp01((z - Z_FIRES_AT) / (Z_FULL_SEVERITY_AT - Z_FIRES_AT)) *
@@ -127,23 +162,25 @@ function zRule(
   }
 }
 
-export const pulseElevated = zRule(
-  'pulse-elevated',
-  'Pulse above usual',
-  'bpm',
-  0.45,
-  (s) => s.vitals.pulseRateBpm,
-  (b) => b.pulseRateBpm,
-)
+export const pulseElevated = zRule({
+  id: 'pulse-elevated',
+  title: 'Pulse above usual',
+  noun: 'Pulse',
+  unit: 'bpm',
+  peakSeverity: 0.45,
+  get: (s) => s.vitals.pulseRateBpm,
+  usualOf: (b) => b.pulseRateBpm,
+})
 
-export const breathingElevated = zRule(
-  'breathing-elevated',
-  'Breathing above usual',
-  'breaths/min',
-  0.4,
-  (s) => s.vitals.breathingRateBrpm,
-  (b) => b.breathingRateBrpm,
-)
+export const breathingElevated = zRule({
+  id: 'breathing-elevated',
+  title: 'Breathing above usual',
+  noun: 'Breathing',
+  unit: 'breaths/min',
+  peakSeverity: 0.4,
+  get: (s) => s.vitals.breathingRateBrpm,
+  usualOf: (b) => b.breathingRateBrpm,
+})
 
 /**
  * Poor sleep and pain together, on the same day, is the combination carers
