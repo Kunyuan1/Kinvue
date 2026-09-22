@@ -315,6 +315,140 @@ describe('scoreSession', () => {
     expect(ids(assessment)).toEqual(['not-eaten'])
   })
 
+  it('says how far out a z-rule reading is, not just that it is out', () => {
+    // "Pulse was 75 bpm, above their usual 72 bpm" invites "three beats, so
+    // what?" when the point is that three beats is a lot for them. hrv-drop
+    // never had this problem because a percentage carries its own magnitude.
+    const past = [72, 78, 69, 81, 75].map((pulse, i) =>
+      session({
+        id: `h-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { pulseRateBpm: pulse },
+      }),
+    )
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 95 } }), past)
+    const rule = assessment.firedRules.find((r) => r.id === 'pulse-elevated')
+
+    expect(rule?.explanation).toContain('95 bpm')
+    expect(rule?.explanation).toContain('75 bpm')
+    // The spread, which is what makes 95 checkable rather than assertable.
+    // 4.7, not "5": the clause prints one decimal place so that a real spread
+    // below 0.5 cannot render as "about 0" (KV-11 review).
+    expect(rule?.explanation).toMatch(/vary by about 4\.7 bpm/i)
+  })
+
+  it('does not quote a spread the floor invented', () => {
+    // On an unvarying baseline `Stat.sd` is 0 and MIN_SD_FRACTION_OF_MEAN
+    // becomes the scale. Reporting that back as "they usually vary by about
+    // 1.4 bpm" would present a floor as a measurement — a number nobody
+    // produced, which is the one thing this scorer must never do.
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 75 } }), history(5))
+    const rule = assessment.firedRules.find((r) => r.id === 'pulse-elevated')
+
+    expect(rule?.explanation).toBeDefined()
+    expect(rule?.explanation).not.toMatch(/vary by about/i)
+    expect(rule?.explanation).toMatch(/barely varied/i)
+    // And it stops there rather than concluding from the floor. The code has
+    // never observed this person vary, so it cannot know that three beats is
+    // large for them — asserting it is the same overstatement as quoting the
+    // floored sd, one level up (KV-11 review).
+    expect(rule?.explanation).not.toMatch(/a large one for them/i)
+    expect(rule?.explanation).toMatch(/nothing to measure this difference against/i)
+    // "usual" belongs to the mean in the first sentence. Spending it again on
+    // the spread reads as a contradiction rather than a distinction.
+    expect(rule?.explanation).toMatch(/above their usual 72 bpm/i)
+    expect(rule?.explanation?.match(/usual/gi)).toHaveLength(1)
+  })
+
+  it('reports a measured spread finer than a whole unit instead of "about 0"', () => {
+    // Baseline [15, 15, 15, 16, 15] → mean 15.2, sd 0.447, floor 0.304. The
+    // floor is *not* active: this is the branch that reports a real spread,
+    // and at 0 decimal places it reported it as "about 0 breaths/min either
+    // way" — a sentence denying the very spread the rule fired on. Reachable
+    // for any mean at or below 25, i.e. breathing rate in every normal range
+    // (KV-11 review). Pulse was safe only because its floor is already >= 1.44.
+    const past = [15, 15, 15, 16, 15].map((breathing, i) =>
+      session({
+        id: `h-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { breathingRateBrpm: breathing },
+      }),
+    )
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 17 } }), past)
+    const rule = assessment.firedRules.find((r) => r.id === 'breathing-elevated')
+
+    expect(rule?.explanation).toBeDefined()
+    expect(rule?.explanation).not.toMatch(/vary by about 0 /i)
+    expect(rule?.explanation).toMatch(/vary by about 0\.4 breaths\/min/i)
+  })
+
+  it('does not quote a spread the floor invented when the sd is real but under it', () => {
+    // `history(5)` is identical readings, so sd is exactly 0 and the `<`
+    // comparison never met a non-zero sd below the floor — `usual.sd === 0`
+    // passed the entire suite (KV-11 review). Pulse [72, 72, 72, 72, 74] has
+    // sd 0.89 against a floor of 1.45: a real spread the floor still supplants.
+    const past = [72, 72, 72, 72, 74].map((pulse, i) =>
+      session({
+        id: `h-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { pulseRateBpm: pulse },
+      }),
+    )
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 76 } }), past)
+    const rule = assessment.firedRules.find((r) => r.id === 'pulse-elevated')
+
+    expect(rule?.explanation).toBeDefined()
+    expect(rule?.explanation).not.toMatch(/vary by about/i)
+    expect(rule?.explanation).toMatch(/nothing to measure this difference against/i)
+  })
+
+  it('agrees with itself about the scale when the floor supplies it', () => {
+    // The severity comes from the floored sd; the sentence used to decide
+    // which wording to use by recomputing the floor independently. One
+    // `spreadOf` now feeds both, so they cannot describe different scales.
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 75 } }), history(5))
+    const rule = assessment.firedRules.find((r) => r.id === 'pulse-elevated')
+
+    expect(rule?.explanation).toMatch(/nothing to measure this difference against/i)
+    expect(rule?.severity).toBeGreaterThan(0)
+  })
+
+  it('says "breath/min" when the spread is exactly one', () => {
+    // Baseline [14, 14, 15, 16, 16] → mean 15, sd exactly 1.0. "about 1
+    // breaths/min either way" is routine for this clause in a way it never
+    // was for the first sentence (KV-11 review).
+    const past = [14, 14, 15, 16, 16].map((breathing, i) =>
+      session({
+        id: `h-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { breathingRateBrpm: breathing },
+      }),
+    )
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 18 } }), past)
+    const rule = assessment.firedRules.find((r) => r.id === 'breathing-elevated')
+
+    expect(rule?.explanation).toContain('about 1 breath/min either way')
+  })
+
+  it('names the metric from its own field, not from the first word of its title', () => {
+    // `title.split(' ')[0]` worked only because every title began with its
+    // noun. "Unusually fast breathing" would have read "Unusually was 40".
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 30 } }), history(5))
+    const rule = assessment.firedRules.find((r) => r.id === 'breathing-elevated')
+
+    expect(rule?.explanation).toMatch(/^Breathing was /)
+    expect(rule?.title).toBe('Breathing above usual')
+  })
+
+  it('leaves hrv-drop saying what it already said well', () => {
+    // A percentage already carries its own magnitude, so it needs no spread.
+    const assessment = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), history(5))
+    const rule = assessment.firedRules.find((r) => r.id === 'hrv-drop')
+
+    expect(rule?.explanation).toContain('%')
+    expect(rule?.explanation).not.toMatch(/vary by about|steady/i)
+  })
+
   it('does not let the scored session contaminate its own baseline', () => {
     const past = history(5)
     const before = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), past)

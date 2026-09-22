@@ -86,14 +86,123 @@ const Z_FULL_SEVERITY_AT = 4
 /** Guards against a near-zero sd from an unusually consistent fortnight. */
 const MIN_SD_FRACTION_OF_MEAN = 0.02
 
-function zRule(
-  id: string,
-  title: string,
-  unit: string,
-  peakSeverity: number,
-  get: (s: SessionRecord) => number | null,
-  usualOf: (b: Baseline) => Baseline['pulseRateBpm'],
-): Rule {
+interface ZRuleSpec {
+  id: string
+  title: string
+  /**
+   * What the explanation calls the thing, e.g. "Breathing".
+   *
+   * Stated rather than taken from `title.split(' ')[0]`, which happened to
+   * work only because every title began with its own noun (KV-11). A title
+   * reworded to "Unusually fast breathing" would have produced "Unusually was
+   * 40 breaths/min".
+   */
+  noun: string
+  unit: string
+  /**
+   * The unit to use when the quoted number is exactly 1, e.g. "breath/min".
+   *
+   * Defaults to `unit`, which is already right for "bpm". Stated rather than
+   * derived for the same reason as `noun`: guessing a singular out of a plural
+   * is the string surgery this file just removed, and "about 1 breaths/min
+   * either way" is reachable for any spread that rounds to 1 (KV-11 review).
+   */
+  singularUnit?: string
+  peakSeverity: number
+  get: (s: SessionRecord) => number | null
+  usualOf: (b: Baseline) => Stat | null
+}
+
+/** The spread a z was measured against, and whose number it is. */
+interface Spread {
+  /** What the deviation was actually divided by. */
+  sd: number
+  /** True when `MIN_SD_FRACTION_OF_MEAN` supplied it rather than the person. */
+  floored: boolean
+}
+
+/**
+ * The scale a z-rule measures on, computed once.
+ *
+ * `zRule` derives this and hands it to `howFarOut`, so the sentence can never
+ * explain a deviation on a different scale from the one that set the severity.
+ * The two used to recompute the floor independently, and agreed only for as
+ * long as the expression stayed typed identically in both places — give the
+ * floor an absolute component and the severity would come from one scale while
+ * the explanation described another, with nothing failing (KV-11 review).
+ */
+const spreadOf = (usual: Stat): Spread => {
+  const floor = usual.mean * MIN_SD_FRACTION_OF_MEAN
+  return usual.sd < floor ? { sd: floor, floored: true } : { sd: usual.sd, floored: false }
+}
+
+/** Decimal places for a quoted spread. See `howFarOut` for why it is not 0. */
+const SPREAD_DP = 1
+
+/**
+ * What to say when there is no measured spread to quote.
+ *
+ * Stops at what is known. The earlier wording — "so a small difference is a
+ * large one for them" — drew a conclusion from the floor, and the floor is
+ * precisely the number this branch exists because nobody produced: five
+ * identical readings at 72 means the code has never observed this person vary,
+ * so it cannot know that three beats is large for them. Asserting it is the
+ * same overstatement as quoting the floored sd, one level up (KV-11 review).
+ * Whether a difference that small should fire at all on a baseline that steady
+ * is a `MIN_SD_FRACTION_OF_MEAN` question, and #22 owns it.
+ *
+ * Two constraints on the wording, both learned by reading it on a real card:
+ *
+ * - **It must not say "usual".** The first sentence already spends that word on
+ *   the mean ("above their usual 72 bpm"); spending it again on the spread
+ *   reads as a contradiction rather than a distinction.
+ * - **"Barely varied", not "steady".** This fires on two baselines — an sd of
+ *   exactly 0, and a real sd sitting under the floor. The second person did
+ *   vary, just not much, and calling that "so steady there is no range" is the
+ *   same species of overstatement this branch exists to avoid.
+ */
+const NO_SPREAD_TO_REPORT =
+  'Their recent readings have barely varied, so there is nothing to measure this difference against.'
+
+/**
+ * How far out the reading is, in words a caregiver can check.
+ *
+ * A z-rule fires on deviation relative to this person's own spread, so the
+ * bare numbers can read as trivially true: "Pulse was 75 bpm, above their
+ * usual 72 bpm" invites the answer "three beats, so what?" when the point is
+ * that three beats is a lot *for them*. `hrv-drop` never had this problem
+ * because a percentage carries its own magnitude.
+ *
+ * **Reports the observed spread only when there is one to report.** There are
+ * two ways there is not, and both must say so rather than quote a number:
+ *
+ * - The floor supplied the scale. `MIN_SD_FRACTION_OF_MEAN` is the code's
+ *   number, not the person's, and quoting it back as "they usually vary by
+ *   about 1.4 bpm" would present a floor as a measurement.
+ * - The measured spread is finer than this clause can print. At 0 decimal
+ *   places a real sd of 0.447 rendered as "about 0 breaths/min either way" — a
+ *   sentence denying the very spread the rule fired on, reachable for any mean
+ *   at or below 25, which is breathing rate in every normal range (KV-11
+ *   review). `SPREAD_DP` covers that; the `<= 0` guard keeps the guarantee
+ *   structural rather than a property of whatever that constant happens to be.
+ */
+function howFarOut(spread: Spread, unit: string, singularUnit: string): string {
+  const quoted = round(spread.sd, SPREAD_DP)
+  if (spread.floored || quoted <= 0) return NO_SPREAD_TO_REPORT
+  const u = quoted === 1 ? singularUnit : unit
+  return `They usually vary by about ${quoted} ${u} either way.`
+}
+
+function zRule({
+  id,
+  title,
+  noun,
+  unit,
+  singularUnit = unit,
+  peakSeverity,
+  get,
+  usualOf,
+}: ZRuleSpec): Rule {
   return {
     id,
     usesBaseline: true,
@@ -102,21 +211,21 @@ function zRule(
       const usual = usualOf(baseline)
       if (value === null || !canBeCalledUsual(usual)) return null
 
-      // The floor below only damps a real spread. On one or two readings there
-      // is no spread to damp and the floor *is* the scale, which is why the
-      // gate above is about this metric's own n (KV-71).
-      const sd = Math.max(usual.sd, usual.mean * MIN_SD_FRACTION_OF_MEAN)
-      if (sd <= 0) return null
+      // The floor in `spreadOf` only damps a real spread. On one or two
+      // readings there is no spread to damp and the floor *is* the scale,
+      // which is why the gate above is about this metric's own n (KV-71).
+      const spread = spreadOf(usual)
+      if (spread.sd <= 0) return null
 
-      const z = (value - usual.mean) / sd
+      const z = (value - usual.mean) / spread.sd
       if (z < Z_FIRES_AT) return null
 
       return {
         id,
         title,
         explanation:
-          `${title.split(' ')[0]} was ${round(value)} ${unit}, above their ` +
-          `usual ${round(usual.mean)} ${unit}.`,
+          `${noun} was ${round(value)} ${unit} today, above their ` +
+          `usual ${round(usual.mean)} ${unit}. ${howFarOut(spread, unit, singularUnit)}`,
         severity:
           peakSeverity *
           clamp01((z - Z_FIRES_AT) / (Z_FULL_SEVERITY_AT - Z_FIRES_AT)) *
@@ -127,23 +236,26 @@ function zRule(
   }
 }
 
-export const pulseElevated = zRule(
-  'pulse-elevated',
-  'Pulse above usual',
-  'bpm',
-  0.45,
-  (s) => s.vitals.pulseRateBpm,
-  (b) => b.pulseRateBpm,
-)
+export const pulseElevated = zRule({
+  id: 'pulse-elevated',
+  title: 'Pulse above usual',
+  noun: 'Pulse',
+  unit: 'bpm',
+  peakSeverity: 0.45,
+  get: (s) => s.vitals.pulseRateBpm,
+  usualOf: (b) => b.pulseRateBpm,
+})
 
-export const breathingElevated = zRule(
-  'breathing-elevated',
-  'Breathing above usual',
-  'breaths/min',
-  0.4,
-  (s) => s.vitals.breathingRateBrpm,
-  (b) => b.breathingRateBrpm,
-)
+export const breathingElevated = zRule({
+  id: 'breathing-elevated',
+  title: 'Breathing above usual',
+  noun: 'Breathing',
+  unit: 'breaths/min',
+  singularUnit: 'breath/min',
+  peakSeverity: 0.4,
+  get: (s) => s.vitals.breathingRateBrpm,
+  usualOf: (b) => b.breathingRateBrpm,
+})
 
 /**
  * Poor sleep and pain together, on the same day, is the combination carers
