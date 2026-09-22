@@ -1,0 +1,336 @@
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { createJsonSessionStore, UnreadableStoreError } from '@core/session/store'
+import { classifySubmitError } from '@core/capture/failure'
+import { session } from './helpers'
+
+/**
+ * A rename that can be made to fail once.
+ *
+ * `store.ts` does `import { rename } from 'node:fs/promises'`, so the binding
+ * is resolved at import time and `vi.spyOn` on the namespace cannot reach it —
+ * the module object is frozen. Everything else delegates to the real fs, so
+ * the rest of the suite is untouched.
+ */
+const renameControl = vi.hoisted(() => ({ failNext: false }))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    rename: async (from: string, to: string): Promise<void> => {
+      if (renameControl.failNext) {
+        renameControl.failNext = false
+        throw new Error('EIO: rename failed')
+      }
+      await actual.rename(from, to)
+    },
+  }
+})
+
+/**
+ * The file every comparison rests on, which had no test (KV-13).
+ * `ARCHITECTURE.md` makes a durability claim about it — temp file, then
+ * rename — that nothing verified.
+ */
+const dirs: string[] = []
+
+async function storeIn(): Promise<{ path: string }> {
+  const dir = await mkdtemp(join(tmpdir(), 'kinvue-store-'))
+  dirs.push(dir)
+  return { path: join(dir, 'sessions.json') }
+}
+
+afterEach(async () => {
+  await Promise.all(dirs.splice(0).map(async (d) => rm(d, { recursive: true, force: true })))
+})
+
+describe('createJsonSessionStore', () => {
+  it('treats a missing file as the first run rather than an error', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+
+    expect(await store.list('anyone')).toEqual([])
+    expect(await store.people()).toEqual([])
+  })
+
+  it('round-trips an appended session', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'one' }))
+
+    const got = await store.list('test-person')
+    expect(got.map((s) => s.id)).toEqual(['one'])
+  })
+
+  it('returns only the person asked for', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'theirs' }))
+    await store.append({ ...session({ id: 'someone-elses' }), personId: 'other-person' })
+
+    expect((await store.list('test-person')).map((s) => s.id)).toEqual(['theirs'])
+    expect((await store.list('other-person')).map((s) => s.id)).toEqual(['someone-elses'])
+  })
+
+  it('returns them oldest first, whatever order they were appended', async () => {
+    // The baseline window takes the *last* N, so the order is load-bearing.
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'later', capturedAt: '2026-09-03T09:00:00.000Z' }))
+    await store.append(session({ id: 'earlier', capturedAt: '2026-09-01T09:00:00.000Z' }))
+    await store.append(session({ id: 'middle', capturedAt: '2026-09-02T09:00:00.000Z' }))
+
+    expect((await store.list('test-person')).map((s) => s.id)).toEqual([
+      'earlier',
+      'middle',
+      'later',
+    ])
+  })
+
+  it('lists every person with a session, once each', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'a' }))
+    await store.append(session({ id: 'b' }))
+    await store.append({ ...session({ id: 'c' }), personId: 'other-person' })
+
+    expect((await store.people()).sort()).toEqual(['other-person', 'test-person'])
+  })
+
+  it('never edits a record in place', async () => {
+    // Append-only is what makes a record safe to sync later (#30).
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    const first = session({ id: 'one', capturedAt: '2026-09-01T09:00:00.000Z' })
+    await store.append(first)
+    await store.append(session({ id: 'two', capturedAt: '2026-09-02T09:00:00.000Z' }))
+
+    const got = await store.list('test-person')
+    expect(got).toHaveLength(2)
+    expect(got[0]).toEqual(first)
+  })
+})
+
+describe('a file it cannot read', () => {
+  it('refuses rather than reporting an empty history', async () => {
+    // Answering "empty" would be the reassuring-and-wrong direction: a person
+    // with months of check-ins would be shown none, with no sign anything was
+    // amiss.
+    const { path } = await storeIn()
+    await writeFile(path, 'not json at all', 'utf8')
+
+    await expect(createJsonSessionStore(path).list('p')).rejects.toThrow(UnreadableStoreError)
+  })
+
+  it('refuses a file whose sessions are not a list', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, JSON.stringify({ version: 1, sessions: { oops: true } }), 'utf8')
+
+    await expect(createJsonSessionStore(path).list('p')).rejects.toThrow(/no list of sessions/)
+  })
+
+  it('does not overwrite a file it could not read', async () => {
+    // The reason refusing matters. `append` is read-modify-write, so a read
+    // that answered "empty" pushed one record onto nothing and renamed that
+    // over the original — the history gone, on the one path where the app
+    // already knew something was wrong.
+    const { path } = await storeIn()
+    const original = JSON.stringify({ version: 1, sessions: { oops: true } })
+    await writeFile(path, original, 'utf8')
+
+    await expect(createJsonSessionStore(path).append(session())).rejects.toThrow(
+      UnreadableStoreError,
+    )
+    expect(await readFile(path, 'utf8')).toBe(original)
+  })
+
+  it('treats a zero-byte file as a first run, because it has nothing to lose', async () => {
+    // The one corruption with nothing to protect: refusing elsewhere is right
+    // because answering "empty" would let `append` rename one record over real
+    // history, and a zero-byte file holds none. `JSON.parse('')` throws, so
+    // this was a permanent refusal protecting nothing.
+    const { path } = await storeIn()
+    await writeFile(path, '', 'utf8')
+
+    const store = createJsonSessionStore(path)
+    expect(await store.list('anyone')).toEqual([])
+    // And it recovers rather than merely reading: the next check-in stores.
+    await store.append(session({ id: 'after' }))
+    expect((await store.list('test-person')).map((s) => s.id)).toEqual(['after'])
+  })
+
+  it('treats a whitespace-only file the same way', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, '  \n', 'utf8')
+
+    expect(await createJsonSessionStore(path).list('anyone')).toEqual([])
+  })
+
+  it('refuses a version it does not write', async () => {
+    // The field was written on every save and checked nowhere, so a file from
+    // a later version would have been read as though it were this one.
+    const { path } = await storeIn()
+    await writeFile(path, JSON.stringify({ version: 99, sessions: [session()] }), 'utf8')
+
+    await expect(createJsonSessionStore(path).list('test-person')).rejects.toThrow(/version 99/)
+  })
+
+  it('reaches the questions screen as its own failure, not as "try again"', async () => {
+    // `submit` reads history before scoring, so this is raised after the
+    // capture ran and the four questions were answered. The tag is the only
+    // thing that survives IPC, so the throw and the classifier have to agree
+    // here or the person is told to retry something that cannot succeed.
+    const { path } = await storeIn()
+    await writeFile(path, 'not json at all', 'utf8')
+
+    const thrown = await createJsonSessionStore(path)
+      .append(session())
+      .catch((e: unknown) => e)
+    expect(classifySubmitError(thrown)).toBe('store-unreadable')
+    // As Electron hands it over, wrapped, which is how it actually arrives.
+    expect(classifySubmitError(new Error(`Error invoking remote method 'x': ${String(thrown)}`))).toBe(
+      'store-unreadable',
+    )
+  })
+
+  it('blames the version, not the data, when a newer file also changed shape', async () => {
+    // The scenario the version check exists for, and the one where the order
+    // of the checks decided the message. Version 2 renaming `sessions` failed
+    // the shape check first and was reported as "it has no list of sessions" —
+    // a claim about the person's data rather than the real problem.
+    const { path } = await storeIn()
+    await writeFile(path, JSON.stringify({ version: 2, records: [] }), 'utf8')
+
+    const thrown = await createJsonSessionStore(path)
+      .list('p')
+      .catch((e: unknown) => e)
+    expect(String(thrown)).toMatch(/version 2/)
+    expect(String(thrown)).not.toMatch(/no list of sessions/)
+  })
+
+  it('does not report a version nobody wrote', async () => {
+    // Interpolating the value gave "it is version undefined" for a file with
+    // no version key, and "[object Object]" for a non-number — both reading as
+    // though the file had declared something odd.
+    const { path } = await storeIn()
+    await writeFile(path, JSON.stringify({ sessions: [] }), 'utf8')
+
+    const thrown = await createJsonSessionStore(path)
+      .list('p')
+      .catch((e: unknown) => e)
+    expect(String(thrown)).toMatch(/does not say which version/)
+    expect(String(thrown)).not.toMatch(/undefined|\[object Object\]|NaN/)
+  })
+
+  it('reports a version it can read, even an odd one', async () => {
+    // "does not say which version" would be untrue here: it does say.
+    const { path } = await storeIn()
+    await writeFile(path, JSON.stringify({ version: 1.5, sessions: [] }), 'utf8')
+
+    await expect(createJsonSessionStore(path).list('p')).rejects.toThrow(/version 1\.5/)
+  })
+
+  it('does not report a non-numeric version as if it were one', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, JSON.stringify({ version: {}, sessions: [] }), 'utf8')
+
+    const thrown = await createJsonSessionStore(path)
+      .list('p')
+      .catch((e: unknown) => e)
+    expect(String(thrown)).not.toMatch(/\[object Object\]/)
+  })
+
+  it('says where the file is and that nothing was changed', async () => {
+    // The message is what someone sees when their history will not open.
+    const { path } = await storeIn()
+    await writeFile(path, '{', 'utf8')
+
+    await expect(createJsonSessionStore(path).list('p')).rejects.toThrow(
+      /Nothing has been changed/,
+    )
+  })
+})
+
+describe('the temp-then-rename write', () => {
+  it('leaves the original alone when the write never starts', async () => {
+    // A directory where the temp file belongs makes `writeFile` fail at open,
+    // so nothing is written at all. This is the weaker half of the claim —
+    // see the mid-write test below for the half ARCHITECTURE.md actually
+    // states — but it still discriminates against a direct write to `path`,
+    // which would succeed here and leave nothing to reject.
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'safe', capturedAt: '2026-09-01T09:00:00.000Z' }))
+    const before = await readFile(path, 'utf8')
+
+    await mkdir(`${path}.tmp`, { recursive: true })
+    // Asserted by code, not bare: `rejects.toThrow()` with no argument passes
+    // on any throw, so a future change that made `read` fail for its own
+    // reason would still read as evidence that this path held (KV-13 review).
+    await expect(store.append(session({ id: 'doomed' }))).rejects.toThrow(
+      /EISDIR|EPERM|EACCES/,
+    )
+
+    expect(await readFile(path, 'utf8')).toBe(before)
+    expect((await createJsonSessionStore(path).list('test-person')).map((s) => s.id)).toEqual([
+      'safe',
+    ])
+  })
+
+  it('does not truncate the history when the write succeeds and the rename fails', async () => {
+    // The claim ARCHITECTURE.md actually makes: a crash *mid-write* cannot
+    // truncate the history, i.e. a partially written temp file is never
+    // renamed over the original. The test above proves only that a write
+    // which never began changed nothing, which a plain `writeFile` behind an
+    // early throw would also satisfy (KV-13 review).
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'safe', capturedAt: '2026-09-01T09:00:00.000Z' }))
+    const before = await readFile(path, 'utf8')
+
+    // Let the temp file be written in full, then lose the rename — the crash
+    // window the two-step exists to close.
+    renameControl.failNext = true
+    await expect(store.append(session({ id: 'doomed' }))).rejects.toThrow(/rename failed/)
+
+    expect(await readFile(path, 'utf8')).toBe(before)
+    // And the leftover temp file does not poison the next successful append:
+    // it is overwritten, never read.
+    await store.append(session({ id: 'next', capturedAt: '2026-09-02T09:00:00.000Z' }))
+    expect((await createJsonSessionStore(path).list('test-person')).map((s) => s.id)).toEqual([
+      'safe',
+      'next',
+    ])
+  })
+
+  it('keeps the version field across an append', async () => {
+    // `write` serialises whatever `read` returned, so the field KV-13 makes
+    // meaningful travels through a read-modify-write rather than being
+    // rewritten from the constant. A file that lost it on every save would
+    // refuse itself on the next read.
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'one', capturedAt: '2026-09-01T09:00:00.000Z' }))
+    await store.append(session({ id: 'two', capturedAt: '2026-09-02T09:00:00.000Z' }))
+
+    const onDisk: unknown = JSON.parse(await readFile(path, 'utf8'))
+    expect(onDisk).toMatchObject({ version: 1 })
+    expect((await store.list('test-person')).map((s) => s.id)).toEqual(['one', 'two'])
+  })
+
+  it('creates the directory it is pointed at', async () => {
+    // Electron hands this a path under userData that may not exist yet.
+    // `dirname`, not `join(path, '..')`: the latter normalises lexically and
+    // works, but it steps up through a *file* segment, which reads as though
+    // sessions.json were a directory (KV-13 review).
+    const { path } = await storeIn()
+    const nested = join(dirname(path), 'deeper', 'sessions.json')
+    const store = createJsonSessionStore(nested)
+
+    await store.append(session({ id: 'one' }))
+    expect((await store.list('test-person')).map((s) => s.id)).toEqual(['one'])
+  })
+})

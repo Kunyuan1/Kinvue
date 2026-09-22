@@ -53,6 +53,21 @@ describe('reading a failure off the wire', () => {
     expect(classifySubmitError(new Error(`${failureTag(failure)}: x`))).toBe('unknown')
   })
 
+  it('routes an unreadable store to its own answer, not to "try again"', () => {
+    // The blocker KV-13 review found: `submit` reads history before scoring,
+    // so this arrives after the capture ran and all four questions were
+    // answered. Untagged it landed in `unknown`, whose copy invites a retry
+    // that cannot ever succeed.
+    const thrown = new Error(`${failureTag('store-unreadable')}: the file will not parse.`)
+    expect(classifySubmitError(thrown)).toBe('store-unreadable')
+  })
+
+  it('will not show store-unreadable on the capture screen, which never opens the store', () => {
+    expect(
+      classifyCaptureError(new Error(`${failureTag('store-unreadable')}: x`)),
+    ).toBe('unknown')
+  })
+
   it('says nothing at all for a capture the person stopped', () => {
     // Null, not a sentence: they stopped it, so they know. The old flat union
     // had copy for this that no screen could ever reach.

@@ -39,9 +39,18 @@ import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
 const SUBMIT_FAILURE: Record<SubmitFailure, string> = {
   expired: 'Too long passed since the reading was taken. Taking a new one is the way forward.',
   'no-capture': 'That reading is no longer available. Taking a new one is the way forward.',
+  // The one submit failure that retrying cannot fix, so it is the one that
+  // must not say "try again" (KV-13). The file will fail to parse identically
+  // every time until someone moves it aside, and the answers are held in the
+  // main process meanwhile — so this says what is wrong and what would change
+  // it, and stops. The path is deliberately not in here: it arrives wrapped in
+  // IPC noise today and belongs in the sentence #95 builds.
+  'store-unreadable':
+    'The saved check-in history could not be opened, so this check-in has not been stored. ' +
+    'Nothing already saved has been changed. This one needs looking at on the computer itself.',
   // Says nothing about taking a new reading, deliberately. Every untagged
-  // write failure lands here — a full disk, a permission, a corrupt file —
-  // and `createCheckIn` refiles the held reading on exactly that path, so the
+  // write failure lands here — a full disk, a permission — and `createCheckIn`
+  // refiles the held reading on exactly that path, so the
   // answers and the capture are both still submittable. Sending the person to
   // the camera would spend a good 30-second reading and four answers to fail
   // in the same way (KV-7).
@@ -52,6 +61,10 @@ const SUBMIT_FAILURE: Record<SubmitFailure, string> = {
   // — and nothing can raise one on this path today, because the camera has
   // been closed since before the questions were asked. If that ever changes,
   // this sentence needs revisiting rather than widening (KV-80).
+  //
+  // A corrupt store used to land here too, and that was the bug KV-13's review
+  // caught: retrying clears a full disk, never an unparseable file. It has its
+  // own entry above.
   unknown: 'The check-in could not be saved. Trying again is worth a go.',
 }
 
