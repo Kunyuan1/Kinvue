@@ -64,6 +64,10 @@ describe('CaptureScreen says which failure it was', () => {
     ['camera-unavailable', /camera could not be used/i],
     // Check 3: Take a reading pressed twice.
     ['capture-in-progress', /camera is still busy/i],
+    // Check 4: Wi-Fi off. Names the connection instead of the camera, and
+    // says what to do rather than that nothing is wrong on their side, which
+    // is the one thing that would stop them fixing it (KV-104).
+    ['no-connection', /no internet connection/i],
     ['unknown', /could not be taken/i],
   ]
 
@@ -107,6 +111,18 @@ describe('CaptureScreen says which failure it was', () => {
       renderCapture(failure)
       expect(document.body.textContent).toMatch(/nothing is wrong on your side/i)
     }
+  })
+
+  it('does not tell someone who is offline that nothing is wrong, or hand them the fix', () => {
+    // The sentence KV-104 exists to remove from this path: said to someone
+    // whose Wi-Fi is off, it is untrue and stops anyone looking. And the
+    // cared-for person is not asked to do router work or press a button that
+    // is not there — the only control is Go back.
+    renderCapture('no-connection')
+    const text = document.body.textContent ?? ''
+    expect(text).not.toMatch(/nothing is wrong on your side/i)
+    expect(text).not.toMatch(/reconnect|try again/i)
+    expect(text).toMatch(/internet/i)
   })
 
   it('classifies a capture the person stopped themselves as nothing to say', () => {

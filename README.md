@@ -18,9 +18,9 @@ It should be enough to understand how the system fits together and where to make
 > deadline. **The loop closes as of KV-2**: a capture, four questions, a scored session on
 > the dashboard, all on real hardware. The SmartSpectra capture has returned real pulse,
 > breathing and HRV from a webcam (KV-1) — on one machine, in one room, which corrected
-> several assumptions this code was built on. Still open: the capture-length constants
-> (KV-63), what the SDK sends to Presage (KV-65), and how the dashboard handles failures
-> and emptiness (KV-7). Nothing here has been used by anyone it was built for.
+> several assumptions this code was built on. Still open: what the SDK sends to Presage
+> (KV-65), and how the dashboard handles failures and emptiness (KV-7). Nothing here has
+> been used by anyone it was built for.
 
 ---
 
@@ -47,6 +47,13 @@ Node process. The UI is still written as a web app; it just ships in an Electron
 
 Check-ins happen on one machine and stay there. The SDK itself talks to Presage while a
 capture runs (KV-65); nothing else here opens a socket.
+
+**A capture needs an internet connection.** Not a preference — measured: with the network
+down a capture fails fast, as an error rather than a hang, and produces no reading at all.
+What the SDK sends is still open (KV-65); *that* it must send something before it will
+measure is not. The SDK reports the failure as `kProcessingFailed`, the same code a
+genuinely bad capture gets, so the app decides from `net.isOnline()` instead and says so
+plainly rather than blaming the camera (KV-104).
 
 ```
                      ┌──────────────────────────────────────────┐

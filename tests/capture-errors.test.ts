@@ -7,9 +7,11 @@ import {
   CaptureCancelledError,
   MissingApiKeyError,
   captureError,
+  emptyCaptureFailure,
   sdkErrorCode,
   sdkFailure,
 } from '../app/main/capture-errors'
+import { session } from './helpers'
 
 /**
  * `app/main/capture-errors.ts` is the capture's throws, split out of
@@ -58,6 +60,9 @@ describe('the errors the capture throws', () => {
 })
 
 describe('sdkFailure', () => {
+  const ONLINE = true
+  const OFFLINE = false
+
   it.each([
     [2, 'a rejected, expired or revoked key'],
     [3, 'a configuration the SDK would not take'],
@@ -65,17 +70,77 @@ describe('sdkFailure', () => {
   ])('calls code %i setup rather than a busy camera (%s)', (code) => {
     // The harm this prevents: the person closes the video call they were told
     // about, retries, fails again, and the cause is a .env nobody has touched.
-    expect(sdkFailure(code)).toBe('no-api-key')
+    expect(sdkFailure(code, ONLINE)).toBe('no-api-key')
+  })
+
+  it('still calls an account problem an account problem when offline', () => {
+    // The SDK only learns a key is bad by reaching Presage, so it was online
+    // enough to ask. A stale `isOnline()` must not rewrite that as a
+    // connection fault and send someone to check their router (KV-104).
+    for (const code of [2, 3, 4]) {
+      expect(sdkFailure(code, OFFLINE)).toBe('no-api-key')
+    }
   })
 
   it('still calls a genuinely unavailable input the camera', () => {
-    expect(sdkFailure(7)).toBe('camera-unavailable')
+    expect(sdkFailure(7, ONLINE)).toBe('camera-unavailable')
   })
 
   it('does not guess at codes it has no opinion about', () => {
     for (const code of [0, 1, 5, 6, 8, 9, 10, 11]) {
-      expect(sdkFailure(code)).toBe('camera-unavailable')
+      expect(sdkFailure(code, ONLINE)).toBe('camera-unavailable')
     }
+  })
+
+  it('names the connection when the device is offline', () => {
+    // Measured on hardware: with the network down the SDK reports code 8,
+    // `kProcessingFailed` — the same code a genuinely bad capture gets — so
+    // the code cannot carry this. `kNetworkError` (5) never arrives (KV-104).
+    for (const code of [5, 6, 8]) {
+      expect(sdkFailure(code, OFFLINE), `code ${code}`).toBe('no-connection')
+    }
+  })
+
+  it('does not let being offline overrule what the SDK found locally', () => {
+    // Wi-Fi off and a video call holding the webcam: `start()` throws 7. The
+    // connection screen would send them to reconnect, and the next try would
+    // tell them about the camera — two trips, the first to the wrong place.
+    for (const code of [0, 1, 7, 9, 10, 11]) {
+      expect(sdkFailure(code, OFFLINE), `code ${code}`).toBe('camera-unavailable')
+    }
+  })
+
+  it('does not name the connection for a throw with no code, online or off', () => {
+    // The lifecycle path: `useCamera()` throwing carries no numeric code, and
+    // selecting an input is local. The measured offline failure was code 8.
+    expect(sdkFailure(undefined, ONLINE)).toBe('camera-unavailable')
+    expect(sdkFailure(undefined, OFFLINE)).toBe('camera-unavailable')
+  })
+})
+
+describe('emptyCaptureFailure', () => {
+  const NOTHING = session({
+    vitals: { pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null, hrvSdnnMs: null },
+  }).vitals
+
+  it('names the connection when an offline capture ran out its ceiling with nothing', () => {
+    // The path the SDK told us nothing on. Without this the person sits
+    // through the whole ceiling and reads that no reading came out (KV-104).
+    expect(emptyCaptureFailure(NOTHING, false)).toBe('no-connection')
+  })
+
+  it('keeps anything that was measured, offline or not', () => {
+    // A capture that measured something was not stopped by the connection.
+    // It is the scorer's to judge, not this function's to throw away.
+    const onePulse = { ...NOTHING, pulseRateBpm: 70 }
+    expect(emptyCaptureFailure(onePulse, false)).toBeNull()
+    expect(emptyCaptureFailure(session().vitals, false)).toBeNull()
+  })
+
+  it('says nothing about an empty capture when the device was online', () => {
+    // `true` is inconclusive, so the empty capture is kept and the card says
+    // "nothing measured", as it always has.
+    expect(emptyCaptureFailure(NOTHING, true)).toBeNull()
   })
 })
 

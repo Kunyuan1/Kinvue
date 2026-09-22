@@ -27,6 +27,7 @@ describe('reading a failure off the wire', () => {
   it.each([
     ['no-api-key'],
     ['camera-unavailable'],
+    ['no-connection'],
     ['cancelled'],
     ['capture-in-progress'],
     ['expired'],

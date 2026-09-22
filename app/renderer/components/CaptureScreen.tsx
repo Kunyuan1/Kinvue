@@ -29,9 +29,19 @@ import type { CaptureFailure } from '@core/capture/failure'
 /**
  * What each failure says, addressed to the person in front of the camera.
  *
- * Three of these are not about them at all — no key, a camera another
- * application is holding, a reading that expired — and reading as though they
- * were would be the app blaming someone for its own setup (KV-7).
+ * `no-api-key` and `camera-unavailable` are not about them at all — a key
+ * nobody has set, a camera another application is holding — so both say that
+ * nothing is wrong on their side. Reading as though they were would be the
+ * app blaming someone for its own setup (KV-7). `capture-in-progress` and
+ * `unknown` make no claim either way.
+ *
+ * `no-connection` is the exception, and deliberately so. Telling someone
+ * whose Wi-Fi is off that nothing is wrong on their side is untrue, and it is
+ * the one thing that would stop anyone looking at the connection (KV-104). But
+ * it does not hand them the fix either: this is the one screen the cared-for
+ * person reads, and reconnecting is closer to setup than to anything asked of
+ * them — so it names the cause and stops there. Nor does it say "try again":
+ * the only control here is Go back (KV-76).
  */
 const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
   'no-api-key': {
@@ -41,11 +51,21 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
       'your side — whoever set this up can finish it.',
   },
   'camera-unavailable': {
+    // Still hedges toward the connection, because `net.isOnline()` returning
+    // true is inconclusive — a link that is up says nothing about whether
+    // Presage was reachable (KV-104). Only the `false` case is certain enough
+    // to name, and that one has its own screen below.
     title: 'The camera could not be used',
     detail:
       'Another program may have it open — a video call, perhaps — or it may be the ' +
       'connection. Trying again in a moment is usually enough, and nothing is wrong ' +
       'on your side.',
+  },
+  'no-connection': {
+    title: 'There is no internet connection',
+    detail:
+      'A reading needs the internet, and there is none right now, so this check-in ' +
+      'could not be finished. It can be taken once the connection is back.',
   },
   'capture-in-progress': {
     // Says what the button does, because the button is the only way out of
