@@ -18,9 +18,9 @@ It should be enough to understand how the system fits together and where to make
 > deadline. **The loop closes as of KV-2**: a capture, four questions, a scored session on
 > the dashboard, all on real hardware. The SmartSpectra capture has returned real pulse,
 > breathing and HRV from a webcam (KV-1) — on one machine, in one room, which corrected
-> several assumptions this code was built on. Still open: what the SDK sends to Presage
-> (KV-65), and how the dashboard handles failures and emptiness (KV-7). Nothing here has
-> been used by anyone it was built for.
+> several assumptions this code was built on. What the SDK sends to Presage has been
+> measured (KV-65): a licence meter, not the video. Nothing here has been used by anyone it
+> was built for.
 
 ---
 
@@ -54,8 +54,8 @@ The SDK reports that as `kProcessingFailed`, the same code a genuinely bad captu
 so the app decides from `net.isOnline()` instead and says so plainly rather than blaming
 the camera (KV-104).
 
-**The video never leaves this machine.** Measured with Wireshark over two captures of
-different lengths (KV-65):
+**The video is not being uploaded.** Measured with Wireshark over two captures of
+different lengths, one of each (KV-65):
 
 | | 28s capture | 50s capture |
 |---|---|---|
@@ -63,16 +63,20 @@ different lengths (KV-65):
 | Received from Presage | ~2.05 MB | ~2.10 MB |
 
 Uploading even heavily compressed 320px video for fifty seconds would be megabytes. 66 kB
-is not that, and the traffic runs overwhelmingly *inwards*: roughly 2 MB is downloaded once
-per app launch, consistent to within 2% across four runs — an asset fetch, most likely model
-weights. That is also why a capture cannot run offline: no network, no asset, nothing to
-process with.
+is not that, and the traffic runs overwhelmingly *inwards*: about 2 MB fetched on each
+capture. Both followed a fresh launch, so whether that happens per launch or per capture is
+not yet separated.
 
-What is sent does **not** grow like a stream of readings. Doubling the capture length raised
-outbound by a fifth, and the long-lived connection's outbound actually *fell* — 34 kB to
-28 kB — while the count of short, periodic connections tracked the duration. Most of each of
-those is TLS handshake overhead, since the SDK opens a fresh connection roughly every five
-seconds rather than reusing one.
+Why a capture cannot run offline has two candidate answers, and the evidence does not choose
+between them: that download may be something the pipeline needs, or the SDK's licence check
+may refuse to authorize measurement without reaching Presage. Either way the capture needs
+the network. See ARCHITECTURE.md for what each would mean for offline use later.
+
+What is sent does **not** grow like a stream of readings. Nearly doubling the capture length
+raised outbound by a fifth, and the growth is all in short connections that each carry about
+the same ~2.1–2.2 kB whatever the length — the size of a TLS handshake, since the SDK opens a
+fresh connection every few seconds rather than reusing one. A payload that grew with the
+measurement would not hold steady like that.
 
 **What those pings carry is a licence meter.** The runtime's compiled-in endpoints are
 device-key registration and rotation, metric authorization, and usage sync — and its only
@@ -83,8 +87,7 @@ never *what*.
 That was read out of the shipped runtime's own schema rather than by decrypting the
 traffic, so the honest limit is this: no measurement-upload schema exists in the binary,
 and the traffic volume matches a meter rather than a stream. Two independent lines of
-evidence agreeing is as far as this goes without asking Presage directly, and there is no
-reason to think it goes further.
+evidence agreeing is as far as this goes without asking Presage directly.
 
 ```
                      ┌──────────────────────────────────────────┐
@@ -323,10 +326,12 @@ them checkable:
 - **No backend of ours, and no check-in leaves this machine.** Sessions are written and
   read locally; nothing here uploads them. The renderer's CSP is `default-src 'self'`, so
   the UI cannot load or call out to a remote origin even by accident.
-- **The SDK itself contacts Presage during a capture.** Measured, not assumed: every
-  capture opens an outbound TLS connection as the session starts, with the SDK's own
-  telemetry switched off. What that request contains has not been established — most
-  likely a key check — and until it has, this app cannot claim to be offline (KV-65).
+- **The SDK itself contacts Presage during a capture, and a capture cannot run without
+  it.** Measured, not assumed, with the SDK's own telemetry switched off. What goes out is
+  a licence meter — session times and, per metric, how many readings were taken, not
+  the readings or the video — established from the runtime's own schema and matched by
+  the traffic volume, not by decrypting it (KV-65). This app is not offline and does not
+  claim to be. Details and the remaining gap are under Architecture & Flow.
 - **The API key stays in the main process.** The preload surface exposes named calls only
   — no generic `invoke(channel, ...)` — so a compromised renderer cannot read it.
 - **Session data is local**, under Electron's `userData`, and `.gitignore` covers
