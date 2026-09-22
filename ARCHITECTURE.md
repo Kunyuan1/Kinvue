@@ -292,17 +292,36 @@ capture lengthened. Growth came from more short connections — the SDK opens a 
 connection about every five seconds instead of reusing one, and a TLS 1.3 handshake is
 1–2 kB client-side before any payload.
 
-**What remains unknown is the few hundred bytes of payload in each of those pings**, and
-volume cannot settle it: a status heartbeat and three derived numbers look identical at
-that size. Establishing it needs an HTTPS proxy with a trusted local CA, which the native
-runtime may well defeat, or an answer from Presage.
+**Those pings are a licence meter**, established from the runtime's own compiled-in
+schema rather than by decrypting anything. The endpoints in `smartspectra.dll` are
+`/v2/initialize`, `/v2/metrics/authorize`, `/available-usage`, `/sync-usage` and
+`/device_keys/{rotate,migrate}`, against one host, `cont-api.physiology.presagetech.com`.
+Device identity is an ed25519 keypair. The graph carries a `usage_statistics_calculator`
+and a `usage_sync_calculator`.
 
-So the honest position is now narrower than "unknown" and still short of "nothing leaves":
-the app writes and reads check-ins locally and uploads none of them, the frames are
-processed on this machine and are not sent, the capture is not offline, and a small
-periodic payload of unestablished content goes to Presage while a capture runs. Phase 4 and
-5 plan around that, so it belongs in #32 and #36 rather than being discovered when sync is
-designed.
+Its only upload-shaped message is:
+
+    presage.physiology.UsageStatistics
+      utc_start_time_epoch
+      utc_end_time_epoch
+      metrics: map<string, { precision, out_freq, total_datapoints }>
+
+Counts, frequencies and timings — *how much* was measured per metric, never *what*. Every
+other Presage protobuf in the runtime is local graph I/O: `Metrics`, `Trace`, `Insight`,
+`StatusValue`, `RequestedMetrics`, the point and landmark types. None is shaped like a
+request.
+
+That is schema, not wire bytes, and the distinction is worth keeping: it establishes that
+no measurement-upload schema exists in the binary, not that no such payload could ever be
+built at runtime. It agrees with the traffic measurement from the other direction, which is
+what makes it load-bearing.
+
+So the position is: the app writes and reads check-ins locally and uploads none of them,
+the frames are processed on this machine and are not sent, a licence meter reports session
+times and datapoint counts while a capture runs, and the capture cannot run offline. Phase
+4 and 5 plan around that, so it belongs in #32 and #36 rather than being discovered when
+sync is designed. Closing the residual uncertainty means asking Presage, not proxying the
+connection — the native runtime carries its own trust store and would likely refuse.
 
 The key reaches the main process from `.env`, read at startup by `app/main/env.ts` and
 only when the app is not packaged. It is

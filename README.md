@@ -74,10 +74,17 @@ outbound by a fifth, and the long-lived connection's outbound actually *fell* �
 those is TLS handshake overhead, since the SDK opens a fresh connection roughly every five
 seconds rather than reusing one.
 
-**What those few hundred bytes per ping contain is still unknown**, and this file will not
-claim otherwise. Volume cannot tell a status heartbeat from a handful of derived numbers —
-a pulse, a breathing rate and an HRV figure would fit in far less. Establishing it needs an
-HTTPS proxy or an answer from Presage, and it is the one part of KV-65 still open.
+**What those pings carry is a licence meter.** The runtime's compiled-in endpoints are
+device-key registration and rotation, metric authorization, and usage sync — and its only
+upload-shaped message reports session start and end times plus, per metric, a datapoint
+count, an output frequency and a precision. Counts and timings: *how much* was measured,
+never *what*.
+
+That was read out of the shipped runtime's own schema rather than by decrypting the
+traffic, so the honest limit is this: no measurement-upload schema exists in the binary,
+and the traffic volume matches a meter rather than a stream. Two independent lines of
+evidence agreeing is as far as this goes without asking Presage directly, and there is no
+reason to think it goes further.
 
 ```
                      ┌──────────────────────────────────────────┐
