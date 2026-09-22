@@ -449,6 +449,31 @@ describe('scoreSession', () => {
     expect(rule?.explanation).not.toMatch(/vary by about|steady/i)
   })
 
+  it('does not quote a reading it refused to show as their usual', () => {
+    // KV-72, the pair from the ticket. One card says "the camera reading was
+    // not clear enough to use today" and shows no verdict; the next was
+    // measuring against that very reading and calling it their normal, with
+    // nothing on either card connecting them.
+    // Numbers chosen so the rule fires either way and only the quoted "usual"
+    // differs: admitting the refused 19 moves the mean to 16 and gives the sd
+    // something to be, so the broken behaviour is a *wrong number* rather than
+    // a rule that goes quiet. An outlier large enough to be obvious inflates
+    // the sd instead and suppresses the rule, which makes the regression
+    // assertion untestable (KV-72 review).
+    const refused = session({
+      id: 'refused',
+      capturedAt: '2026-09-04T09:00:00.000Z',
+      vitals: { breathingRateBrpm: 19, confidence: 0.3 },
+    })
+    const past = [...history(3, { breathingRateBrpm: 15 }), refused]
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 25 } }), past)
+    const rule = assessment.firedRules.find((r) => r.id === 'breathing-elevated')
+
+    // Their usual is the three captures the app was willing to use, not four.
+    expect(rule?.explanation).toContain('usual 15 breaths/min')
+    expect(rule?.explanation).not.toContain('usual 16')
+  })
+
   it('does not let the scored session contaminate its own baseline', () => {
     const past = history(5)
     const before = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), past)
@@ -623,6 +648,28 @@ describe('unusableReason', () => {
 
   it('names a capture nothing rated', () => {
     expect(unusableReason(session({ vitals: { confidence: null } }).vitals)).toBe('unrated')
+  })
+
+  it('withholds on a shape the store could hand it, rather than vouching for it', () => {
+    // KV-72 review. `store.ts` casts parsed JSON to `SessionRecord` without
+    // validating it, and this predicate now reads every record in the history
+    // file rather than one freshly measured capture. `undefined < 20` and
+    // `undefined < 0.5` are both false, and NaN slips `typeof === 'number'`
+    // as well — so each of these walked past the gate as a full-length,
+    // fully vouched-for capture. A NaN confidence reading as vouched-for is
+    // the exact failure KV-12 closed for null, on a different input.
+    const shapes: [string, Record<string, unknown>, string][] = [
+      ['durationSec missing', { durationSec: undefined }, 'too-short'],
+      ['durationSec NaN', { durationSec: NaN }, 'too-short'],
+      ['confidence NaN', { confidence: NaN }, 'unrated'],
+      ['confidence missing', { confidence: undefined }, 'unrated'],
+    ]
+    for (const [name, override, expected] of shapes) {
+      const vitals = { ...session().vitals, ...override } as ReturnType<
+        typeof session
+      >['vitals']
+      expect(unusableReason(vitals), name).toBe(expected)
+    }
   })
 
   it('names a capture that measured nothing, ahead of anything else', () => {
