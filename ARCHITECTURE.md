@@ -342,6 +342,33 @@ Writes go through a temp file and a rename, so a crash mid-write cannot truncate
 history. Losing one day's check-in is recoverable; losing the baseline that every
 comparison depends on is not.
 
+**A file that exists and cannot be parsed is refused, not recovered from.** `read` raises
+`UnreadableStoreError`, and because `append` is read-modify-write, that refusal is what
+keeps the history intact: a read answering "empty" for a file it could not parse would push
+one record onto nothing and rename that over the original — losing everything on the one
+path where the app already knew something was wrong. It is also the
+reassuring-and-wrong direction this product avoids everywhere else. Someone with months of
+check-ins would be shown none, with nothing to say anything was amiss.
+
+The cost is real and worth stating plainly: this is **fatal to reads and writes both**, so
+until the file is moved aside no history can be shown and no new check-in can be stored.
+`submit` reads history before scoring, so a corrupt file is discovered *after* the capture
+ran and the questions were answered — which is why the error is tagged `store-unreadable`
+rather than left to classify as `unknown`, whose copy invites a retry that cannot succeed.
+Two cases are deliberately not refused: a **missing** file, which is the ordinary first run,
+and a **zero-byte** file, which is the one corruption holding no history to protect.
+Offering the person an explicit way out — quarantine the file and start a new history,
+rather than asking them to find a path inside `userData` — is #98.
+
+**An older build refuses a newer file outright, and there is no migration path.** The
+file's `version` is read, not decoration: a version this code does not write is refused
+with a message naming both. That makes bumping `FILE_VERSION` a one-way door — anyone who
+downgrades afterwards is locked out of their own history until the file is moved aside.
+That is the deliberate choice, on the grounds that misreading a newer file as though it
+were this one is the quieter and worse failure, but it is a real contract and the cost
+lands on a person, not a developer. A migration, when one is needed, is #30's to design,
+and it will need a version per record rather than per file.
+
 `SessionStore` is an interface for exactly one reason: it is the seam to swap when the
 size assumption stops holding.
 

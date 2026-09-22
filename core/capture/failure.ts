@@ -41,6 +41,16 @@ export type TaggedFailure =
   | 'expired'
   /** The reading is gone: already submitted, replaced, or never existed. */
   | 'no-capture'
+  /**
+   * The stored history exists and could not be parsed, so nothing was read
+   * and nothing was written (KV-13).
+   *
+   * Tagged because it is the one failure on the submit path that retrying
+   * cannot fix. Untagged it classified `unknown`, whose copy invites another
+   * go — true of a full disk, false of a file that will fail identically
+   * until someone moves it aside.
+   */
+  | 'store-unreadable'
 
 /**
  * What the capture screen can be asked to say.
@@ -60,7 +70,9 @@ export type CaptureFailure =
 export type SubmitFailure =
   | 'expired'
   | 'no-capture'
-  /** Anything unclassified. The store and the scorer carry no tag. */
+  /** The history file cannot be read, so the answers have nowhere to go. */
+  | 'store-unreadable'
+  /** Anything unclassified. The scorer carries no tag. */
   | 'unknown'
 
 /** The prefix a thrown message carries, e.g. `kinvue/expired: …`. */
@@ -96,6 +108,10 @@ const ON_CAPTURE: Record<TaggedFailure, CaptureFailure | null> = {
   // answer currently says out loud.
   expired: 'unknown',
   'no-capture': 'unknown',
+  // The capture path never opens the store — it holds the reading in memory
+  // and only `submit` reads history. Routed here because the record is total,
+  // not because this screen expects it.
+  'store-unreadable': 'unknown',
 }
 
 /** Where every tag goes on the submit path. Never null: see `classifySubmitError`. */
@@ -108,6 +124,7 @@ const ON_SUBMIT: Record<TaggedFailure, SubmitFailure> = {
   cancelled: 'unknown',
   expired: 'expired',
   'no-capture': 'no-capture',
+  'store-unreadable': 'store-unreadable',
 }
 
 /**

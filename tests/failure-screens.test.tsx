@@ -211,8 +211,25 @@ describe('QuestionFlow says which failure it was', () => {
     expect(text).not.toMatch(/new reading|take a new|fresh one/i)
   })
 
+  it('does not invite a retry that cannot succeed', () => {
+    // The corrupt-store path. Unlike `unknown` — a full disk or a permission,
+    // both of which can clear — this one fails identically every time until
+    // the file is moved aside, so the copy must not suggest pressing Save
+    // again (KV-13).
+    const text = show('store-unreadable')
+    expect(text).toMatch(/could not be opened/i)
+    expect(text).not.toMatch(/trying again|try again|have another go/i)
+    // And it must not send them to the camera either: the reading is fine.
+    expect(text).not.toMatch(/new reading|take a new|fresh one/i)
+  })
+
+  it('says the already-saved history is untouched', () => {
+    // The reassurance that makes the refusal bearable: nothing was lost.
+    expect(show('store-unreadable')).toMatch(/nothing already saved has been changed/i)
+  })
+
   it('leaks no tag into what the person reads', () => {
-    for (const failure of ['expired', 'no-capture', 'unknown'] as const) {
+    for (const failure of ['expired', 'no-capture', 'store-unreadable', 'unknown'] as const) {
       cleanup()
       expect(show(failure)).not.toMatch(/kinvue\//)
     }
