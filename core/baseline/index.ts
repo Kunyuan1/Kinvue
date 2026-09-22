@@ -1,4 +1,5 @@
 import type { SessionRecord } from '../session/types'
+import { unusableReason } from '../session/usable'
 
 /**
  * A baseline is this person's own recent normal — never a population norm.
@@ -16,7 +17,14 @@ export interface Stat {
 }
 
 export interface Baseline {
-  /** Sessions that contributed at least one usable reading. */
+  /**
+   * Sessions the scorer was willing to use, which also contributed a reading.
+   *
+   * The same predicate the scorer gates a verdict on — not merely "had a
+   * number in it". It counts captures that will actually inform a comparison,
+   * which is what the "1 of 3 check-ins needed" progress is telling a
+   * caregiver they are waiting for (KV-72).
+   */
   sessions: number
   /**
    * How many of those were seeded demo history (KV-8) rather than measured.
@@ -65,12 +73,13 @@ export function computeBaseline(history: SessionRecord[]): Baseline {
     .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
     .slice(-BASELINE_WINDOW_SESSIONS)
 
-  const usable = recent.filter(
-    (s) =>
-      s.vitals.pulseRateBpm !== null ||
-      s.vitals.breathingRateBrpm !== null ||
-      s.vitals.hrvRmssdMs !== null,
-  )
+  // The same question the scorer asks before it will score a capture at all.
+  // A capture stored as `insufficient-signal` because the SDK rated it 0.46
+  // used to land in here anyway, so the app declined to show a number on one
+  // card and quoted it as "their usual" on the next (KV-72). `unusableReason`
+  // subsumes the old "has at least one reading" test — that is its first
+  // branch — so this is strictly narrower, never wider.
+  const usable = recent.filter((s) => unusableReason(s.vitals) === null)
 
   const pick = (get: (s: SessionRecord) => number | null): number[] =>
     usable.map(get).filter((v): v is number => v !== null)

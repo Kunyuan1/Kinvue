@@ -139,7 +139,14 @@ tests/                   Vitest. Covers baseline, scoring, validation, check-in,
   a percentage already carries its own magnitude. They quote a spread only when one was
   measured — never the `MIN_SD_FRACTION_OF_MEAN` floor, and never a real spread rounded
   down to "about 0" — because a number nobody produced is worse than saying plainly that
-  there is no usual range to measure against.
+  there is nothing to measure the difference against.
+- **A baseline only contains captures the scorer would use.** A capture withheld as
+  `insufficient-signal` — nothing measured, cut short, unrated, or rated below
+  `MIN_CAPTURE_CONFIDENCE` — never becomes part of "their usual", and never counts toward
+  the check-ins a caregiver is told they are still waiting for. `computeBaseline` filters
+  on the same `unusableReason` the scorer gates on, which is why that predicate lives in
+  `core/session/usable.ts` rather than in either of them. Declining to show a number on
+  one card and quoting it as normal on the next is one failure, not two.
 - **Rules, not a trained model — on purpose.** There is no labelled dataset of "days
   before an older adult got ill", and a model trained on synthetic data would be a
   confident guess dressed as evidence. See `ARCHITECTURE.md`.

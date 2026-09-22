@@ -42,10 +42,10 @@ const HRV_DROP_FULL_SEVERITY_AT = 0.5
  * Whether a metric's own history is deep enough to be called "their usual".
  *
  * Counted per metric rather than per session (KV-71). `Baseline.sessions` counts
- * sessions that produced *some* reading, and a capture routinely produces some
- * vitals and not others — `Vitals` says so, and HRV is the standing example. So
- * three sessions can back a pulse mean and a single breathing reading, and the
- * card would quote "their usual 15 breaths/min" off one morning.
+ * sessions the scorer was willing to use (KV-72), and a usable capture routinely
+ * produces some vitals and not others — `Vitals` says so, and HRV is the standing
+ * example. So three sessions can back a pulse mean and a single breathing
+ * reading, and the card would quote "their usual 15 breaths/min" off one morning.
  *
  * `Stat.n` is the count that actually backs the number being quoted, and it is
  * never greater than `Baseline.sessions`, so this gate subsumes the session

@@ -449,6 +449,25 @@ describe('scoreSession', () => {
     expect(rule?.explanation).not.toMatch(/vary by about|steady/i)
   })
 
+  it('does not quote a reading it refused to show as their usual', () => {
+    // KV-72, the pair from the ticket. One card says "the camera reading was
+    // not clear enough to use today" and shows no verdict; the next was
+    // measuring against that very reading and calling it their normal, with
+    // nothing on either card connecting them.
+    const refused = session({
+      id: 'refused',
+      capturedAt: '2026-09-04T09:00:00.000Z',
+      vitals: { breathingRateBrpm: 40, confidence: 0.3 },
+    })
+    const past = [...history(3, { breathingRateBrpm: 15 }), refused]
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 20 } }), past)
+    const rule = assessment.firedRules.find((r) => r.id === 'breathing-elevated')
+
+    // Their usual is the three captures the app was willing to use, not four.
+    expect(rule?.explanation).toContain('usual 15 breaths/min')
+    expect(rule?.explanation).not.toContain('40')
+  })
+
   it('does not let the scored session contaminate its own baseline', () => {
     const past = history(5)
     const before = scoreSession(session({ vitals: { hrvRmssdMs: 20 } }), past)
