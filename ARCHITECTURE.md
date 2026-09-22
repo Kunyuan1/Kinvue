@@ -267,13 +267,120 @@ code or call out to a remote origin.
 claim here used to be that `enableTelemetry: false` made "no network calls of its own"
 literally true. It does not. Every real capture opened an outbound TLS connection as the
 session started — before any measurement existed — to an AWS-fronted endpoint, with
-telemetry off; `api.physiology.presagetech.com` is compiled into each platform runtime. A
+telemetry off; `cont-api.physiology.presagetech.com` is compiled into each platform runtime.
+(KV-1 recorded it as `api.physiology…` by matching a substring: every occurrence in the
+binary is prefixed `cont-`, `dev.cont-` or `test.cont-`, and there is one production host.) A
 control process of the same shape without the SDK opened nothing, so it is the SDK.
 
-What that request carries is not yet known (KV-65). The honest position until it is: the
-app writes and reads check-ins locally and uploads none of them, and the capture itself is
-not offline. Phase 4 and 5 plan around what already leaves the device, so this belongs in
-#32 and #36 rather than being discovered when sync is designed.
+**Measured properly since (KV-65), and most of it is reassuring.** Two Wireshark runs. The
+first, two captures of different lengths, each from a fresh app launch:
+
+| | 28s capture | 50s capture |
+|---|---|---|
+| Outbound | 55 kB | 66 kB |
+| Inbound | ~2.05 MB | ~2.10 MB |
+| TCP connections | 11 | 18 |
+| Download connection, outbound | 34 kB | 28 kB |
+| The other connections, outbound | 21 kB over 10 | 38 kB over 17 |
+| **Per short connection** | **~2.1 kB** | **~2.2 kB** |
+
+The last two rows are derived: total outbound less the download connection, over the
+connections that are not it.
+
+The second, one launch with two captures in it and then a third with Wi-Fi off — the run
+that separates what happens per launch from what happens per capture. Frames are what
+Wireshark counts; data is the TCP payload inside them; acknowledgements are frames that
+carry no data at all:
+
+| | Once, at launch | Capture A (40s) | Capture B (47s) |
+|---|---|---|---|
+| Connections | 3 | 12 | 14 |
+| Outbound frames | 7.6 kB | 59.2 kB | 48.1 kB |
+| of which data | 6.0 kB | 22.5 kB | 28.3 kB |
+| of which acknowledgements | 0.8 kB | 34.0 kB | 16.6 kB |
+| Inbound | 19 kB | 2.11 MB | 2.12 MB |
+
+The video is not being uploaded. Fifty seconds of even heavily compressed 320px frames
+would be megabytes; no capture in either run sent more than 66 kB of frames, and the most
+data any capture sent was 28 kB. The traffic is overwhelmingly inbound, and **about 2 MB is
+fetched at the start of every capture**, not once per launch: in the second run each capture
+opened with its own ~2.03 MB download over a single connection lasting about half a second.
+Only three small connections happen once per launch. Nothing crossed at all between the two
+captures, while the questions were being answered, or after the second one ended.
+
+**Why a capture cannot run offline — both candidates, per the SDK's own log.** With Wi-Fi
+off, after two successful captures in the same launch, the third failed as
+`kProcessingFailed` and the SDK logged, in this order: from `rest_api_client`, "Metrics
+authorization failed. Status code: 0"; from `metric_gating_calculator`, "Authorization
+server unavailable or returned error"; then, 1.5 seconds later, from `secure_model_loader`,
+a cancelled load of `model_id=phasic-bp-inference`, followed by "Model load failed". So the
+licence check gates measurement, and a model is loaded through a secure loader as each
+capture starts — which is most likely what the per-capture 2 MB is. The log does not say
+which of the two alone would have stopped the capture; it does show both in the path. For
+the app that changes nothing, since either way a capture needs the network. For #32 and #36
+it means two obstacles to offline use rather than one: a model that is not kept between
+captures, and an authorization that is never offline by design. `kProcessingFailed` (8)
+still says nothing about the network, which is why the app decides from `net.isOnline()`
+rather than from it (KV-104) — and on this run it named the connection correctly.
+
+Nor does outbound scale like a stream of readings. During a capture the SDK opens a new TLS
+connection every five seconds, plus a second series every fifteen whose requests run a
+little larger — up to 4 kB of data — and none is held open: the longest connection in the
+second run lasted under five seconds. In the first run the short connections stayed at about
+2.1–2.2 kB each while the capture nearly doubled, which is what a fixed handshake plus a
+small request looks like — a TLS 1.3 handshake alone is 1–2 kB client-side — and not what a
+payload growing with the measurement looks like.
+
+**The first run's 41 kB fixed term is acknowledgements.** Fitting its two points gives roughly
+41 kB fixed plus 0.5 kB per second, and the fixed part is dominated by the download
+connection. In the second run, 30.3 kB of that connection's 32.2 kB outbound was frames
+carrying no data — the acknowledgements of 2 MB coming in — and the data it sent was 1.7 kB.
+The same download at the next capture produced 14.4 kB outbound, 12.5 kB of it
+acknowledgements. That is also why the first run's 34 kB to 28 kB drop on that connection
+means nothing: it follows how a download happened to be acknowledged, not the capture.
+
+**Those pings are a licence meter**, established from the runtime's own compiled-in
+schema rather than by decrypting anything. The endpoints in `smartspectra.dll` are
+`/v2/initialize`, `/v2/metrics/authorize`, `/available-usage`, `/sync-usage` and
+`/device_keys/{rotate,migrate}`, against one host, `cont-api.physiology.presagetech.com`.
+Device identity is an ed25519 keypair. The graph carries a `usage_statistics_calculator`
+and a `usage_sync_calculator`.
+
+Its only upload-shaped message is:
+
+```protobuf
+package presage.physiology;
+message UsageStatistics {
+  utc_start_time_epoch
+  utc_end_time_epoch
+  map<string, MetricUsageStatistics> metrics   // { precision, out_freq, total_datapoints }
+}
+```
+
+Counts, frequencies and timings — *how much* was measured per metric, never *what*. Every
+other Presage protobuf in the runtime is local graph I/O: `Metrics`, `Trace`, `Insight`,
+`StatusValue`, `RequestedMetrics`, the point and landmark types. None is shaped like a
+request.
+
+That is schema, not wire bytes, and the distinction is worth keeping: it establishes that
+no measurement-upload schema exists in the binary, not that no such payload could ever be
+built at runtime. It agrees with the traffic measurement from the other direction, which is
+what makes it load-bearing.
+
+So the position is: the app writes and reads check-ins locally and uploads none of them,
+the frames are processed on this machine and are not sent, a licence meter reports session
+times and per-metric datapoint counts, and the capture cannot run offline. *When* the meter
+reports is only partly known: a complete `UsageStatistics` carries the session's end time,
+so it can only be sent at or after the end, and what the connections opened every five and
+fifteen seconds *during* a capture carry — quota polls, incremental syncs, keepalives — is not
+established. Phase 4 and 5 plan around all of this, so it belongs in #32 and #36 rather
+than being discovered when sync is designed.
+
+Intercepting the TLS with a proxy has not been tried, and whether the native runtime would
+accept a proxy's certificate is unknown. It is the direct test of the gap above — what the
+bytes are, not what the schema permits — and it is deferred rather than dismissed: two
+independent lines of evidence are enough for the plan as it stands. If the gap ever matters
+more than it does now, a proxy run or an answer from Presage is how it closes.
 
 The key reaches the main process from `.env`, read at startup by `app/main/env.ts` and
 only when the app is not packaged. It is
