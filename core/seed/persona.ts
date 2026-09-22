@@ -70,8 +70,20 @@ export function seedDemoHistory(
     at.setDate(at.getDate() - i)
     at.setHours(9, 15, 0, 0)
 
-    // Small day-to-day wobble around USUAL. Nothing here should trip a rule —
-    // this history is meant to read as a person having unremarkable weeks.
+    // Small day-to-day wobble around USUAL.
+    //
+    // This used to say "nothing here should trip a rule", which was never
+    // true and nothing checked (KV-14). Rules fire on roughly half these
+    // days, and they should: SLEEP and MOOD both hold a bad option, a tenth
+    // of days go un-eaten, and a wobble this wide clears `Z_FIRES_AT` against
+    // a short baseline. A demo where nothing ever registers reads as a flat
+    // line, not as a person.
+    //
+    // The property that matters is weaker and load-bearing: **no seeded day
+    // may score `elevated`.** Unremarkable weeks, not an emergency in front of
+    // an audience. `tests/seed.test.ts` scores every day against its own
+    // predecessors and holds that, along with the margin — the worst day sums
+    // to 0.57 against a threshold of 0.6, which is thinner than it looks.
     const jitter = (spread: number): number => (r() - 0.5) * 2 * spread
 
     out.push({
