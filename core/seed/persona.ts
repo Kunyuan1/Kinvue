@@ -74,16 +74,20 @@ export function seedDemoHistory(
     //
     // This used to say "nothing here should trip a rule", which was never
     // true and nothing checked (KV-14). Rules fire on roughly half these
-    // days, and they should: SLEEP and MOOD both hold a bad option, a tenth
-    // of days go un-eaten, and a wobble this wide clears `Z_FIRES_AT` against
-    // a short baseline. A demo where nothing ever registers reads as a flat
-    // line, not as a person.
+    // days, and they should: a tenth of days go un-eaten, MOOD holds `low`,
+    // and a wobble this wide clears `Z_FIRES_AT` against a short baseline. A
+    // demo where nothing ever registers reads as a flat line, not as a person.
+    //
+    // SLEEP's `poorly` is drawn but inert: `poor-sleep-with-pain` needs
+    // `painReported` too, and that 3-in-20 draw never comes up in the default
+    // fortnight. It is the live risk rather than a current cause — the
+    // heaviest answer rule, one unlucky draw from firing.
     //
     // The property that matters is weaker and load-bearing: **no seeded day
     // may score `elevated`.** Unremarkable weeks, not an emergency in front of
     // an audience. `tests/seed.test.ts` scores every day against its own
-    // predecessors and holds that, along with the margin — the worst day sums
-    // to 0.57 against a threshold of 0.6, which is thinner than it looks.
+    // predecessors and holds that; how close the worst day comes is recorded
+    // there, as WORST_DAY_TODAY, and nowhere else (#101).
     const jitter = (spread: number): number => (r() - 0.5) * 2 * spread
 
     out.push({
