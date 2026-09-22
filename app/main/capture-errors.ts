@@ -1,4 +1,6 @@
 import { failureTag, type TaggedFailure } from '@core/capture/failure'
+import { hasScorableVitals } from '@core/session/usable'
+import type { Vitals } from '@core/session/types'
 
 /**
  * The errors the capture throws, and what the SDK's own error codes mean.
@@ -50,6 +52,18 @@ const ACCOUNT_CODES: ReadonlySet<number> = new Set([
 ])
 
 /**
+ * Codes a lost connection could have produced — the only ones an offline
+ * device may relabel as `no-connection` (KV-104). 8 is here because it is
+ * what the SDK was measured to send with the network down; 5 and 6 because
+ * they say so, should they ever arrive.
+ */
+const CONNECTION_CODES: ReadonlySet<number> = new Set([
+  5, // kNetworkError — never observed; the SDK sends 8 instead
+  6, // kServerError
+  8, // kProcessingFailed — what an offline capture actually reports
+])
+
+/**
  * Which failure an SDK error code is, for both the `error` event and the
  * throw out of a lifecycle call.
  *
@@ -69,6 +83,13 @@ const ACCOUNT_CODES: ReadonlySet<number> = new Set([
  * The SDK cannot answer this itself: measured on a real capture with the
  * network down, it reports `kProcessingFailed` (8) — the same code a genuinely
  * bad capture gets — rather than `kNetworkError` (5), which never arrives.
+ *
+ * **And being offline only explains the codes a connection could.** Everything
+ * outside `CONNECTION_CODES` is a fact the SDK established on this machine —
+ * an input it could not open, a frame it could not convert — and it is no less
+ * true for the Wi-Fi being off. Naming the connection over it would send the
+ * person to reconnect, only to be told on the next try that the camera is
+ * held: the wrong-cause screen KV-104 exists to remove, with the parts swapped.
  */
 export function sdkFailure(
   code: number | undefined,
@@ -77,7 +98,27 @@ export function sdkFailure(
   // Account problems are named whether or not the device is online: the SDK
   // only learns of them by reaching Presage, so it was online enough to ask.
   if (code !== undefined && ACCOUNT_CODES.has(code)) return 'no-api-key'
-  return online ? 'camera-unavailable' : 'no-connection'
+  // A throw with no code is left alone too. The lifecycle path that produces
+  // one is `useCamera()`, which is local, and the measured offline failure
+  // arrived as code 8 on the `error` event — not as a throw.
+  if (!online && code !== undefined && CONNECTION_CODES.has(code)) return 'no-connection'
+  return 'camera-unavailable'
+}
+
+/**
+ * The failure a capture that ran to its ceiling should report instead of
+ * resolving, or null when what it collected should be kept (KV-104).
+ *
+ * The one fast offline failure measured arrived as an error, but that is two
+ * runs on one machine. If the SDK ever goes quiet instead, the capture runs
+ * its whole ceiling and resolves with nothing, and the person reads that the
+ * camera ran but no reading came out — on the one path where the SDK said
+ * nothing and the connection is the likeliest reason. Only *nothing* counts:
+ * a capture that measured anything at all was not stopped by the connection,
+ * and is kept and judged by the scorer like any other.
+ */
+export function emptyCaptureFailure(vitals: Vitals, online: boolean): 'no-connection' | null {
+  return !online && !hasScorableVitals(vitals) ? 'no-connection' : null
 }
 
 /** Reads the numeric `code` the SDK puts on the errors its methods throw. */

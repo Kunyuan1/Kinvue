@@ -113,6 +113,18 @@ describe('CaptureScreen says which failure it was', () => {
     }
   })
 
+  it('does not tell someone who is offline that nothing is wrong, or hand them the fix', () => {
+    // The sentence KV-104 exists to remove from this path: said to someone
+    // whose Wi-Fi is off, it is untrue and stops anyone looking. And the
+    // cared-for person is not asked to do router work or press a button that
+    // is not there — the only control is Go back.
+    renderCapture('no-connection')
+    const text = document.body.textContent ?? ''
+    expect(text).not.toMatch(/nothing is wrong on your side/i)
+    expect(text).not.toMatch(/reconnect|try again/i)
+    expect(text).toMatch(/internet/i)
+  })
+
   it('classifies a capture the person stopped themselves as nothing to say', () => {
     // The flat union carried a "Stopped — the camera is off" card that nothing
     // could ever render (KV-75). This is the half of that worth pinning: the

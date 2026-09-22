@@ -49,11 +49,11 @@ Check-ins happen on one machine and stay there. The SDK itself talks to Presage 
 capture runs (KV-65); nothing else here opens a socket.
 
 **A capture needs an internet connection.** Not a preference — measured: with the network
-down a capture fails in under half a second and produces no reading at all. What the SDK
-sends is still open (KV-65); *that* it must send something before it will measure is not.
-The SDK reports the failure as `kProcessingFailed`, the same code a genuinely bad capture
-gets, so the app decides from `net.isOnline()` instead and says so plainly rather than
-blaming the camera (KV-104).
+down a capture fails fast, as an error rather than a hang, and produces no reading at all.
+What the SDK sends is still open (KV-65); *that* it must send something before it will
+measure is not. The SDK reports the failure as `kProcessingFailed`, the same code a
+genuinely bad capture gets, so the app decides from `net.isOnline()` instead and says so
+plainly rather than blaming the camera (KV-104).
 
 ```
                      ┌──────────────────────────────────────────┐

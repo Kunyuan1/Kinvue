@@ -21,6 +21,7 @@ import {
   CaptureCancelledError,
   MissingApiKeyError,
   captureError,
+  emptyCaptureFailure,
   sdkErrorCode,
   sdkFailure,
 } from './capture-errors'
@@ -210,6 +211,19 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
   const apiKey = process.env.SMARTSPECTRA_API_KEY
   if (apiKey === undefined || apiKey === '') throw new MissingApiKeyError()
 
+  // Sampled once, before the camera opens, and used for every failure below
+  // (KV-104). The SDK reaches Presage when the session starts, so this is the
+  // moment the answer is about. Asking again at failure time let a link that
+  // dropped twenty seconds in relabel a failure that had nothing to do with it.
+  //
+  // Used to *label* a failure, never to refuse a capture. Refusing up front
+  // would spare the person a moment of self-view on a capture that is going
+  // to fail — but `false` has not yet been checked on a real machine at
+  // this moment, and a VPN-only or captive-portal setup Chromium calls offline
+  // would then be refused every capture it could have completed. A wrong label
+  // costs one screen; a wrong refusal costs the check-in.
+  const online = net.isOnline()
+
   const sdk = new SmartSpectraSDK({
     apiKey,
     requestedMetrics: [...breathingMetrics, ...cardioMetrics],
@@ -271,7 +285,10 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
     /** Ends the capture with whatever has been collected. */
     const finish = (): void => {
       cleanUp()
-      resolve(collected.result(recorded()))
+      const vitals = collected.result(recorded())
+      const failure = emptyCaptureFailure(vitals, online)
+      if (failure === null) resolve(vitals)
+      else reject(captureError(failure, 'nothing was measured, and the device was offline.'))
     }
 
     // When every scorable metric had arrived, or undefined while one is still
@@ -379,7 +396,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       // the problem. `sdkFailure` keeps the two apart (KV-7) — and keeps a
       // capture that failed with the network down from being called a camera
       // fault either, which the SDK's own code cannot tell us (KV-104).
-      reject(captureError(sdkFailure(code, net.isOnline()), `SmartSpectra — ${message}`))
+      reject(captureError(sdkFailure(code, online), `SmartSpectra — ${message}`))
     })
 
     // The ceiling. Reaching it means something never arrived, and the capture
@@ -398,7 +415,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       // which it was rather than the call site assuming. The original error
       // rides along as `cause`: the tag must be in the message to cross IPC,
       // the class and stack need not be lost to a log on this side.
-      const failure = sdkFailure(sdkErrorCode(err), net.isOnline())
+      const failure = sdkFailure(sdkErrorCode(err), online)
       reject(captureError(failure, 'the camera could not be started.', err))
     }
   }).finally(async () => {

@@ -29,15 +29,19 @@ import type { CaptureFailure } from '@core/capture/failure'
 /**
  * What each failure says, addressed to the person in front of the camera.
  *
- * Three of these are not about them at all — no key, a camera another
- * application is holding, a reading that expired — and reading as though they
- * were would be the app blaming someone for its own setup (KV-7).
+ * `no-api-key` and `camera-unavailable` are not about them at all — a key
+ * nobody has set, a camera another application is holding — so both say that
+ * nothing is wrong on their side. Reading as though they were would be the
+ * app blaming someone for its own setup (KV-7). `capture-in-progress` and
+ * `unknown` make no claim either way.
  *
- * `no-connection` is the exception, and deliberately so. It *is* something the
- * person can act on, so it says what to do rather than reassuring them that
- * nothing is wrong. Telling someone whose Wi-Fi is off that nothing is wrong
- * on their side is both untrue and the one thing that stops them fixing it
- * (KV-104).
+ * `no-connection` is the exception, and deliberately so. Telling someone
+ * whose Wi-Fi is off that nothing is wrong on their side is untrue, and it is
+ * the one thing that would stop anyone looking at the connection (KV-104). But
+ * it does not hand them the fix either: this is the one screen the cared-for
+ * person reads, and reconnecting is closer to setup than to anything asked of
+ * them — so it names the cause and stops there. Nor does it say "try again":
+ * the only control here is Go back (KV-76).
  */
 const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
   'no-api-key': {
@@ -60,8 +64,8 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
   'no-connection': {
     title: 'There is no internet connection',
     detail:
-      'A reading needs one, so this check-in could not be finished. Reconnect and try ' +
-      'again.',
+      'A reading needs the internet, and there is none right now, so this check-in ' +
+      'could not be finished. It can be taken once the connection is back.',
   },
   'capture-in-progress': {
     // Says what the button does, because the button is the only way out of

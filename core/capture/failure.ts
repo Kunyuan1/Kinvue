@@ -37,7 +37,7 @@ export type TaggedFailure =
    * The capture failed and the device has no internet connection (KV-104).
    *
    * A reading needs one: the SDK reaches Presage when a session starts, and
-   * without it a capture fails in under half a second. It reports that as
+   * without it a capture fails fast and produces nothing. It reports that as
    * `kProcessingFailed`, the same code a bad capture gets, so this tag is set
    * from `net.isOnline()` rather than from anything the SDK said.
    */

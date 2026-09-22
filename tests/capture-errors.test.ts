@@ -7,9 +7,11 @@ import {
   CaptureCancelledError,
   MissingApiKeyError,
   captureError,
+  emptyCaptureFailure,
   sdkErrorCode,
   sdkFailure,
 } from '../app/main/capture-errors'
+import { session } from './helpers'
 
 /**
  * `app/main/capture-errors.ts` is the capture's throws, split out of
@@ -94,15 +96,51 @@ describe('sdkFailure', () => {
     // Measured on hardware: with the network down the SDK reports code 8,
     // `kProcessingFailed` — the same code a genuinely bad capture gets — so
     // the code cannot carry this. `kNetworkError` (5) never arrives (KV-104).
-    for (const code of [0, 1, 5, 6, 7, 8, 9, 10, 11]) {
+    for (const code of [5, 6, 8]) {
       expect(sdkFailure(code, OFFLINE), `code ${code}`).toBe('no-connection')
     }
   })
 
-  it('treats a throw with no code the same way, online or off', () => {
-    // The lifecycle path: `useCamera()` throwing carries no numeric code.
+  it('does not let being offline overrule what the SDK found locally', () => {
+    // Wi-Fi off and a video call holding the webcam: `start()` throws 7. The
+    // connection screen would send them to reconnect, and the next try would
+    // tell them about the camera — two trips, the first to the wrong place.
+    for (const code of [0, 1, 7, 9, 10, 11]) {
+      expect(sdkFailure(code, OFFLINE), `code ${code}`).toBe('camera-unavailable')
+    }
+  })
+
+  it('does not name the connection for a throw with no code, online or off', () => {
+    // The lifecycle path: `useCamera()` throwing carries no numeric code, and
+    // selecting an input is local. The measured offline failure was code 8.
     expect(sdkFailure(undefined, ONLINE)).toBe('camera-unavailable')
-    expect(sdkFailure(undefined, OFFLINE)).toBe('no-connection')
+    expect(sdkFailure(undefined, OFFLINE)).toBe('camera-unavailable')
+  })
+})
+
+describe('emptyCaptureFailure', () => {
+  const NOTHING = session({
+    vitals: { pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null, hrvSdnnMs: null },
+  }).vitals
+
+  it('names the connection when an offline capture ran out its ceiling with nothing', () => {
+    // The path the SDK told us nothing on. Without this the person sits
+    // through the whole ceiling and reads that no reading came out (KV-104).
+    expect(emptyCaptureFailure(NOTHING, false)).toBe('no-connection')
+  })
+
+  it('keeps anything that was measured, offline or not', () => {
+    // A capture that measured something was not stopped by the connection.
+    // It is the scorer's to judge, not this function's to throw away.
+    const onePulse = { ...NOTHING, pulseRateBpm: 70 }
+    expect(emptyCaptureFailure(onePulse, false)).toBeNull()
+    expect(emptyCaptureFailure(session().vitals, false)).toBeNull()
+  })
+
+  it('says nothing about an empty capture when the device was online', () => {
+    // `true` is inconclusive, so the empty capture is kept and the card says
+    // "nothing measured", as it always has.
+    expect(emptyCaptureFailure(NOTHING, true)).toBeNull()
   })
 })
 
