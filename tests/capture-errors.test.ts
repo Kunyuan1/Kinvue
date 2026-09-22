@@ -58,6 +58,9 @@ describe('the errors the capture throws', () => {
 })
 
 describe('sdkFailure', () => {
+  const ONLINE = true
+  const OFFLINE = false
+
   it.each([
     [2, 'a rejected, expired or revoked key'],
     [3, 'a configuration the SDK would not take'],
@@ -65,17 +68,41 @@ describe('sdkFailure', () => {
   ])('calls code %i setup rather than a busy camera (%s)', (code) => {
     // The harm this prevents: the person closes the video call they were told
     // about, retries, fails again, and the cause is a .env nobody has touched.
-    expect(sdkFailure(code)).toBe('no-api-key')
+    expect(sdkFailure(code, ONLINE)).toBe('no-api-key')
+  })
+
+  it('still calls an account problem an account problem when offline', () => {
+    // The SDK only learns a key is bad by reaching Presage, so it was online
+    // enough to ask. A stale `isOnline()` must not rewrite that as a
+    // connection fault and send someone to check their router (KV-104).
+    for (const code of [2, 3, 4]) {
+      expect(sdkFailure(code, OFFLINE)).toBe('no-api-key')
+    }
   })
 
   it('still calls a genuinely unavailable input the camera', () => {
-    expect(sdkFailure(7)).toBe('camera-unavailable')
+    expect(sdkFailure(7, ONLINE)).toBe('camera-unavailable')
   })
 
   it('does not guess at codes it has no opinion about', () => {
     for (const code of [0, 1, 5, 6, 8, 9, 10, 11]) {
-      expect(sdkFailure(code)).toBe('camera-unavailable')
+      expect(sdkFailure(code, ONLINE)).toBe('camera-unavailable')
     }
+  })
+
+  it('names the connection when the device is offline', () => {
+    // Measured on hardware: with the network down the SDK reports code 8,
+    // `kProcessingFailed` — the same code a genuinely bad capture gets — so
+    // the code cannot carry this. `kNetworkError` (5) never arrives (KV-104).
+    for (const code of [0, 1, 5, 6, 7, 8, 9, 10, 11]) {
+      expect(sdkFailure(code, OFFLINE), `code ${code}`).toBe('no-connection')
+    }
+  })
+
+  it('treats a throw with no code the same way, online or off', () => {
+    // The lifecycle path: `useCamera()` throwing carries no numeric code.
+    expect(sdkFailure(undefined, ONLINE)).toBe('camera-unavailable')
+    expect(sdkFailure(undefined, OFFLINE)).toBe('no-connection')
   })
 })
 

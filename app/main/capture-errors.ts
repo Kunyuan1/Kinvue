@@ -51,13 +51,33 @@ const ACCOUNT_CODES: ReadonlySet<number> = new Set([
 
 /**
  * Which failure an SDK error code is, for both the `error` event and the
- * throw out of a lifecycle call. Anything not about the account is left to
- * `camera-unavailable`, whose copy no longer names a cause it cannot know.
+ * throw out of a lifecycle call.
+ *
+ * `online` is passed in rather than read here on purpose. It comes from
+ * Electron's `net.isOnline()`, and this module imports neither Electron nor
+ * the SDK so that the tags it produces — the contract the screens read — stay
+ * testable in the ordinary no-camera suite. A boolean crosses that line; an
+ * import would not.
+ *
+ * **Only `false` is acted on.** Electron's own documentation says a `false`
+ * return is a strong indicator the device cannot reach remote sites, while
+ * `true` is inconclusive — a link being up says nothing about whether Presage
+ * answered. So an offline device gets a cause named, and an online one is left
+ * at `camera-unavailable`, whose copy still hedges toward the connection
+ * because that remains possible (KV-104).
+ *
+ * The SDK cannot answer this itself: measured on a real capture with the
+ * network down, it reports `kProcessingFailed` (8) — the same code a genuinely
+ * bad capture gets — rather than `kNetworkError` (5), which never arrives.
  */
 export function sdkFailure(
-  code: number,
-): Extract<TaggedFailure, 'no-api-key' | 'camera-unavailable'> {
-  return ACCOUNT_CODES.has(code) ? 'no-api-key' : 'camera-unavailable'
+  code: number | undefined,
+  online: boolean,
+): Extract<TaggedFailure, 'no-api-key' | 'camera-unavailable' | 'no-connection'> {
+  // Account problems are named whether or not the device is online: the SDK
+  // only learns of them by reaching Presage, so it was online enough to ask.
+  if (code !== undefined && ACCOUNT_CODES.has(code)) return 'no-api-key'
+  return online ? 'camera-unavailable' : 'no-connection'
 }
 
 /** Reads the numeric `code` the SDK puts on the errors its methods throw. */

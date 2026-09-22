@@ -32,6 +32,12 @@ import type { CaptureFailure } from '@core/capture/failure'
  * Three of these are not about them at all — no key, a camera another
  * application is holding, a reading that expired — and reading as though they
  * were would be the app blaming someone for its own setup (KV-7).
+ *
+ * `no-connection` is the exception, and deliberately so. It *is* something the
+ * person can act on, so it says what to do rather than reassuring them that
+ * nothing is wrong. Telling someone whose Wi-Fi is off that nothing is wrong
+ * on their side is both untrue and the one thing that stops them fixing it
+ * (KV-104).
  */
 const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
   'no-api-key': {
@@ -41,11 +47,21 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
       'your side — whoever set this up can finish it.',
   },
   'camera-unavailable': {
+    // Still hedges toward the connection, because `net.isOnline()` returning
+    // true is inconclusive — a link that is up says nothing about whether
+    // Presage was reachable (KV-104). Only the `false` case is certain enough
+    // to name, and that one has its own screen below.
     title: 'The camera could not be used',
     detail:
       'Another program may have it open — a video call, perhaps — or it may be the ' +
       'connection. Trying again in a moment is usually enough, and nothing is wrong ' +
       'on your side.',
+  },
+  'no-connection': {
+    title: 'There is no internet connection',
+    detail:
+      'A reading needs one, so this check-in could not be finished. Reconnect and try ' +
+      'again.',
   },
   'capture-in-progress': {
     // Says what the button does, because the button is the only way out of

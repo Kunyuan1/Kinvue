@@ -33,6 +33,15 @@ export type TaggedFailure =
   | 'no-api-key'
   /** The camera could not be opened, or the SDK gave up on it. */
   | 'camera-unavailable'
+  /**
+   * The capture failed and the device has no internet connection (KV-104).
+   *
+   * A reading needs one: the SDK reaches Presage when a session starts, and
+   * without it a capture fails in under half a second. It reports that as
+   * `kProcessingFailed`, the same code a bad capture gets, so this tag is set
+   * from `net.isOnline()` rather than from anything the SDK said.
+   */
+  | 'no-connection'
   /** A capture is already running, so another cannot start. */
   | 'capture-in-progress'
   /** The person stopped it. Not a failure to report as one. */
@@ -62,6 +71,7 @@ export type TaggedFailure =
 export type CaptureFailure =
   | 'no-api-key'
   | 'camera-unavailable'
+  | 'no-connection'
   | 'capture-in-progress'
   /** Anything unclassified. Shown as a short line, never as a stack trace. */
   | 'unknown'
@@ -99,6 +109,7 @@ export const failureTag = (failure: TaggedFailure): string => `kinvue/${failure}
 const ON_CAPTURE: Record<TaggedFailure, CaptureFailure | null> = {
   'no-api-key': 'no-api-key',
   'camera-unavailable': 'camera-unavailable',
+  'no-connection': 'no-connection',
   'capture-in-progress': 'capture-in-progress',
   // They pressed stop, so they already know. Null, not a sentence.
   cancelled: null,
@@ -120,6 +131,8 @@ const ON_SUBMIT: Record<TaggedFailure, SubmitFailure> = {
   // which has been closed since before the questions were asked.
   'no-api-key': 'unknown',
   'camera-unavailable': 'unknown',
+  // The submit path does not open the camera, so it cannot raise this either.
+  'no-connection': 'unknown',
   'capture-in-progress': 'unknown',
   cancelled: 'unknown',
   expired: 'expired',

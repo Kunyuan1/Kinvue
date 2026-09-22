@@ -64,6 +64,10 @@ describe('CaptureScreen says which failure it was', () => {
     ['camera-unavailable', /camera could not be used/i],
     // Check 3: Take a reading pressed twice.
     ['capture-in-progress', /camera is still busy/i],
+    // Check 4: Wi-Fi off. Names the connection instead of the camera, and
+    // says what to do rather than that nothing is wrong on their side, which
+    // is the one thing that would stop them fixing it (KV-104).
+    ['no-connection', /no internet connection/i],
     ['unknown', /could not be taken/i],
   ]
 
