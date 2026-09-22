@@ -11,6 +11,21 @@ import type { Vitals } from './types'
  * `hasScorableVitals` was exported to prevent (KV-72).
  *
  * `core/scoring` re-exports all of this, so importers there are unaffected.
+ *
+ * **Why `core/session/` and not a module of its own.** This file puts two tuned
+ * constants in a directory that was otherwise shapes (`types.ts`) and mechanics
+ * (`store.ts`, `time.ts`, `validate.ts`), and "the capture thresholds live in
+ * core/session" is a surprising sentence (KV-72 review). It earns its place
+ * here because `Vitals` does: the predicate is a question about one record's
+ * vitals and imports nothing else, so it sits next to the type it interrogates
+ * rather than in a directory of one file.
+ *
+ * `core/capture/` was the other candidate and does not work — `length.ts` there
+ * imports `core/scoring`, so hosting the predicate would put `scoring` and
+ * `capture` on both ends of an edge. A sibling `core/usable/` would avoid both
+ * objections; it was not taken because a directory holding a single file is its
+ * own kind of surprise. Worth revisiting if a third caller appears, or if
+ * anything else in here grows a dependency beyond `./types`.
  */
 
 /** Below this mean SDK confidence the capture is not scored at all. */
@@ -66,17 +81,28 @@ export type UnusableReason = 'nothing-measured' | 'too-short' | 'unrated' | 'low
 export function unusableReason(vitals: Vitals): UnusableReason | null {
   const { confidence, durationSec } = vitals
   if (!hasScorableVitals(vitals)) return 'nothing-measured'
-  if (durationSec < MIN_CAPTURE_SECONDS) return 'too-short'
+
+  // Both numeric tests are written `!(x >= n)` rather than `x < n`, so a value
+  // that is not a number at all lands on the withholding side.
+  //
+  // `store.ts` casts parsed JSON to `SessionRecord` without validating it, so
+  // a record missing a key reads as `undefined` — and `undefined < 20` and
+  // `undefined < 0.5` are both false, which would walk a record past this gate
+  // as a full-length, fully vouched-for capture. `NaN` does the same, and
+  // slips `typeof === 'number'` too. Until KV-72 this was academic: the only
+  // vitals reaching here came from a capture the main process had just
+  // measured, where both fields are real numbers by construction. Pointing the
+  // predicate at every record in the history file is what made the shape
+  // discipline load-bearing (KV-72 review).
+  if (!(durationSec >= MIN_CAPTURE_SECONDS)) return 'too-short'
+
   // Unrated is not usable (KV-12). The SDK sometimes reports a rate without
   // rating it at all, and scoring that would present a number as reliable on
   // the grounds that nothing said otherwise — the reassuring direction, which
   // is the worse one. Withholding says the true thing: we cannot tell today.
-  //
-  // Tested for shape, not for null: `store.ts` casts parsed JSON to
-  // `SessionRecord` unvalidated, so a record missing the key reads as
-  // `undefined`, and `undefined < 0.5` is false — an absent confidence would
-  // otherwise score as fully vouched-for, the exact failure KV-12 closes.
-  if (typeof confidence !== 'number') return 'unrated'
-  if (confidence < MIN_CAPTURE_CONFIDENCE) return 'low-confidence'
+  // `typeof` first because it is what narrows `number | null` for the compare
+  // below; `isFinite` is what rejects NaN, which passes `typeof` happily.
+  if (typeof confidence !== 'number' || !Number.isFinite(confidence)) return 'unrated'
+  if (!(confidence >= MIN_CAPTURE_CONFIDENCE)) return 'low-confidence'
   return null
 }
