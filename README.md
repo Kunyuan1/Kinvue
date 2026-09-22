@@ -49,13 +49,14 @@ Check-ins happen on one machine and stay there. The SDK itself talks to Presage 
 capture runs (KV-65); nothing else here opens a socket.
 
 **A capture needs an internet connection.** Not a preference — measured: with the network
-down a capture fails fast, as an error rather than a hang, and produces no reading at all.
-The SDK reports that as `kProcessingFailed`, the same code a genuinely bad capture gets,
-so the app decides from `net.isOnline()` instead and says so plainly rather than blaming
-the camera (KV-104).
+down a capture fails fast, as an error rather than a hang, and produces no reading at all —
+including straight after a successful capture in the same launch. The SDK reports that as
+`kProcessingFailed`, the same code a genuinely bad capture gets, so the app decides from
+`net.isOnline()` instead and says so plainly rather than blaming the camera (KV-104).
 
 **The video is not being uploaded.** Measured with Wireshark over two captures of
-different lengths, one of each (KV-65):
+different lengths, one of each (KV-65), and confirmed in a second run of two captures in
+one launch:
 
 | | 28s capture | 50s capture |
 |---|---|---|
@@ -63,20 +64,20 @@ different lengths, one of each (KV-65):
 | Received from Presage | ~2.05 MB | ~2.10 MB |
 
 Uploading even heavily compressed 320px video for fifty seconds would be megabytes. 66 kB
-is not that, and the traffic runs overwhelmingly *inwards*: about 2 MB fetched on each
-capture. Both followed a fresh launch, so whether that happens per launch or per capture is
-not yet separated.
+is not that, and the traffic runs overwhelmingly *inwards*: about 2 MB is fetched at the
+start of **every capture**, not once per launch, and nothing crosses between captures.
 
-Why a capture cannot run offline has two candidate answers, and the evidence does not choose
-between them: that download may be something the pipeline needs, or the SDK's licence check
-may refuse to authorize measurement without reaching Presage. Either way the capture needs
-the network. See ARCHITECTURE.md for what each would mean for offline use later.
+Why a capture cannot run offline is in the SDK's own log: offline, its metric authorization
+fails ("Authorization server unavailable"), and then the model it loads for the capture
+fails to load — most likely the 2 MB it would otherwise have fetched. Both a licence check
+and a model load stand in the way. See ARCHITECTURE.md for what that means for offline use
+later.
 
 What is sent does **not** grow like a stream of readings. Nearly doubling the capture length
 raised outbound by a fifth, and the growth is all in short connections that each carry about
-the same ~2.1–2.2 kB whatever the length — the size of a TLS handshake, since the SDK opens a
-fresh connection every few seconds rather than reusing one. A payload that grew with the
-measurement would not hold steady like that.
+the same ~2.1–2.2 kB whatever the length — about a TLS handshake plus a small request, since
+the SDK opens a fresh connection every five seconds, and another every fifteen, rather than
+reusing one. A payload that grew with the measurement would not hold steady like that.
 
 **What those pings carry is a licence meter.** The runtime's compiled-in endpoints are
 device-key registration and rotation, metric authorization, and usage sync — and its only

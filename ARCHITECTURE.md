@@ -272,55 +272,72 @@ telemetry off; `cont-api.physiology.presagetech.com` is compiled into each platf
 binary is prefixed `cont-`, `dev.cont-` or `test.cont-`, and there is one production host.) A
 control process of the same shape without the SDK opened nothing, so it is the SDK.
 
-**Measured properly since (KV-65), and most of it is reassuring.** Two Wireshark captures
-of different lengths, one reading each, each from a fresh app launch:
+**Measured properly since (KV-65), and most of it is reassuring.** Two Wireshark runs. The
+first, two captures of different lengths, each from a fresh app launch:
 
 | | 28s capture | 50s capture |
 |---|---|---|
 | Outbound | 55 kB | 66 kB |
 | Inbound | ~2.05 MB | ~2.10 MB |
 | TCP connections | 11 | 18 |
-| Long-lived stream, outbound | 34 kB | 28 kB |
+| Download connection, outbound | 34 kB | 28 kB |
 | The other connections, outbound | 21 kB over 10 | 38 kB over 17 |
 | **Per short connection** | **~2.1 kB** | **~2.2 kB** |
 
-The last two rows are derived: total outbound less the long-lived stream, over the
-connections that are not it. Nothing in the table has been repeated — it is one capture of
-each length.
+The last two rows are derived: total outbound less the download connection, over the
+connections that are not it.
+
+The second, one launch with two captures in it and then a third with Wi-Fi off — the run
+that separates what happens per launch from what happens per capture. Frames are what
+Wireshark counts; data is the TCP payload inside them; acknowledgements are frames that
+carry no data at all:
+
+| | Once, at launch | Capture A (40s) | Capture B (47s) |
+|---|---|---|---|
+| Connections | 3 | 12 | 14 |
+| Outbound frames | 7.6 kB | 59.2 kB | 48.1 kB |
+| of which data | 6.0 kB | 22.5 kB | 28.3 kB |
+| of which acknowledgements | 0.8 kB | 34.0 kB | 16.6 kB |
+| Inbound | 19 kB | 2.11 MB | 2.12 MB |
 
 The video is not being uploaded. Fifty seconds of even heavily compressed 320px frames
-would be megabytes; 66 kB is not that, and the traffic is overwhelmingly inbound — 2.05 MB
-and 2.10 MB on the two captures, which is something being fetched rather than a
-conversation. Each capture followed a fresh launch, so this cannot say whether that download
-happens once per launch or once per capture. Two captures in one launch would settle it.
+would be megabytes; no capture in either run sent more than 66 kB of frames, and the most
+data any capture sent was 28 kB. The traffic is overwhelmingly inbound, and **about 2 MB is
+fetched at the start of every capture**, not once per launch: in the second run each capture
+opened with its own ~2.03 MB download over a single connection lasting about half a second.
+Only three small connections happen once per launch. Nothing crossed at all between the two
+captures, while the questions were being answered, or after the second one ended.
 
-Why a capture cannot run offline is not settled either, and there are two candidates. The
-download may be an asset the pipeline needs — though an SDK shipping model weights would
-normally cache them rather than fetch them on every launch, which is at least as consistent
-with the 2 MB being something else. Or the licence check may gate measurement: the runtime
-calls `/v2/metrics/authorize` and `/available-usage`, and an authorization that cannot reach
-the server would refuse the capture with no asset involved. The evidence here does not
-separate them. For the app it does not need to — either way a capture needs the network —
-but it matters for #32 and #36: an asset can in principle be cached, and a licence gate is
-never offline by design. Either way, `kProcessingFailed` (8) is not a code that says
-"network", which is why the app decides from `net.isOnline()` rather than from it (KV-104).
+**Why a capture cannot run offline — both candidates, per the SDK's own log.** With Wi-Fi
+off, after two successful captures in the same launch, the third failed as
+`kProcessingFailed` and the SDK logged, in this order: from `rest_api_client`, "Metrics
+authorization failed. Status code: 0"; from `metric_gating_calculator`, "Authorization
+server unavailable or returned error"; then, 1.5 seconds later, from `secure_model_loader`,
+a cancelled load of `model_id=phasic-bp-inference`, followed by "Model load failed". So the
+licence check gates measurement, and a model is loaded through a secure loader as each
+capture starts — which is most likely what the per-capture 2 MB is. The log does not say
+which of the two alone would have stopped the capture; it does show both in the path. For
+the app that changes nothing, since either way a capture needs the network. For #32 and #36
+it means two obstacles to offline use rather than one: a model that is not kept between
+captures, and an authorization that is never offline by design. `kProcessingFailed` (8)
+still says nothing about the network, which is why the app decides from `net.isOnline()`
+rather than from it (KV-104) — and on this run it named the connection correctly.
 
-Nor does outbound scale like a stream of readings. Fitting the two points gives roughly
-41 kB fixed plus 0.5 kB per second, and the growth is all in the short connections: more of
-them, each still about 2.1–2.2 kB. A per-connection size that holds steady while the capture
-nearly doubles is what a fixed handshake looks like — the SDK opens a new TLS connection
-every few seconds instead of reusing one, and a TLS 1.3 handshake is 1–2 kB client-side
-before any payload — and is not what a payload growing with the measurement looks like.
+Nor does outbound scale like a stream of readings. During a capture the SDK opens a new TLS
+connection every five seconds, plus a second series every fifteen whose requests run a
+little larger — up to 4 kB of data — and none is held open: the longest connection in the
+second run lasted under five seconds. In the first run the short connections stayed at about
+2.1–2.2 kB each while the capture nearly doubled, which is what a fixed handshake plus a
+small request looks like — a TLS 1.3 handshake alone is 1–2 kB client-side — and not what a
+payload growing with the measurement looks like.
 
-**The 41 kB fixed term has not been examined**, and it is the largest outbound component.
-Most of it is likely the long-lived stream's 28–34 kB, and that is likely acknowledgements:
-Wireshark counts whole frames, and acknowledging a 2 MB download sends back on the order of
-seven hundred small frames — roughly 40 kB. That is arithmetic, not a measurement; filtering
-that stream for segments with no payload would confirm or refute it. Until then the fixed
-term is the one place a small payload could sit unaccounted for. The same reading would make
-that stream's outbound *falling*, 34 kB to 28 kB, unremarkable — it would track the download,
-not the capture — and that is one capture against one either way, so it is not evidence to
-lean on.
+**The first run's 41 kB fixed term is acknowledgements.** Fitting its two points gives roughly
+41 kB fixed plus 0.5 kB per second, and the fixed part is dominated by the download
+connection. In the second run, 30.3 kB of that connection's 32.2 kB outbound was frames
+carrying no data — the acknowledgements of 2 MB coming in — and the data it sent was 1.7 kB.
+The same download at the next capture produced 14.4 kB outbound, 12.5 kB of it
+acknowledgements. That is also why the first run's 34 kB to 28 kB drop on that connection
+means nothing: it follows how a download happened to be acknowledged, not the capture.
 
 **Those pings are a licence meter**, established from the runtime's own compiled-in
 schema rather than by decrypting anything. The endpoints in `smartspectra.dll` are
@@ -354,8 +371,8 @@ So the position is: the app writes and reads check-ins locally and uploads none 
 the frames are processed on this machine and are not sent, a licence meter reports session
 times and per-metric datapoint counts, and the capture cannot run offline. *When* the meter
 reports is only partly known: a complete `UsageStatistics` carries the session's end time,
-so it can only be sent at or after the end, and what the connections opened every few
-seconds *during* a capture carry — quota polls, incremental syncs, keepalives — is not
+so it can only be sent at or after the end, and what the connections opened every five and
+fifteen seconds *during* a capture carry — quota polls, incremental syncs, keepalives — is not
 established. Phase 4 and 5 plan around all of this, so it belongs in #32 and #36 rather
 than being discovered when sync is designed.
 
