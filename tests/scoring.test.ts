@@ -346,13 +346,17 @@ describe('scoreSession', () => {
 
     expect(rule?.explanation).toBeDefined()
     expect(rule?.explanation).not.toMatch(/vary by about/i)
-    expect(rule?.explanation).toMatch(/steady/i)
-    // And it stops at steadiness rather than concluding from the floor. The
-    // code has never observed this person vary, so it cannot know that three
-    // beats is large for them — asserting it is the same overstatement as
-    // quoting the floored sd, one level up (KV-11 review).
+    expect(rule?.explanation).toMatch(/barely varied/i)
+    // And it stops there rather than concluding from the floor. The code has
+    // never observed this person vary, so it cannot know that three beats is
+    // large for them — asserting it is the same overstatement as quoting the
+    // floored sd, one level up (KV-11 review).
     expect(rule?.explanation).not.toMatch(/a large one for them/i)
-    expect(rule?.explanation).toMatch(/no usual range to measure this against/i)
+    expect(rule?.explanation).toMatch(/nothing to measure this difference against/i)
+    // "usual" belongs to the mean in the first sentence. Spending it again on
+    // the spread reads as a contradiction rather than a distinction.
+    expect(rule?.explanation).toMatch(/above their usual 72 bpm/i)
+    expect(rule?.explanation?.match(/usual/gi)).toHaveLength(1)
   })
 
   it('reports a measured spread finer than a whole unit instead of "about 0"', () => {
@@ -394,7 +398,7 @@ describe('scoreSession', () => {
 
     expect(rule?.explanation).toBeDefined()
     expect(rule?.explanation).not.toMatch(/vary by about/i)
-    expect(rule?.explanation).toMatch(/no usual range/i)
+    expect(rule?.explanation).toMatch(/nothing to measure this difference against/i)
   })
 
   it('agrees with itself about the scale when the floor supplies it', () => {
@@ -404,7 +408,7 @@ describe('scoreSession', () => {
     const assessment = scoreSession(session({ vitals: { pulseRateBpm: 75 } }), history(5))
     const rule = assessment.firedRules.find((r) => r.id === 'pulse-elevated')
 
-    expect(rule?.explanation).toMatch(/no usual range/i)
+    expect(rule?.explanation).toMatch(/nothing to measure this difference against/i)
     expect(rule?.severity).toBeGreaterThan(0)
   })
 

@@ -150,9 +150,19 @@ const SPREAD_DP = 1
  * same overstatement as quoting the floored sd, one level up (KV-11 review).
  * Whether a difference that small should fire at all on a baseline that steady
  * is a `MIN_SD_FRACTION_OF_MEAN` question, and #22 owns it.
+ *
+ * Two constraints on the wording, both learned by reading it on a real card:
+ *
+ * - **It must not say "usual".** The first sentence already spends that word on
+ *   the mean ("above their usual 72 bpm"); spending it again on the spread
+ *   reads as a contradiction rather than a distinction.
+ * - **"Barely varied", not "steady".** This fires on two baselines — an sd of
+ *   exactly 0, and a real sd sitting under the floor. The second person did
+ *   vary, just not much, and calling that "so steady there is no range" is the
+ *   same species of overstatement this branch exists to avoid.
  */
 const NO_SPREAD_TO_REPORT =
-  'Their readings have been so steady that there is no usual range to measure this against.'
+  'Their recent readings have barely varied, so there is nothing to measure this difference against.'
 
 /**
  * How far out the reading is, in words a caregiver can check.
