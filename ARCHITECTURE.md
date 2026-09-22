@@ -422,9 +422,18 @@ is visible — someone watched it happen. From three hours away, a discarded one
 indistinguishable from silence, which is what #44 is about.
 
 **The failures that are not this.** No API key — or a key the service rejects — is setup;
-a camera another application is holding is hardware. Neither is about the person, neither
-is stored as a check-in, and each says so in its own words rather than arriving as a raw
-error string. `core/capture/failure.ts` tells them apart by a tag carried inside the
+a camera another application is holding is hardware; a capture that could not run because
+the device was offline is the connection (KV-104). None is about the person, none is stored
+as a check-in, and each says so in its own words rather than arriving as a raw error
+string.
+
+The connection took one case from the other side. A capture that starts with the device
+offline, runs to its ceiling and measures *nothing at all* was stored as `insufficient-signal` until KV-104; it
+now reports the connection instead. The argument above still holds for it — the person
+sat down — but a card saying "the camera ran but no reading came out" named the wrong
+cause on the one path where the SDK said nothing and the network was the likeliest reason.
+A capture that measured anything, offline or not, is still stored and judged like any
+other. `core/capture/failure.ts` tells them apart by a tag carried inside the
 message, because an Error crossing IPC keeps nothing else. The tag is also what keeps a
 *rejected* key from being reported as a busy camera: the SDK only discovers it at session
 start, so it arrives on the same path as a real camera fault and is told apart by the
