@@ -270,10 +270,39 @@ session started — before any measurement existed — to an AWS-fronted endpoin
 telemetry off; `api.physiology.presagetech.com` is compiled into each platform runtime. A
 control process of the same shape without the SDK opened nothing, so it is the SDK.
 
-What that request carries is not yet known (KV-65). The honest position until it is: the
-app writes and reads check-ins locally and uploads none of them, and the capture itself is
-not offline. Phase 4 and 5 plan around what already leaves the device, so this belongs in
-#32 and #36 rather than being discovered when sync is designed.
+**Measured properly since (KV-65), and most of it is reassuring.** Two Wireshark captures
+of different lengths, one reading each, from a fresh launch:
+
+| | 28s capture | 50s capture |
+|---|---|---|
+| Outbound | 55 kB | 66 kB |
+| Inbound | ~2.05 MB | ~2.10 MB |
+| Long-lived stream, outbound | 34 kB | 28 kB |
+
+The video is not being uploaded. Fifty seconds of even heavily compressed 320px frames
+would be megabytes; 66 kB is not that, and the traffic is overwhelmingly inbound — about
+2 MB per launch, within 2% across four runs, which is an asset being fetched rather than a
+conversation. That also explains why an offline capture fails as `kProcessingFailed` (#104)
+rather than as a network error: with nothing to fetch there is nothing to process with, and
+the SDK's error code was accurate rather than sloppy.
+
+Nor does outbound scale like a stream of readings. Fitting the two points gives roughly
+41 kB fixed plus 0.5 kB per second, and the *long-lived* connection's outbound fell as the
+capture lengthened. Growth came from more short connections — the SDK opens a new TLS
+connection about every five seconds instead of reusing one, and a TLS 1.3 handshake is
+1–2 kB client-side before any payload.
+
+**What remains unknown is the few hundred bytes of payload in each of those pings**, and
+volume cannot settle it: a status heartbeat and three derived numbers look identical at
+that size. Establishing it needs an HTTPS proxy with a trusted local CA, which the native
+runtime may well defeat, or an answer from Presage.
+
+So the honest position is now narrower than "unknown" and still short of "nothing leaves":
+the app writes and reads check-ins locally and uploads none of them, the frames are
+processed on this machine and are not sent, the capture is not offline, and a small
+periodic payload of unestablished content goes to Presage while a capture runs. Phase 4 and
+5 plan around that, so it belongs in #32 and #36 rather than being discovered when sync is
+designed.
 
 The key reaches the main process from `.env`, read at startup by `app/main/env.ts` and
 only when the app is not packaged. It is

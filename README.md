@@ -50,10 +50,34 @@ capture runs (KV-65); nothing else here opens a socket.
 
 **A capture needs an internet connection.** Not a preference — measured: with the network
 down a capture fails fast, as an error rather than a hang, and produces no reading at all.
-What the SDK sends is still open (KV-65); *that* it must send something before it will
-measure is not. The SDK reports the failure as `kProcessingFailed`, the same code a
-genuinely bad capture gets, so the app decides from `net.isOnline()` instead and says so
-plainly rather than blaming the camera (KV-104).
+The SDK reports that as `kProcessingFailed`, the same code a genuinely bad capture gets,
+so the app decides from `net.isOnline()` instead and says so plainly rather than blaming
+the camera (KV-104).
+
+**The video never leaves this machine.** Measured with Wireshark over two captures of
+different lengths (KV-65):
+
+| | 28s capture | 50s capture |
+|---|---|---|
+| Sent to Presage | 55 kB | 66 kB |
+| Received from Presage | ~2.05 MB | ~2.10 MB |
+
+Uploading even heavily compressed 320px video for fifty seconds would be megabytes. 66 kB
+is not that, and the traffic runs overwhelmingly *inwards*: roughly 2 MB is downloaded once
+per app launch, consistent to within 2% across four runs — an asset fetch, most likely model
+weights. That is also why a capture cannot run offline: no network, no asset, nothing to
+process with.
+
+What is sent does **not** grow like a stream of readings. Doubling the capture length raised
+outbound by a fifth, and the long-lived connection's outbound actually *fell* — 34 kB to
+28 kB — while the count of short, periodic connections tracked the duration. Most of each of
+those is TLS handshake overhead, since the SDK opens a fresh connection roughly every five
+seconds rather than reusing one.
+
+**What those few hundred bytes per ping contain is still unknown**, and this file will not
+claim otherwise. Volume cannot tell a status heartbeat from a handful of derived numbers —
+a pulse, a breathing rate and an HRV figure would fit in far less. Establishing it needs an
+HTTPS proxy or an answer from Presage, and it is the one part of KV-65 still open.
 
 ```
                      ┌──────────────────────────────────────────┐
