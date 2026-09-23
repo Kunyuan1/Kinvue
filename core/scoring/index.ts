@@ -107,6 +107,20 @@ export function seededBaselineDisclosure(assessment: Assessment): string | null 
 }
 
 /**
+ * The seeded disclosure a card should show, or null (KV-103).
+ *
+ * A card that is itself seeded demo data says so in its own label, so it
+ * carries no disclosure: the sentence exists for a *real* capture compared
+ * against invented days, which otherwise looks measured, and scoring the demo
+ * on display would put nine copies of it on the page and bury that one. Every
+ * other card gets exactly `seededBaselineDisclosure`.
+ */
+export function seededDisclosureFor(session: SessionRecord): string | null {
+  if (session.seeded === true || session.assessment === undefined) return null
+  return seededBaselineDisclosure(session.assessment)
+}
+
+/**
  * Score one check-in against the person's own history.
  *
  * `history` is every prior session for this person; the session being scored

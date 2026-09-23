@@ -1,4 +1,4 @@
-import type { SessionRecord, SleepAnswer, MoodAnswer } from '../session/types'
+import type { Assessment, SessionRecord, SleepAnswer, MoodAnswer } from '../session/types'
 import { scoreSession } from '../scoring'
 
 /**
@@ -93,7 +93,7 @@ export function seedDemoHistory(
     // there, as WORST_DAY_TODAY, and nowhere else (#101).
     const jitter = (spread: number): number => (r() - 0.5) * 2 * spread
 
-    const record: SessionRecord = {
+    out.push({
       id: `seed-${DEMO_PERSON_ID}-${i}`,
       personId: DEMO_PERSON_ID,
       capturedAt: at.toISOString(),
@@ -114,15 +114,35 @@ export function seedDemoHistory(
         eatenToday: r() > 0.1,
         painReported: r() > 0.85,
       },
-    }
-    // Scored the way a real check-in is: against the days before it and never
-    // itself (`submit` in core/session/checkin.ts does the same). Until KV-103
-    // seeded records carried no assessment, so all twelve rendered as "Not
-    // enough to say" on the dashboard they exist to populate. Scoring draws
-    // nothing from `r`, so the fortnight itself cannot move.
-    record.assessment = scoreSession(record, out)
-    out.push(record)
+    })
   }
 
   return out
+}
+
+/**
+ * The records to show, with every seeded one carrying the verdict the scorer
+ * gives it *now* (KV-103). Real records are returned untouched.
+ *
+ * Seeded records are stored without a verdict and scored here, when they are
+ * shown, rather than when they are written. A real check-in's stored verdict is
+ * a fact about a day and is never rescored. A seeded record is generated data,
+ * and its verdict is a view of the current rules: stored, it would go stale the
+ * first time a weight moved, and the demo would show a scorer the app no longer
+ * has. Scoring on display also reaches installs that seeded before this existed,
+ * which a stored verdict could not without a migration.
+ *
+ * Each seeded record is scored the way `submit` scores a real one — against the
+ * records before it in time, never itself. Input order is kept.
+ */
+export function withSeededVerdicts(records: readonly SessionRecord[]): SessionRecord[] {
+  const byTime = [...records].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
+  const verdicts = new Map<string, Assessment>()
+  byTime.forEach((record, i) => {
+    if (record.seeded === true) verdicts.set(record.id, scoreSession(record, byTime.slice(0, i)))
+  })
+  return records.map((record) => {
+    const assessment = verdicts.get(record.id)
+    return assessment === undefined ? record : { ...record, assessment }
+  })
 }

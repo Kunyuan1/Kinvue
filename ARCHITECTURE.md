@@ -578,16 +578,31 @@ rescoring history, and a record written before the count existed reports that in
 reading as "none": absent is unknown, not zero (KV-53).
 
 The alternative was to drop seeded records from a real session's baseline, which is
-cleaner in principle and was rejected for what it costs: a real capture on the demo persona
-is the one scored verdict built on live readings that the dashboard can be developed
-against, and removing the fortnight from that role would leave it with a baseline of none.
+cleaner in principle. It was rejected when seeded records held no verdict of their own, on
+the grounds that the fortnight then existed *only* to be a baseline for a real capture, and
+removing it from that role would leave the dashboard with nothing scored to develop against.
 
-Each seeded day also carries a verdict of its own (KV-103). It is scored at seed time the
-way a real check-in is — against the days before it, never itself — so the fortnight reads
-as a fortnight: the first three days "still learning their normal", the rest compared.
-Until then seeded records held no assessment, and the dashboard the seeding exists to
-populate showed twelve cards saying "Not enough to say". Records seeded before KV-103 still
-carry none; seeding again, on an install with no demo history, gives the scored version.
+**KV-103 weakened that argument, and the conclusion survives it.** Seeded days now carry
+verdicts of their own, so excluding them from a real capture's baseline would no longer
+leave the dashboard empty — twelve scored demo cards would remain. What it would still lose
+is a real capture on the demo persona being compared at all: that capture's baseline would
+be empty, so it would read "still learning their normal" for its first three check-ins, and
+the one verdict built on live readings would stop being demonstrable. That is the cost the
+disclosure exists to make acceptable.
+
+**Seeded verdicts are computed when shown, not stored** (KV-103). `withSeededVerdicts`
+scores each seeded record as the dashboard renders it, the way `submit` scores a real
+check-in — against the records before it, never itself — so the fortnight reads as a
+fortnight: three days still learning their normal, the rest compared. A real check-in's
+verdict is stored because it is a fact about a day and is never redone. A seeded record's
+verdict is a view of the current rules: stored, it would go stale the first time a weight
+moved, and the demo would go on showing a scorer the app no longer has. Scoring on display
+also reaches installs that seeded before this existed, with no migration. Until KV-103 the
+dashboard the seeding exists to populate showed twelve cards saying "Not enough to say".
+
+A seeded card carries no seeded-baseline disclosure; its own label already says what it
+is. The sentence exists for a real capture compared against invented days, which otherwise
+looks measured, and repeating it on every demo card would bury that one.
 
 Seeding still does not solve the underlying problem, which is that a genuine install says
 "not enough to say" for its first few check-ins. That is a product question (KV-17), and

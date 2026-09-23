@@ -1,4 +1,4 @@
-import { seededBaselineDisclosure } from '@core/scoring'
+import { seededDisclosureFor } from '@core/scoring'
 import type { Flag, SessionRecord } from '@core/session/types'
 
 const FLAG_LABEL: Record<Flag, string> = {
@@ -22,8 +22,9 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
   const { assessment, vitals, capturedAt, seeded } = session
   const flag = assessment?.flag ?? 'insufficient-signal'
   // Composed from the stored counts, not read out of the summary: it appears
-  // only where something on this card actually leans on the baseline (KV-53).
-  const seededNote = assessment === undefined ? null : seededBaselineDisclosure(assessment)
+  // only where something on this card actually leans on the baseline (KV-53),
+  // and not on a seeded card, whose own label already says so (KV-103).
+  const seededNote = seededDisclosureFor(session)
   // The day and time where the person was, not where whoever is reading this
   // happens to be (KV-28). Formatted in the recorded zone directly — turning it
   // into a date string and parsing that back would depend on the locale's
