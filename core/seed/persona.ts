@@ -41,8 +41,29 @@ function rng(seed: number): () => number {
   }
 }
 
+/**
+ * No seeded day may have rules summing to this or more (KV-101). A day that
+ * does is drawn again.
+ *
+ * Below `ELEVATED_SEVERITY_THRESHOLD` (0.6) by a deliberate margin rather than
+ * at it. Verdicts are computed when shown (`withSeededVerdicts`), but the redraw
+ * happens when the fortnight is seeded — so a demo seeded under today's scorer
+ * is judged by every later one. At 0.6 the default fortnight kept a 0.03 margin
+ * and a later weight change could turn a stored demo amber; at 0.5 every seeded
+ * day starts at least 0.1 clear, twice the lightest rule.
+ */
+export const DEMO_DAY_CEILING = 0.5
+
+/** How many times a day may be redrawn before seeding gives up rather than keep it. */
+const MAX_REDRAWS = 100
+
 const SLEEP: readonly SleepAnswer[] = ['well', 'well', 'ok', 'ok', 'poorly']
 const MOOD: readonly MoodAnswer[] = ['good', 'good', 'ok', 'ok', 'low']
+
+/** What a day's fired rules sum to, scored against the days before it. */
+function severityOf(day: SessionRecord, before: readonly SessionRecord[]): number {
+  return scoreSession(day, before).firedRules.reduce((total, rule) => total + rule.severity, 0)
+}
 
 function pick<T>(items: readonly T[], r: number): T {
   // items is never empty at any call site; the ?? keeps noUncheckedIndexedAccess happy.
@@ -88,12 +109,14 @@ export function seedDemoHistory(
     //
     // The property that matters is weaker and load-bearing: **no seeded day
     // may score `elevated`.** Unremarkable weeks, not an emergency in front of
-    // an audience. `tests/seed.test.ts` scores every day against its own
-    // predecessors and holds that; how close the worst day comes is recorded
-    // there, as WORST_DAY_TODAY, and nowhere else (#101).
+    // an audience. Until KV-101 that held by luck: across 2000 seeds, 18.4% of
+    // fortnights had an elevated day, and this seed's worst sat 0.03 below the
+    // line. Now it holds by construction — a day whose rules reach
+    // DEMO_DAY_CEILING is drawn again — and `tests/seed.test.ts` checks it
+    // across seeds, not only this one.
     const jitter = (spread: number): number => (r() - 0.5) * 2 * spread
 
-    out.push({
+    const draw = (): SessionRecord => ({
       id: `seed-${DEMO_PERSON_ID}-${i}`,
       personId: DEMO_PERSON_ID,
       capturedAt: at.toISOString(),
@@ -115,6 +138,21 @@ export function seedDemoHistory(
         painReported: r() > 0.85,
       },
     })
+
+    // Scored against the days already drawn, as `withSeededVerdicts` will score
+    // it when shown. Redraws continue the same PRNG stream, so the fortnight is
+    // still identical on every run.
+    let day = draw()
+    for (let redraws = 0; severityOf(day, out) >= DEMO_DAY_CEILING; redraws++) {
+      if (redraws === MAX_REDRAWS) {
+        throw new Error(
+          `seed ${seed}: day ${days - i} still reached ${DEMO_DAY_CEILING} after ` +
+            `${MAX_REDRAWS} redraws. Keeping it would put an amber card in the demo.`,
+        )
+      }
+      day = draw()
+    }
+    out.push(day)
   }
 
   return out

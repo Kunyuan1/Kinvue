@@ -590,6 +590,16 @@ be empty, so it would read "still learning their normal" for its first three che
 the one verdict built on live readings would stop being demonstrable. That is the cost the
 disclosure exists to make acceptable.
 
+**No seeded day is allowed near `elevated`** (KV-101). The demo is what someone new to the
+product sees, and an amber card on invented data is exactly the wrong first impression.
+That used to hold by luck: across 2000 seeds, 18.4% of fortnights had an elevated day, and
+the shipped seed's worst sat 0.03 below the line. Now a day whose rules sum to
+`DEMO_DAY_CEILING` (0.5) or more is drawn again, so it holds for every seed. The ceiling is
+below the threshold on purpose: the redraw is judged by the scorer at seeding time, but the
+verdict by whichever scorer shows it later, and a 0.1 margin is what lets a demo seeded
+today survive a weight change tomorrow. Narrowing the demo's answer odds was measured too,
+and only halved the rate — the camera readings alone push some days over.
+
 **Seeded verdicts are computed when shown, not stored** (KV-103). `withSeededVerdicts`
 scores each seeded record as the dashboard renders it, the way `submit` scores a real
 check-in — against the records before it, never itself — so the fortnight reads as a

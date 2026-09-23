@@ -281,6 +281,7 @@ Tuned constants live in code, not env, because changing one changes what the app
 | `MIN_BASELINE_SESSIONS` | `core/baseline` | `3` — below this the verdict is withheld |
 | `BASELINE_WINDOW_SESSIONS` | `core/baseline` | `14` — trailing sessions in the baseline |
 | `HRV_DROP_FIRES_AT` | `core/scoring/rules.ts` | `0.25` — fractional drop from baseline HRV |
+| `DEMO_DAY_CEILING` | `core/seed/persona.ts` | `0.5` — a seeded demo day whose rules sum to this or more is drawn again, so the demo never shows `elevated` and every day starts at least 0.1 clear of it (KV-101) |
 | `PENDING_CAPTURE_TTL_MS` | `core/session/checkin.ts` | `15 min` — past this, a reading cannot be submitted with answers given now |
 | `GUIDANCE_PERSIST_MS` | `core/capture/guidance.ts` | `400 ms` — how long advice must hold before the person is shown it |
 | `SETTLING_PERSIST_MS` | `core/capture/guidance.ts` | `2.5 s` — the same, for exposure advice a settling camera produces on its own (KV-1) |
@@ -399,7 +400,9 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   dashboard can be developed and shown with a baseline behind it. Each seeded day is scored
   when it is shown, against the days before it, as a real check-in is (KV-103) — so the
   fortnight always shows the current scorer's verdicts, and seeded cards leave the
-  seeded-usual sentence to real cards compared against them. Every seeded record carries
+  seeded-usual sentence to real cards compared against them. No seeded day may sum to
+  `DEMO_DAY_CEILING` (0.5) or more; one that does is drawn again, so the demo never shows an
+  amber card by luck of the seed (KV-101). Every seeded record carries
   `seeded: true` and the dashboard labels it. So does anything computed against it:
   `Assessment.baselineSeededSessions` counts the invented sessions behind a comparison, and
   `seededBaselineDisclosure` turns that count into the sentence the card shows wherever a

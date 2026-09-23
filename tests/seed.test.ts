@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { MIN_BASELINE_SESSIONS, computeBaseline } from '@core/baseline'
 import { ELEVATED_SEVERITY_THRESHOLD, scoreSession, unusableReason } from '@core/scoring'
-import { DEMO_PERSON_ID, seedDemoHistory, withSeededVerdicts } from '@core/seed/persona'
+import {
+  DEMO_DAY_CEILING,
+  DEMO_PERSON_ID,
+  seedDemoHistory,
+  withSeededVerdicts,
+} from '@core/seed/persona'
 import type { Assessment } from '@core/session/types'
 import { session } from './helpers'
 
@@ -19,19 +24,18 @@ import { session } from './helpers'
 const AT = new Date('2026-09-20T09:00:00.000Z')
 
 /**
- * What the worst day in the demo sums to today: day 8, `not-eaten` (0.30) and
- * `pulse-elevated` (0.2668 at z ≈ 2.37), against ELEVATED_SEVERITY_THRESHOLD
- * 0.6 — a margin of 0.0332. This is the one place that number lives;
- * `persona.ts` points here rather than restating it.
+ * What the worst day in the demo sums to today: day 8, `pulse-elevated`
+ * (0.2668 at z ≈ 2.37) and `poor-sleep` (0.05), against
+ * ELEVATED_SEVERITY_THRESHOLD 0.6 — a margin of 0.2832. This is the one place
+ * that number lives; `persona.ts` points here rather than restating it.
  *
- * **That margin is now smaller than a single rule.** `poor-sleep` (KV-91) is
- * 0.05, and day 8 survives only because it drew `well`: had it drawn `poorly`,
- * one draw in five, it would sum to 0.6168 and the demo would show `elevated`.
- * So any change to the seed, the answer arrays, the jitter or the default length
- * that moves `poorly` onto the worst day fails the test below — which is right,
- * and is the sharpest form of #101.
+ * Until KV-101 day 8 was `not-eaten` + `pulse-elevated` at 0.5668, a margin of
+ * 0.0332 that fell out of the seed and was smaller than `poor-sleep` itself.
+ * That day now reaches DEMO_DAY_CEILING and is drawn again. The margin is no
+ * longer luck: no seeded day can start above the ceiling, and the test after
+ * next checks that across seeds, not only this one.
  */
-const WORST_DAY_TODAY = 0.5668
+const WORST_DAY_TODAY = 0.3168
 
 /**
  * The fortnight the app actually seeds: `demo:seed` calls `seedDemoHistory()`
@@ -146,6 +150,21 @@ describe('the seeded demo history', () => {
     ).toBeCloseTo(WORST_DAY_TODAY, 4)
   })
 
+  it('keeps every day under the ceiling for any seed, not only this one', () => {
+    // KV-101: across 2000 seeds, 18.4% of fortnights used to show an elevated
+    // day; this seed was one of the lucky ones. The redraw makes it structural,
+    // so this checks it where luck would show — other seeds — with the verdicts
+    // the dashboard would render.
+    for (let seed = 1; seed <= 200; seed++) {
+      const days = withSeededVerdicts(seedDemoHistory(undefined, AT, seed))
+      days.forEach((s, i) => {
+        const sum = severityOf(s.assessment)
+        expect(sum, `seed ${seed}, day ${i}`).toBeLessThan(DEMO_DAY_CEILING)
+        expect(s.assessment?.flag, `seed ${seed}, day ${i}`).not.toBe('elevated')
+      })
+    }
+  })
+
   it('produces a capture the scorer is willing to use, every day', () => {
     // What makes the demo work at all: a seeded day that failed the capture
     // gate would be dropped from its own baseline (KV-72) and show "not enough
@@ -199,13 +218,13 @@ describe('the seeded demo history', () => {
     // that starts drawing from the PRNG — scoring included — moves them. A seed
     // change fails here too, deliberately; update the literals with it.
     expect(seeded.map((s) => s.vitals.pulseRateBpm)).toEqual([
-      70, 71, 68, 73, 69, 69, 71, 71, 74, 74, 72, 75,
+      70, 71, 68, 73, 69, 69, 71, 71, 74, 72, 75, 72,
     ])
     expect(seeded.map((s) => s.vitals.breathingRateBrpm)).toEqual([
-      15, 16, 15, 15, 14, 14, 16, 16, 15, 15, 16, 14,
+      15, 16, 15, 15, 14, 14, 16, 16, 15, 16, 14, 14,
     ])
     expect(seeded.map((s) => s.vitals.hrvRmssdMs)).toEqual([
-      30, 32, 34, 33, 36, 33, 35, 35, 31, 34, 34, 34,
+      30, 32, 34, 33, 36, 33, 35, 35, 34, 34, 34, 38,
     ])
     expect(
       seeded.map(({ answers: a }) =>
@@ -222,10 +241,10 @@ describe('the seeded demo history', () => {
       'well good ate',
       'ok low ate',
       'well good ate',
-      'well good not-eaten',
       'poorly good ate',
       'poorly low ate',
       'well good ate',
+      'well low ate',
     ])
   })
 
