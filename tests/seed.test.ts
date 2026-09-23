@@ -4,8 +4,9 @@ import { ELEVATED_SEVERITY_THRESHOLD, scoreSession, unusableReason } from '@core
 import { DEMO_PERSON_ID, seedDemoHistory } from '@core/seed/persona'
 
 /**
- * The demo persona's invented fortnight (KV-8), scored the way the dashboard
- * will score it (KV-14).
+ * The demo persona's invented fortnight (KV-8), as the dashboard shows it: each
+ * day carries the assessment it was given at seed time (KV-103), and these tests
+ * read that, not a sweep of their own (KV-14).
  *
  * `persona.ts` used to claim "nothing here should trip a rule". It does — see
  * the test below — and nothing checked, so a seed or weights change could have
@@ -36,13 +37,13 @@ const WORST_DAY_TODAY = 0.5668
 const seeded = seedDemoHistory(undefined, AT)
 
 /**
- * Each seeded day scored against the days before it — what the dashboard would
- * show if it scored them. It does not yet: `demo:seed` stores seeded records
- * with no assessment. The path that does run today, a real capture scored
- * against the seeded fortnight, is `scoring.test.ts`'s `seededHistory(12)`.
+ * Each seeded day with the assessment it shipped with — what the dashboard
+ * renders, since `demo:seed` stores these records as they are. The test below
+ * checks that assessment is the one a real check-in on that day would get.
  */
 const scored = seeded.map((s, i) => {
-  const assessment = scoreSession(s, seeded.slice(0, i))
+  const { assessment } = s
+  if (assessment === undefined) throw new Error(`seeded day ${i} carries no assessment`)
   return {
     day: i,
     assessment,
@@ -66,6 +67,16 @@ function worstDecidedDay(): ScoredDay {
 }
 
 describe('the seeded demo history', () => {
+  it('carries, on every day, the assessment a real check-in would get', () => {
+    // KV-103: seeded records used to carry none, so the dashboard rendered all
+    // twelve as "Not enough to say". Each is scored against the days before it
+    // and never itself — the same rule `submit` follows for a real check-in.
+    seeded.forEach((s, i) => {
+      const { assessment, ...record } = s
+      expect(assessment, `day ${i}`).toEqual(scoreSession(record, seeded.slice(0, i)))
+    })
+  })
+
   it('never scores a day as elevated', () => {
     // The property the demo actually needs, and the one `persona.ts` now
     // claims. The stronger reading of the old comment — that no rule fires at

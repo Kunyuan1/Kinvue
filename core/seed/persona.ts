@@ -1,4 +1,5 @@
 import type { SessionRecord, SleepAnswer, MoodAnswer } from '../session/types'
+import { scoreSession } from '../scoring'
 
 /**
  * A pre-seeded history for the demo persona (KV-8).
@@ -92,7 +93,7 @@ export function seedDemoHistory(
     // there, as WORST_DAY_TODAY, and nowhere else (#101).
     const jitter = (spread: number): number => (r() - 0.5) * 2 * spread
 
-    out.push({
+    const record: SessionRecord = {
       id: `seed-${DEMO_PERSON_ID}-${i}`,
       personId: DEMO_PERSON_ID,
       capturedAt: at.toISOString(),
@@ -113,7 +114,14 @@ export function seedDemoHistory(
         eatenToday: r() > 0.1,
         painReported: r() > 0.85,
       },
-    })
+    }
+    // Scored the way a real check-in is: against the days before it and never
+    // itself (`submit` in core/session/checkin.ts does the same). Until KV-103
+    // seeded records carried no assessment, so all twelve rendered as "Not
+    // enough to say" on the dashboard they exist to populate. Scoring draws
+    // nothing from `r`, so the fortnight itself cannot move.
+    record.assessment = scoreSession(record, out)
+    out.push(record)
   }
 
   return out

@@ -396,8 +396,10 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   early.
 - **The demo persona's history is invented** (`core/seed/persona.ts`). A baseline needs
   weeks of check-ins and a new install has none, so a seeded fortnight is how the
-  dashboard can be developed and shown with a baseline behind it. Every seeded record
-  carries `seeded: true` and the dashboard labels it. So does anything computed against it:
+  dashboard can be developed and shown with a baseline behind it. Each seeded day is scored
+  against the days before it, as a real check-in is (KV-103), so the fortnight shows
+  verdicts rather than twelve "not enough to say" cards. Every seeded record carries
+  `seeded: true` and the dashboard labels it. So does anything computed against it:
   `Assessment.baselineSeededSessions` counts the invented sessions behind a comparison, and
   `seededBaselineDisclosure` turns that count into the sentence the card shows wherever a
   verdict — or a fired rule quoting "their usual" — rests on them (KV-53). This is disclosed

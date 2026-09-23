@@ -578,10 +578,16 @@ rescoring history, and a record written before the count existed reports that in
 reading as "none": absent is unknown, not zero (KV-53).
 
 The alternative was to drop seeded records from a real session's baseline, which is
-cleaner in principle and was rejected for what it costs: seeded records hold no assessment
-of their own, so the fortnight exists *only* to be a baseline for a real capture. Removing
-it from that role would leave the dashboard with no scored verdict to develop against,
-which is the entire reason for seeding.
+cleaner in principle and was rejected for what it costs: a real capture on the demo persona
+is the one scored verdict built on live readings that the dashboard can be developed
+against, and removing the fortnight from that role would leave it with a baseline of none.
+
+Each seeded day also carries a verdict of its own (KV-103). It is scored at seed time the
+way a real check-in is — against the days before it, never itself — so the fortnight reads
+as a fortnight: the first three days "still learning their normal", the rest compared.
+Until then seeded records held no assessment, and the dashboard the seeding exists to
+populate showed twelve cards saying "Not enough to say". Records seeded before KV-103 still
+carry none; seeding again, on an install with no demo history, gives the scored version.
 
 Seeding still does not solve the underlying problem, which is that a genuine install says
 "not enough to say" for its first few check-ins. That is a product question (KV-17), and
