@@ -147,12 +147,28 @@ What made this a decision rather than an accident is that it is now pinned.
 or removes one fails a test and has to be argued for. The weights themselves are still
 judgement (#22).
 
-**Poor sleep is shown, not weighed** (KV-91). Until then, "slept poorly" without pain
-produced nothing at all: no severity and no line on the card, so the caregiver could not
-see how the question was answered. `poor-sleep` now fires at 0.05. Without pain the answers
-reach 0.5 at most, so anything under 0.1 can never take a day across the threshold that was
-not already across it — the rule makes the answer visible without adding a seventh
-combination to the six. Raising it to 0.1 or more fails the pin above, on purpose.
+**Poor sleep weighs, lightly** (KV-91). Until then, "slept poorly" without pain produced
+nothing at all: no severity and no line on the card. `poor-sleep` now fires at 0.05, and
+that weight does two different things:
+
+- **It adds no answers-only flag.** Without pain the answers reach 0.5 at most, so under
+  0.1 it cannot; the six combinations above are still six.
+- **It can tip a day the camera already has near the line.** The scorer sums every fired
+  rule, camera ones included, so a day whose other rules sum to between 0.55 and 0.6
+  becomes `elevated` when they also slept poorly — an HRV drop of about 46–49% against
+  their usual, for instance. That is intended: a real drop plus a bad night is a better
+  amber than the drop alone. A test pins the band, both that it exists and that nothing
+  below it moves.
+
+It also changes the card's headline on a day where it is the only thing that fired: "Today
+looks broadly normal, with one or two things worth noting" rather than "a normal day", as
+any fired rule does.
+
+This makes *one* answer visible, not the question. "Slept well" and "slept ok" still fire
+nothing, so a card with no sleep line cannot tell them apart — or from a record written
+before this rule existed. Making an answer visible by giving it a rule also gives it weight,
+which is the wrong tool for the job; showing the answers on the card apart from the rules is
+#110.
 
 What this does not settle: that the camera finds it much harder to raise a flag than the
 questions do. Only an HRV drop of half or more reaches the threshold alone; a pulse four

@@ -19,6 +19,13 @@ const AT = new Date('2026-09-20T09:00:00.000Z')
  * `pulse-elevated` (0.2668 at z ≈ 2.37), against ELEVATED_SEVERITY_THRESHOLD
  * 0.6 — a margin of 0.0332. This is the one place that number lives;
  * `persona.ts` points here rather than restating it.
+ *
+ * **That margin is now smaller than a single rule.** `poor-sleep` (KV-91) is
+ * 0.05, and day 8 survives only because it drew `well`: had it drawn `poorly`,
+ * one draw in five, it would sum to 0.6168 and the demo would show `elevated`.
+ * So any change to the seed, the answer arrays, the jitter or the default length
+ * that moves `poorly` onto the worst day fails the test below — which is right,
+ * and is the sharpest form of #101.
  */
 const WORST_DAY_TODAY = 0.5668
 

@@ -295,12 +295,16 @@ export const painReported: Rule = {
  * answered (KV-91). Until this existed the answer vanished without pain beside
  * it: no severity and no line on the card.
  *
- * **Shown, deliberately not weighed.** Without pain the answer rules reach 0.5
- * at most (`notEaten` + `lowMood`), so anything under 0.1 here can never take a
- * day across `ELEVATED_SEVERITY_THRESHOLD` that was not already across it. That
- * is the point: KV-10 decided which answer combinations may flag, and this rule
- * is not allowed to add one. A test pins the combinations that flag; raising
- * this weight to 0.1 or more fails it, and that is a decision, not a tweak.
+ * **Weighed, but lightly, and it can tip a day.** The scorer sums every fired
+ * rule, camera ones included, so a day whose other rules already sum to within
+ * 0.05 of `ELEVATED_SEVERITY_THRESHOLD` — an HRV drop just short of the one that
+ * flags alone, say — becomes `elevated` when they also slept poorly. That is
+ * intended: a real drop plus a bad night is a better amber than the drop alone.
+ *
+ * What it may not do is add an answers-only flag. Without pain the answer rules
+ * reach 0.5 at most (`notEaten` + `lowMood`), so under 0.1 it cannot, and KV-10
+ * decided which answer combinations may flag. Two tests pin it: the answer
+ * combinations that flag, and that it tips only a day already within 0.05.
  */
 export const poorSleep: Rule = {
   id: 'poor-sleep',
@@ -310,7 +314,7 @@ export const poorSleep: Rule = {
     return {
       id: 'poor-sleep',
       title: 'Slept poorly',
-      explanation: 'They reported sleeping poorly.',
+      explanation: 'They reported sleeping poorly last night.',
       severity: 0.05,
     }
   },

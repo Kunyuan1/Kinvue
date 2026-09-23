@@ -79,10 +79,11 @@ export function seedDemoHistory(
     // baseline. A demo where nothing ever registers reads as a flat line, not
     // as a person.
     //
-    // `poorly` shows on the card but barely weighs (`poor-sleep`, KV-91). The
-    // live risk is `poor-sleep-with-pain`: it needs `painReported` too, and
-    // that 3-in-20 draw never comes up in the default fortnight — the heaviest
-    // answer rule, one unlucky draw from firing.
+    // `poorly` weighs lightly (`poor-sleep`, 0.05, KV-91) — more than the
+    // worst day's margin, which is why that margin is recorded in the test and
+    // not here. The heaviest risk is `poor-sleep-with-pain`: it needs
+    // `painReported` too, and that 3-in-20 draw never comes up in the default
+    // fortnight — one unlucky draw from firing.
     //
     // The property that matters is weaker and load-bearing: **no seeded day
     // may score `elevated`.** Unremarkable weeks, not an emergency in front of
