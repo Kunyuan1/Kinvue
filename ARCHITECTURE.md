@@ -128,6 +128,40 @@ comparison, which is the part there is no evidence for.
 
 ---
 
+## Why the answers may raise a flag on their own
+
+Decided in KV-10: **a day can read `elevated` on the answers alone, with nothing wrong on
+camera.** This is not the shortcut the section above rules out. That one is about a capture
+that *failed*, where scoring the answers and calling the day `normal` would misstate what
+was measured. This is about a capture that *worked* and saw nothing unusual.
+
+Six of the thirty-six answer combinations do it today, and every one includes pain; five
+of the six are pain with nothing eaten. A person in pain who has not eaten is having a day
+worth a look whatever their pulse was, and the camera cannot see either. `elevated` means
+"worth a look", not "something is wrong with their body", so a flag that rests on what they
+said rather than on what was measured stays inside both lines the product does not cross:
+it names no condition, and it is not an alert.
+
+What made this a decision rather than an accident is that it is now pinned.
+`tests/scoring.test.ts` lists the six combinations that flag, so a weight change that adds
+or removes one fails a test and has to be argued for. The weights themselves are still
+judgement (#22).
+
+**Poor sleep is shown, not weighed** (KV-91). Until then, "slept poorly" without pain
+produced nothing at all: no severity and no line on the card, so the caregiver could not
+see how the question was answered. `poor-sleep` now fires at 0.05. Without pain the answers
+reach 0.5 at most, so anything under 0.1 can never take a day across the threshold that was
+not already across it — the rule makes the answer visible without adding a seventh
+combination to the six. Raising it to 0.1 or more fails the pin above, on purpose.
+
+What this does not settle: that the camera finds it much harder to raise a flag than the
+questions do. Only an HRV drop of half or more reaches the threshold alone; a pulse four
+standard deviations above usual caps at 0.45. Whether a large vitals deviation should flag
+on its own is the other half of the same balance, and belongs with #9 and #22 rather than
+here.
+
+---
+
 ## Why Electron, and where the camera runs
 
 The SmartSpectra SDK has no browser build. Supported targets are Android, Swift/iOS, C++

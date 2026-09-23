@@ -62,8 +62,9 @@ describe('the seeded demo history', () => {
   it('never scores a day as elevated', () => {
     // The property the demo actually needs, and the one `persona.ts` now
     // claims. The stronger reading of the old comment — that no rule fires at
-    // all — is false. Three rules fire across the fortnight: `not-eaten` (the
-    // 1-in-10 `eatenToday` draw), `low-mood` (MOOD's `low`), and
+    // all — is false. Four rules fire across the fortnight: `not-eaten` (the
+    // 1-in-10 `eatenToday` draw), `low-mood` (MOOD's `low`), `poor-sleep`
+    // (SLEEP's `poorly`, shown but barely weighed — KV-91), and
     // `pulse-elevated`, from the vitals jitter alone clearing `Z_FIRES_AT`
     // against a short, steady baseline. Rules firing is what makes the demo
     // look like a person rather than a flat line; a day reading `elevated` is

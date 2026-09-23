@@ -92,6 +92,48 @@ describe('scoreSession', () => {
     )
     expect(ids(assessment)).toContain('poor-sleep-with-pain')
     expect(ids(assessment)).not.toContain('pain-reported')
+    expect(ids(assessment)).not.toContain('poor-sleep')
+  })
+
+  it('shows poor sleep on the card when there is no pain beside it', () => {
+    // KV-91: the answer used to vanish — no severity and no line on the card.
+    const assessment = scoreSession(session({ answers: { sleep: 'poorly' } }), history(5))
+    expect(assessment.flag).toBe('normal')
+    expect(ids(assessment)).toEqual(['poor-sleep'])
+    expect(assessment.firedRules[0]?.explanation).toBe('They reported sleeping poorly.')
+  })
+
+  it('flags exactly these answer combinations with nothing wrong on camera', () => {
+    // KV-10, decided: answers alone may raise a flag. A person in pain who has
+    // not eaten is having a day worth a look whatever the camera saw. This pins
+    // *which* days, so that any weight change which adds or removes one is a
+    // visible decision rather than an emergent one. It also holds `poor-sleep`
+    // to showing without weighing: this list was taken before that rule existed,
+    // and it must not have grown.
+    const flagged: string[] = []
+    for (const sleep of ['well', 'ok', 'poorly'] as const)
+      for (const mood of ['good', 'ok', 'low'] as const)
+        for (const eatenToday of [true, false])
+          for (const painReported of [false, true]) {
+            const a = scoreSession(
+              session({ answers: { sleep, mood, eatenToday, painReported } }),
+              history(14),
+            )
+            const ate = eatenToday ? 'ate' : 'not-eaten'
+            const pain = painReported ? ' pain' : ''
+            if (a.flag === 'elevated') flagged.push(`${sleep} ${mood} ${ate}${pain}`)
+          }
+
+    expect(flagged.sort()).toEqual(
+      [
+        'ok low not-eaten pain',
+        'poorly good not-eaten pain',
+        'poorly low ate pain',
+        'poorly low not-eaten pain',
+        'poorly ok not-eaten pain',
+        'well low not-eaten pain',
+      ].sort(),
+    )
   })
 
   it('orders fired rules by severity, strongest first', () => {

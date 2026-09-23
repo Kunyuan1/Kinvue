@@ -405,8 +405,9 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   no baseline (KV-17).
 - **Severity weights are judgement, not evidence.** The numbers in `rules.ts` were chosen
   so that the combination the product exists to catch clears the threshold and a single
-  soft signal does not. They are not calibrated against outcomes and should not be
-  presented as if they were.
+  soft signal does not. Answers can clear it on their own — six combinations do, all with
+  pain — and that is a decision, pinned in tests (KV-10). They are not calibrated against
+  outcomes and should not be presented as if they were.
 - **A JSON file is the store.** Correct at one small record per person per day, and it
   avoids a native rebuild against Electron's ABI. `SessionStore` in
   `core/session/store.ts` is the seam to swap if that stops being true.

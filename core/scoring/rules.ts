@@ -260,7 +260,7 @@ export const breathingElevated = zRule({
 /**
  * Poor sleep and pain together, on the same day, is the combination carers
  * describe as the one that precedes a bad week. Either alone is weaker, and
- * fires below.
+ * fires below — pain at a real weight, sleep at barely any (see `poorSleep`).
  */
 export const poorSleepWithPain: Rule = {
   id: 'poor-sleep-with-pain',
@@ -286,6 +286,32 @@ export const painReported: Rule = {
       title: 'Pain reported',
       explanation: 'They reported being in pain today.',
       severity: 0.25,
+    }
+  },
+}
+
+/**
+ * Poor sleep on its own, so the caregiver can see how the question was
+ * answered (KV-91). Until this existed the answer vanished without pain beside
+ * it: no severity and no line on the card.
+ *
+ * **Shown, deliberately not weighed.** Without pain the answer rules reach 0.5
+ * at most (`notEaten` + `lowMood`), so anything under 0.1 here can never take a
+ * day across `ELEVATED_SEVERITY_THRESHOLD` that was not already across it. That
+ * is the point: KV-10 decided which answer combinations may flag, and this rule
+ * is not allowed to add one. A test pins the combinations that flag; raising
+ * this weight to 0.1 or more fails it, and that is a decision, not a tweak.
+ */
+export const poorSleep: Rule = {
+  id: 'poor-sleep',
+  evaluate({ session }) {
+    if (session.answers.sleep !== 'poorly') return null
+    if (session.answers.painReported) return null // poorSleepWithPain covers it
+    return {
+      id: 'poor-sleep',
+      title: 'Slept poorly',
+      explanation: 'They reported sleeping poorly.',
+      severity: 0.05,
     }
   },
 }
@@ -322,6 +348,7 @@ export const ALL_RULES: readonly Rule[] = [
   pulseElevated,
   breathingElevated,
   poorSleepWithPain,
+  poorSleep,
   painReported,
   notEaten,
   lowMood,
