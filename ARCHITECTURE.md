@@ -128,6 +128,56 @@ comparison, which is the part there is no evidence for.
 
 ---
 
+## Why the answers may raise a flag on their own
+
+Decided in KV-10: **a day can read `elevated` on the answers alone, with nothing wrong on
+camera.** This is not the shortcut the section above rules out. That one is about a capture
+that *failed*, where scoring the answers and calling the day `normal` would misstate what
+was measured. This is about a capture that *worked* and saw nothing unusual.
+
+Six of the thirty-six answer combinations do it today, and every one includes pain; five
+of the six are pain with nothing eaten. A person in pain who has not eaten is having a day
+worth a look whatever their pulse was, and the camera cannot see either. `elevated` means
+"worth a look", not "something is wrong with their body", so a flag that rests on what they
+said rather than on what was measured stays inside both lines the product does not cross:
+it names no condition, and it is not an alert.
+
+What made this a decision rather than an accident is that it is now pinned.
+`tests/scoring.test.ts` lists the six combinations that flag, so a weight change that adds
+or removes one fails a test and has to be argued for. The weights themselves are still
+judgement (#22).
+
+**Poor sleep weighs, lightly** (KV-91). Until then, "slept poorly" without pain produced
+nothing at all: no severity and no line on the card. `poor-sleep` now fires at 0.05, and
+that weight does two different things:
+
+- **It adds no answers-only flag.** Without pain the answers reach 0.5 at most, so under
+  0.1 it cannot; the six combinations above are still six.
+- **It can tip a day the camera already has near the line.** The scorer sums every fired
+  rule, camera ones included, so a day whose other rules sum to between 0.55 and 0.6
+  becomes `elevated` when they also slept poorly — an HRV drop of about 46–49% against
+  their usual, for instance. That is intended: a real drop plus a bad night is a better
+  amber than the drop alone. A test pins the band, both that it exists and that nothing
+  below it moves.
+
+It also changes the card's headline on a day where it is the only thing that fired: "Today
+looks broadly normal, with one or two things worth noting" rather than "a normal day", as
+any fired rule does.
+
+This makes *one* answer visible, not the question. "Slept well" and "slept ok" still fire
+nothing, so a card with no sleep line cannot tell them apart — or from a record written
+before this rule existed. Making an answer visible by giving it a rule also gives it weight,
+which is the wrong tool for the job; showing the answers on the card apart from the rules is
+#110.
+
+What this does not settle: that the camera finds it much harder to raise a flag than the
+questions do. Only an HRV drop of half or more reaches the threshold alone; a pulse four
+standard deviations above usual caps at 0.45. Whether a large vitals deviation should flag
+on its own is the other half of the same balance, and belongs with #9 and #22 rather than
+here.
+
+---
+
 ## Why Electron, and where the camera runs
 
 The SmartSpectra SDK has no browser build. Supported targets are Android, Swift/iOS, C++

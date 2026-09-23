@@ -260,7 +260,7 @@ export const breathingElevated = zRule({
 /**
  * Poor sleep and pain together, on the same day, is the combination carers
  * describe as the one that precedes a bad week. Either alone is weaker, and
- * fires below.
+ * fires below — pain at a real weight, sleep at barely any (see `poorSleep`).
  */
 export const poorSleepWithPain: Rule = {
   id: 'poor-sleep-with-pain',
@@ -286,6 +286,36 @@ export const painReported: Rule = {
       title: 'Pain reported',
       explanation: 'They reported being in pain today.',
       severity: 0.25,
+    }
+  },
+}
+
+/**
+ * Poor sleep on its own, so the caregiver can see how the question was
+ * answered (KV-91). Until this existed the answer vanished without pain beside
+ * it: no severity and no line on the card.
+ *
+ * **Weighed, but lightly, and it can tip a day.** The scorer sums every fired
+ * rule, camera ones included, so a day whose other rules already sum to within
+ * 0.05 of `ELEVATED_SEVERITY_THRESHOLD` — an HRV drop just short of the one that
+ * flags alone, say — becomes `elevated` when they also slept poorly. That is
+ * intended: a real drop plus a bad night is a better amber than the drop alone.
+ *
+ * What it may not do is add an answers-only flag. Without pain the answer rules
+ * reach 0.5 at most (`notEaten` + `lowMood`), so under 0.1 it cannot, and KV-10
+ * decided which answer combinations may flag. Two tests pin it: the answer
+ * combinations that flag, and that it tips only a day already within 0.05.
+ */
+export const poorSleep: Rule = {
+  id: 'poor-sleep',
+  evaluate({ session }) {
+    if (session.answers.sleep !== 'poorly') return null
+    if (session.answers.painReported) return null // poorSleepWithPain covers it
+    return {
+      id: 'poor-sleep',
+      title: 'Slept poorly',
+      explanation: 'They reported sleeping poorly last night.',
+      severity: 0.05,
     }
   },
 }
@@ -322,6 +352,7 @@ export const ALL_RULES: readonly Rule[] = [
   pulseElevated,
   breathingElevated,
   poorSleepWithPain,
+  poorSleep,
   painReported,
   notEaten,
   lowMood,

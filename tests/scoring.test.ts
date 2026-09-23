@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { MIN_BASELINE_SESSIONS } from '@core/baseline'
 import {
+  ELEVATED_SEVERITY_THRESHOLD,
   hasScorableVitals,
   MIN_CAPTURE_SECONDS,
   scoreSession,
@@ -92,6 +93,86 @@ describe('scoreSession', () => {
     )
     expect(ids(assessment)).toContain('poor-sleep-with-pain')
     expect(ids(assessment)).not.toContain('pain-reported')
+    expect(ids(assessment)).not.toContain('poor-sleep')
+  })
+
+  it('shows poor sleep on the card when there is no pain beside it', () => {
+    // KV-91: the answer used to vanish — no severity and no line on the card.
+    const assessment = scoreSession(session({ answers: { sleep: 'poorly' } }), history(5))
+    expect(assessment.flag).toBe('normal')
+    expect(ids(assessment)).toEqual(['poor-sleep'])
+    expect(assessment.firedRules[0]?.explanation).toBe(
+      'They reported sleeping poorly last night.',
+    )
+    // It fired, so the headline is the "worth noting" one rather than "a normal
+    // day" — the same as any other rule that fires without flagging.
+    expect(assessment.summary).toBe(
+      'Today looks broadly normal, with one or two things worth noting.',
+    )
+  })
+
+  it('flags exactly these answer combinations with nothing wrong on camera', () => {
+    // KV-10, decided: answers alone may raise a flag. A person in pain who has
+    // not eaten is having a day worth a look whatever the camera saw. This pins
+    // *which* days, so that any weight change which adds or removes one is a
+    // visible decision rather than an emergent one. It also holds `poor-sleep`
+    // to adding no answers-only combination: this list was taken before that
+    // rule existed, and it must not have grown. The camera is perfect throughout
+    // (`history(14)` is fourteen identical sessions), so this says nothing about
+    // days where a vitals rule fires — the next test does.
+    const flagged: string[] = []
+    for (const sleep of ['well', 'ok', 'poorly'] as const)
+      for (const mood of ['good', 'ok', 'low'] as const)
+        for (const eatenToday of [true, false])
+          for (const painReported of [false, true]) {
+            const a = scoreSession(
+              session({ answers: { sleep, mood, eatenToday, painReported } }),
+              history(14),
+            )
+            const ate = eatenToday ? 'ate' : 'not-eaten'
+            const pain = painReported ? ' pain' : ''
+            if (a.flag === 'elevated') flagged.push(`${sleep} ${mood} ${ate}${pain}`)
+          }
+
+    expect(flagged.sort()).toEqual(
+      [
+        'ok low not-eaten pain',
+        'poorly good not-eaten pain',
+        'poorly low ate pain',
+        'poorly low not-eaten pain',
+        'poorly ok not-eaten pain',
+        'well low not-eaten pain',
+      ].sort(),
+    )
+  })
+
+  it('lets poor sleep tip only a day already within 0.05 of the threshold', () => {
+    // `poor-sleep` weighs 0.05 and the scorer sums every fired rule, camera ones
+    // included, so on a day whose other rules land in [0.55, 0.6) a bad night
+    // is what makes it `elevated` (KV-91). That is intended — a real HRV drop
+    // plus a bad night is a better amber than the drop alone — and this pins
+    // both halves: the band exists, and nothing below it moves. Swept over HRV
+    // because `hrv-drop` scales smoothly through the whole range.
+    const threshold = ELEVATED_SEVERITY_THRESHOLD
+    const sum = (a: Assessment): number => a.firedRules.reduce((t, r) => t + r.severity, 0)
+    const tipped: number[] = []
+    for (let hrv = 15; hrv <= 26; hrv += 0.05) {
+      const slept = scoreSession(session({ vitals: { hrvRmssdMs: hrv } }), history(5))
+      const poorly = scoreSession(
+        session({ vitals: { hrvRmssdMs: hrv }, answers: { sleep: 'poorly' } }),
+        history(5),
+      )
+      if (slept.flag === poorly.flag) continue
+      tipped.push(sum(slept))
+      expect(slept.flag).toBe('normal')
+      expect(poorly.flag).toBe('elevated')
+    }
+
+    expect(tipped.length).toBeGreaterThan(0)
+    for (const rest of tipped) {
+      expect(rest, `tipped a day whose other rules summed to ${rest.toFixed(4)}`)
+        .toBeGreaterThanOrEqual(threshold - 0.05 - 1e-9)
+    }
   })
 
   it('orders fired rules by severity, strongest first', () => {
