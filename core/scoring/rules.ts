@@ -270,7 +270,7 @@ export const poorSleepWithPain: Rule = {
     return {
       id: 'poor-sleep-with-pain',
       title: 'Poor sleep and pain reported together',
-      explanation: 'At the check-in they reported sleeping poorly and being in pain.',
+      explanation: 'At the check-in they reported being in pain, and sleeping poorly the night before.',
       severity: 0.45,
     }
   },
@@ -314,7 +314,7 @@ export const poorSleep: Rule = {
     return {
       id: 'poor-sleep',
       title: 'Slept poorly',
-      explanation: 'They reported sleeping poorly the night before the check-in.',
+      explanation: 'At the check-in they reported sleeping poorly the night before.',
       severity: 0.05,
     }
   },
@@ -326,7 +326,7 @@ export const notEaten: Rule = {
     if (session.answers.eatenToday) return null
     return {
       id: 'not-eaten',
-      title: 'Had not eaten',
+      title: 'Had not eaten yet',
       explanation: 'They had not eaten yet at the time of the check-in.',
       severity: 0.3,
     }
