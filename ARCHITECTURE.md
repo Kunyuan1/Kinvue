@@ -80,10 +80,10 @@ told and collapsing them hides which. The four sentences, verbatim, are the ones
 
 | Reason | What the card says |
 |---|---|
-| Nothing measured | *"The camera ran but no reading came out of it, so today is not being compared."* |
-| Capture too short | *"The camera did not run for long enough to use, so today is not being compared."* |
-| Nothing rated it | *"The camera did not say how reliable this reading was, so today is not being compared."* |
-| Rated, and poor | *"The camera reading was not clear enough to use, so today is not being compared."* |
+| Nothing measured | *"The camera ran but no reading came out of it, so this check-in is not being compared."* |
+| Capture too short | *"The camera did not run for long enough to use, so this check-in is not being compared."* |
+| Nothing rated it | *"The camera did not say how reliable this reading was, so this check-in is not being compared."* |
+| Rated, and poor | *"The camera reading was not clear enough to use, so this check-in is not being compared."* |
 
 Each states its own consequence rather than describing the failure and stopping — the
 consequence is the part a caregiver acts on. The reason is picked in that order, which is
@@ -128,6 +128,26 @@ comparison, which is the part there is no evidence for.
 
 ---
 
+## Why no sentence on a card says "today"
+
+Every sentence the scorer writes — the summary, and each fired rule's title and
+explanation — is frozen into the record when the check-in is scored, and shown later under
+the card's date. So "Pulse was 95 bpm today" beneath "Sat, Sep 12" is false a week on, in
+the one place meant to be read literally (KV-93). None of them says when relative to now:
+the card's date says when, and the answer rules anchor to "the check-in" ("At the check-in
+they reported being in pain") so that a reported answer still reads as something said that
+day, not a standing fact. A test fails on any relative time word in any of them.
+
+The alternative was to keep the copy date-free and have the card add "today" when the
+check-in really was today in the person's zone — `localDateOf` can prove that. It reads
+more naturally on the one card most often looked at, minutes after the check-in, and that
+is its real advantage. It was not taken: every sentence would need a with-today and a
+without-today form, some of them composed in the renderer rather than in `core/`, and the
+date-free form is true on every card, including today's. New card copy follows the same
+rule — #100's "still learning" sentence included.
+
+---
+
 ## Why the answers may raise a flag on their own
 
 Decided in KV-10: **a day can read `elevated` on the answers alone, with nothing wrong on
@@ -160,9 +180,9 @@ that weight does two different things:
   amber than the drop alone. A test pins the band, both that it exists and that nothing
   below it moves.
 
-It also changes the card's headline on a day where it is the only thing that fired: "Today
-looks broadly normal, with one or two things worth noting" rather than "a normal day", as
-any fired rule does.
+It also changes the card's headline on a day where it is the only thing that fired: "Broadly
+normal, with one or two things worth noting" rather than "A normal day for them", as any
+fired rule does.
 
 This makes *one* answer visible, not the question. "Slept well" and "slept ok" still fire
 nothing, so a card with no sleep line cannot tell them apart — or from a record written

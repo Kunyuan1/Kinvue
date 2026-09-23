@@ -15,6 +15,14 @@ import { history, seededHistory, session } from './helpers'
 
 const ids = (a: Assessment): string[] => a.firedRules.map((r) => r.id)
 
+/**
+ * Words that say when relative to *now*. Every sentence the scorer writes is
+ * frozen into the record and shown under the check-in's date, so none may use
+ * one (KV-93).
+ */
+const RELATIVE_TIME =
+  /\b(today|tonight|tomorrow|yesterday|last night|this (morning|afternoon|evening|week)|right now|currently|earlier)\b/i
+
 describe('scoreSession', () => {
   it('is normal when nothing deviates', () => {
     const assessment = scoreSession(session(), history(5))
@@ -103,12 +111,12 @@ describe('scoreSession', () => {
     expect(assessment.flag).toBe('normal')
     expect(ids(assessment)).toEqual(['poor-sleep'])
     expect(assessment.firedRules[0]?.explanation).toBe(
-      'They reported sleeping poorly last night.',
+      'At the check-in they reported sleeping poorly the night before.',
     )
     // It fired, so the headline is the "worth noting" one rather than "a normal
     // day" — the same as any other rule that fires without flagging.
     expect(assessment.summary).toBe(
-      'Today looks broadly normal, with one or two things worth noting.',
+      'Broadly normal, with one or two things worth noting.',
     )
   })
 
@@ -174,6 +182,77 @@ describe('scoreSession', () => {
       expect(rest, `tipped a day whose other rules summed to ${rest.toFixed(4)}`)
         .toBeGreaterThanOrEqual(threshold - 0.05 - 1e-9)
     }
+  })
+
+  it('never says when relative to now, because the card it renders on is dated', () => {
+    // KV-93: explanations are frozen into the record, and "Pulse was 95 bpm
+    // today" under a header reading "Sat, Sep 12" is wrong a week later. The
+    // card's date says when; the answer rules anchor to "the check-in" instead.
+    // Four sessions: the pain and sleep rules suppress each other, and a z-rule
+    // only says "they usually vary by" against a baseline that does vary —
+    // `history(5)` does not, so its spread is floored and that clause never shows.
+    const vitals = { hrvRmssdMs: 15, pulseRateBpm: 90, breathingRateBrpm: 24 }
+    const varied = [72, 78, 69, 81, 75].map((pulse, i) =>
+      session({
+        id: `v-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { pulseRateBpm: pulse },
+      }),
+    )
+    const fired = [
+      scoreSession(
+        session({
+          vitals,
+          answers: { sleep: 'poorly', painReported: true, eatenToday: false, mood: 'low' },
+        }),
+        history(5),
+      ),
+      scoreSession(session({ answers: { sleep: 'poorly' } }), history(5)),
+      scoreSession(session({ answers: { painReported: true } }), history(5)),
+      scoreSession(session({ vitals: { pulseRateBpm: 95 } }), varied),
+    ].flatMap((a) => a.firedRules)
+
+    // The spread clause is actually in there, not just a rule that can carry it.
+    expect(fired.some((r) => /usually vary by/.test(r.explanation))).toBe(true)
+
+    // Every rule is covered, so a new one cannot slip past this.
+    expect(new Set(fired.map((r) => r.id))).toEqual(new Set(ALL_RULES.map((r) => r.id)))
+    for (const rule of fired) {
+      for (const text of [rule.title, rule.explanation]) {
+        expect(text, rule.id).not.toMatch(RELATIVE_TIME)
+      }
+    }
+  })
+
+  it('writes every summary without saying when relative to now', () => {
+    // KV-93: the summary is the first line on the card and is frozen into the
+    // record the same way, so "Today looks different" under "Sat, Sep 12" was the
+    // louder half of the problem. One session per summary the scorer can write.
+    const empty = {
+      pulseRateBpm: null,
+      breathingRateBrpm: null,
+      hrvRmssdMs: null,
+      hrvSdnnMs: null,
+    }
+    const summaries = [
+      scoreSession(session(), history(5)),
+      scoreSession(session({ answers: { mood: 'low' } }), history(5)),
+      scoreSession(
+        session({ answers: { eatenToday: false, painReported: true, mood: 'low' } }),
+        history(5),
+      ),
+      scoreSession(session(), history(MIN_BASELINE_SESSIONS - 1)),
+      scoreSession(session({ vitals: empty }), history(5)),
+      scoreSession(session({ vitals: { durationSec: MIN_CAPTURE_SECONDS - 1 } }), history(5)),
+      scoreSession(session({ vitals: { confidence: null } }), history(5)),
+      scoreSession(session({ vitals: { confidence: 0.2 } }), history(5)),
+    ].map((a) => a.summary)
+
+    expect(new Set(summaries).size).toBe(summaries.length)
+    for (const summary of summaries) expect(summary).not.toMatch(RELATIVE_TIME)
+    // The headline quotes the top rule's title, so the title has to read as a
+    // clause: "had not eaten yet" keeps the question's scope; "had not eaten" did not.
+    expect(summaries[2]).toBe('Different from their usual — had not eaten yet.')
   })
 
   it('orders fired rules by severity, strongest first', () => {
@@ -281,7 +360,7 @@ describe('scoreSession', () => {
     ]
 
     for (const s of cases) {
-      expect(scoreSession(s, history(5)).summary).toContain('today is not being compared')
+      expect(scoreSession(s, history(5)).summary).toContain('this check-in is not being compared')
     }
   })
 

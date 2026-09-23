@@ -36,12 +36,13 @@ export type { UnusableReason } from '../session/usable'
  */
 const UNUSABLE_SUMMARY: Record<UnusableReason, string> = {
   'nothing-measured':
-    'The camera ran but no reading came out of it, so today is not being compared.',
-  'too-short': 'The camera did not run for long enough to use, so today is not being compared.',
+    'The camera ran but no reading came out of it, so this check-in is not being compared.',
+  'too-short':
+    'The camera did not run for long enough to use, so this check-in is not being compared.',
   unrated:
-    'The camera did not say how reliable this reading was, so today is not being compared.',
+    'The camera did not say how reliable this reading was, so this check-in is not being compared.',
   'low-confidence':
-    'The camera reading was not clear enough to use, so today is not being compared.',
+    'The camera reading was not clear enough to use, so this check-in is not being compared.',
 }
 
 function fire(rules: readonly Rule[], session: SessionRecord, baseline: Baseline): FiredRule[] {
@@ -53,17 +54,17 @@ function fire(rules: readonly Rule[], session: SessionRecord, baseline: Baseline
 
 function summarise(flag: Assessment['flag'], fired: FiredRule[]): string {
   if (flag === 'insufficient-signal') {
-    return 'Not enough to say today — see the note below.'
+    return 'Not enough to say — see the note below.'
   }
   if (flag === 'normal') {
     return fired.length === 0
-      ? 'Today looks like a normal day for them.'
-      : 'Today looks broadly normal, with one or two things worth noting.'
+      ? 'A normal day for them.'
+      : 'Broadly normal, with one or two things worth noting.'
   }
   const top = fired[0]
   return top === undefined
-    ? 'Today looks different from usual.'
-    : `Today looks different from usual — ${top.title.toLowerCase()}.`
+    ? 'Different from their usual.'
+    : `Different from their usual — ${top.title.toLowerCase()}.`
 }
 
 /** True when anything this assessment says out loud rests on the baseline. */
