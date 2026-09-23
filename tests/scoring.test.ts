@@ -103,7 +103,7 @@ describe('scoreSession', () => {
     expect(assessment.flag).toBe('normal')
     expect(ids(assessment)).toEqual(['poor-sleep'])
     expect(assessment.firedRules[0]?.explanation).toBe(
-      'They reported sleeping poorly last night.',
+      'They reported sleeping poorly the night before the check-in.',
     )
     // It fired, so the headline is the "worth noting" one rather than "a normal
     // day" — the same as any other rule that fires without flagging.
@@ -173,6 +173,33 @@ describe('scoreSession', () => {
     for (const rest of tipped) {
       expect(rest, `tipped a day whose other rules summed to ${rest.toFixed(4)}`)
         .toBeGreaterThanOrEqual(threshold - 0.05 - 1e-9)
+    }
+  })
+
+  it('never says when relative to now, because the card it renders on is dated', () => {
+    // KV-93: explanations are frozen into the record, and "Pulse was 95 bpm
+    // today" under a header reading "Sat, Sep 12" is wrong a week later. The
+    // card's date says when; the answer rules anchor to "the check-in" instead.
+    // Two sessions, because the pain and sleep rules suppress each other.
+    const vitals = { hrvRmssdMs: 15, pulseRateBpm: 90, breathingRateBrpm: 24 }
+    const fired = [
+      scoreSession(
+        session({
+          vitals,
+          answers: { sleep: 'poorly', painReported: true, eatenToday: false, mood: 'low' },
+        }),
+        history(5),
+      ),
+      scoreSession(session({ answers: { sleep: 'poorly' } }), history(5)),
+      scoreSession(session({ answers: { painReported: true } }), history(5)),
+    ].flatMap((a) => a.firedRules)
+
+    // Every rule is covered, so a new one cannot slip past this.
+    expect(new Set(fired.map((r) => r.id))).toEqual(new Set(ALL_RULES.map((r) => r.id)))
+    for (const rule of fired) {
+      for (const text of [rule.title, rule.explanation]) {
+        expect(text, rule.id).not.toMatch(/\b(today|tonight|yesterday|last night|this morning)\b/i)
+      }
     }
   })
 

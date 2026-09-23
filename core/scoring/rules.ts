@@ -69,7 +69,7 @@ export const hrvDrop: Rule = {
       id: 'hrv-drop',
       title: 'Heart-rate variability below usual',
       explanation:
-        `HRV was ${round(value)} ms today, about ${round(drop * 100)}% below ` +
+        `HRV was ${round(value)} ms, about ${round(drop * 100)}% below ` +
         `their usual ${round(usual.mean)} ms.`,
       severity: 0.6 * clamp01(drop / HRV_DROP_FULL_SEVERITY_AT),
     }
@@ -224,7 +224,7 @@ function zRule({
         id,
         title,
         explanation:
-          `${noun} was ${round(value)} ${unit} today, above their ` +
+          `${noun} was ${round(value)} ${unit}, above their ` +
           `usual ${round(usual.mean)} ${unit}. ${howFarOut(spread, unit, singularUnit)}`,
         severity:
           peakSeverity *
@@ -270,7 +270,7 @@ export const poorSleepWithPain: Rule = {
     return {
       id: 'poor-sleep-with-pain',
       title: 'Poor sleep and pain reported together',
-      explanation: 'They reported sleeping poorly and being in pain today.',
+      explanation: 'At the check-in they reported sleeping poorly and being in pain.',
       severity: 0.45,
     }
   },
@@ -284,7 +284,7 @@ export const painReported: Rule = {
     return {
       id: 'pain-reported',
       title: 'Pain reported',
-      explanation: 'They reported being in pain today.',
+      explanation: 'At the check-in they reported being in pain.',
       severity: 0.25,
     }
   },
@@ -314,7 +314,7 @@ export const poorSleep: Rule = {
     return {
       id: 'poor-sleep',
       title: 'Slept poorly',
-      explanation: 'They reported sleeping poorly last night.',
+      explanation: 'They reported sleeping poorly the night before the check-in.',
       severity: 0.05,
     }
   },
@@ -326,7 +326,7 @@ export const notEaten: Rule = {
     if (session.answers.eatenToday) return null
     return {
       id: 'not-eaten',
-      title: 'Has not eaten today',
+      title: 'Had not eaten',
       explanation: 'They had not eaten yet at the time of the check-in.',
       severity: 0.3,
     }
@@ -340,7 +340,7 @@ export const lowMood: Rule = {
     return {
       id: 'low-mood',
       title: 'Low mood reported',
-      explanation: 'They described their mood as low today.',
+      explanation: 'At the check-in they described their mood as low.',
       severity: 0.2,
     }
   },
