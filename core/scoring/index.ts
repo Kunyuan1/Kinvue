@@ -13,6 +13,11 @@ export type { Rule, RuleContext } from './rules'
  */
 export const ELEVATED_SEVERITY_THRESHOLD = 0.6
 
+/** What an assessment's fired rules sum to: the number compared against the threshold. */
+export function totalSeverity(assessment: Assessment): number {
+  return assessment.firedRules.reduce((sum, rule) => sum + rule.severity, 0)
+}
+
 export {
   hasScorableVitals,
   MIN_CAPTURE_CONFIDENCE,

@@ -1,13 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import { MIN_BASELINE_SESSIONS, computeBaseline } from '@core/baseline'
-import { ELEVATED_SEVERITY_THRESHOLD, scoreSession, unusableReason } from '@core/scoring'
+import {
+  ELEVATED_SEVERITY_THRESHOLD,
+  scoreSession,
+  totalSeverity,
+  unusableReason,
+} from '@core/scoring'
 import {
   DEMO_DAY_CEILING,
   DEMO_PERSON_ID,
   seedDemoHistory,
   withSeededVerdicts,
 } from '@core/seed/persona'
-import type { Assessment } from '@core/session/types'
 import { session } from './helpers'
 
 /**
@@ -46,15 +50,12 @@ const seeded = seedDemoHistory(undefined, AT)
 /** Each seeded day with the verdict the dashboard renders for it. */
 const shown = withSeededVerdicts(seeded)
 
-const severityOf = (a: Assessment | undefined): number =>
-  a?.firedRules.reduce((total, r) => total + r.severity, 0) ?? 0
-
 // A plain map: a day with no verdict fails the first test below, by name,
 // rather than stopping the file from loading and taking every other test with it.
 const scored = shown.map((s, i) => ({
   day: i,
   assessment: s.assessment,
-  severity: severityOf(s.assessment),
+  severity: s.assessment === undefined ? 0 : totalSeverity(s.assessment),
 }))
 type ScoredDay = (typeof scored)[number]
 
@@ -157,10 +158,14 @@ describe('the seeded demo history', () => {
     // the dashboard would render.
     for (let seed = 1; seed <= 200; seed++) {
       const days = withSeededVerdicts(seedDemoHistory(undefined, AT, seed))
-      days.forEach((s, i) => {
-        const sum = severityOf(s.assessment)
-        expect(sum, `seed ${seed}, day ${i}`).toBeLessThan(DEMO_DAY_CEILING)
-        expect(s.assessment?.flag, `seed ${seed}, day ${i}`).not.toBe('elevated')
+      days.forEach(({ assessment }, i) => {
+        // A day with no verdict would read as 0 and "not elevated", and the
+        // ticket's whole guarantee would pass unchecked. Require one first.
+        const where = `seed ${seed}, day ${i}`
+        expect(assessment, where).toBeDefined()
+        if (assessment === undefined) return
+        expect(totalSeverity(assessment), where).toBeLessThan(DEMO_DAY_CEILING)
+        expect(assessment.flag, where).not.toBe('elevated')
       })
     }
   })
