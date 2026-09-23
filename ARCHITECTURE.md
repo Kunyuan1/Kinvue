@@ -590,6 +590,29 @@ be empty, so it would read "still learning their normal" for its first three che
 the one verdict built on live readings would stop being demonstrable. That is the cost the
 disclosure exists to make acceptable.
 
+**No seeded day is allowed near `elevated`** (KV-101). The demo is what someone new to the
+product sees, and an amber card on invented data is exactly the wrong first impression.
+That used to hold by luck: across 2000 seeds, 18.4% of fortnights had an elevated day, and
+the shipped seed's worst sat 0.03 below the line. Now a day whose rules sum to
+`DEMO_DAY_CEILING` (0.5) or more is drawn again, so it holds for every fortnight seeded
+from now on, whatever the seed. The ceiling is below the threshold on purpose: the redraw is
+judged by the scorer at seeding time, but the verdict by whichever scorer shows it later,
+and a 0.1 margin is what lets a demo seeded today survive a weight change tomorrow.
+Narrowing the demo's answer odds was measured too, and only halved the rate — the camera
+readings alone push some days over.
+
+**Two limits, both accepted.** A demo seeded *before* KV-101 keeps its old fortnight —
+`demo:seed` refuses to write into a history that has anything in it — so its worst day
+stays 0.03 below the line, and only a new install gets the ceiling. And the ceiling does
+more than stop amber cards: it stops signals *stacking*. No seeded day fires three rules
+(excluding `poor-sleep`), and poor sleep with pain never appears beside anything else,
+since 0.45 plus the lightest other rule is already over 0.5. So the demo shows at most two
+signals on a day — about one such day a fortnight counting `poor-sleep`, about one in three
+fortnights without it — and never the near-miss that sums several just under the
+threshold. The full combination the app exists to catch was already off
+limits — it would be `elevated` — and the demo's job is unremarkable weeks, so that cost is
+accepted rather than engineered around; a real capture is where the summing shows.
+
 **Seeded verdicts are computed when shown, not stored** (KV-103). `withSeededVerdicts`
 scores each seeded record as the dashboard renders it, the way `submit` scores a real
 check-in — against the records before it, never itself — so the fortnight reads as a

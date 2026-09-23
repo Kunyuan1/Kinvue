@@ -1,5 +1,5 @@
 import type { Assessment, SessionRecord, SleepAnswer, MoodAnswer } from '../session/types'
-import { scoreSession } from '../scoring'
+import { scoreSession, totalSeverity } from '../scoring'
 
 /**
  * A pre-seeded history for the demo persona (KV-8).
@@ -41,6 +41,25 @@ function rng(seed: number): () => number {
   }
 }
 
+/**
+ * No seeded day may have rules summing to this or more (KV-101). A day that
+ * does is drawn again.
+ *
+ * Below `ELEVATED_SEVERITY_THRESHOLD` (0.6) by a deliberate margin rather than
+ * at it. Verdicts are computed when shown (`withSeededVerdicts`), but the redraw
+ * happens when the fortnight is seeded — so a demo seeded under today's scorer
+ * is judged by every later one. At 0.6 the default fortnight kept a 0.03 margin
+ * and a later weight change could turn a stored demo amber; at 0.5 every seeded
+ * day starts at least 0.1 clear, twice the lightest rule.
+ */
+export const DEMO_DAY_CEILING = 0.5
+// Also, deliberately, exactly `notEaten` + `lowMood` (0.3 + 0.2), the heaviest
+// answers-only day without pain, so that day never appears in the demo. If
+// either weight moves, this ceiling no longer sits on that line; decide again.
+
+/** How many times a day may be redrawn before seeding gives up rather than keep it. */
+const MAX_REDRAWS = 100
+
 const SLEEP: readonly SleepAnswer[] = ['well', 'well', 'ok', 'ok', 'poorly']
 const MOOD: readonly MoodAnswer[] = ['good', 'good', 'ok', 'ok', 'low']
 
@@ -75,25 +94,28 @@ export function seedDemoHistory(
     //
     // This used to say "nothing here should trip a rule", which was never
     // true and nothing checked (KV-14). Rules fire on most of these days, and
-    // they should: a tenth of days go un-eaten, MOOD holds `low`, SLEEP holds
-    // `poorly`, and a wobble this wide clears `Z_FIRES_AT` against a short
+    // they should: MOOD holds `low`, SLEEP holds `poorly`, some days go
+    // un-eaten, and a wobble this wide clears `Z_FIRES_AT` against a short
     // baseline. A demo where nothing ever registers reads as a flat line, not
     // as a person.
     //
-    // `poorly` weighs lightly (`poor-sleep`, 0.05, KV-91) — more than the
-    // worst day's margin, which is why that margin is recorded in the test and
-    // not here. The heaviest risk is `poor-sleep-with-pain`: it needs
-    // `painReported` too, and that 3-in-20 draw never comes up in the default
-    // fortnight — one unlucky draw from firing.
+    // The odds below are what is *drawn*, not what the demo shows: the redraw
+    // after them rejects heavy days, and the heaviest answers most. Over 3600
+    // days, un-eaten is drawn 10% and kept 7.4%; pain drawn 15%, kept 13.4%.
+    // So narrowing a draw here buys no safety — the ceiling already provides
+    // it — and costs variety. How close the worst day comes is recorded in the
+    // test, as WORST_DAY_TODAY, and nowhere else.
     //
     // The property that matters is weaker and load-bearing: **no seeded day
     // may score `elevated`.** Unremarkable weeks, not an emergency in front of
-    // an audience. `tests/seed.test.ts` scores every day against its own
-    // predecessors and holds that; how close the worst day comes is recorded
-    // there, as WORST_DAY_TODAY, and nowhere else (#101).
+    // an audience. Until KV-101 that held by luck: across 2000 seeds, 18.4% of
+    // fortnights had an elevated day, and this seed's worst sat 0.03 below the
+    // line. Now it holds by construction — a day whose rules reach
+    // DEMO_DAY_CEILING is drawn again — and `tests/seed.test.ts` checks it
+    // across seeds, not only this one.
     const jitter = (spread: number): number => (r() - 0.5) * 2 * spread
 
-    out.push({
+    const draw = (): SessionRecord => ({
       id: `seed-${DEMO_PERSON_ID}-${i}`,
       personId: DEMO_PERSON_ID,
       capturedAt: at.toISOString(),
@@ -115,6 +137,22 @@ export function seedDemoHistory(
         painReported: r() > 0.85,
       },
     })
+
+    // Scored against the days already drawn, as `withSeededVerdicts` will score
+    // it when shown. Redraws continue the same PRNG stream, so the fortnight is
+    // still identical on every run.
+    let day = draw()
+    for (let redraws = 0; totalSeverity(scoreSession(day, out)) >= DEMO_DAY_CEILING; redraws++) {
+      if (redraws === MAX_REDRAWS) {
+        throw new Error(
+          `seed ${seed}: day ${days - i} (seed-${DEMO_PERSON_ID}-${i}) still reached ` +
+            `${DEMO_DAY_CEILING} after ${MAX_REDRAWS} redraws. Keeping it would put an ` +
+            'amber card in the demo.',
+        )
+      }
+      day = draw()
+    }
+    out.push(day)
   }
 
   return out
