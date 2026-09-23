@@ -422,20 +422,40 @@ is visible — someone watched it happen. From three hours away, a discarded one
 indistinguishable from silence, which is what #44 is about.
 
 **The failures that are not this.** No API key — or a key the service rejects — is setup;
-a camera another application is holding is hardware. Neither is about the person, neither
-is stored as a check-in, and each says so in its own words rather than arriving as a raw
-error string. `core/capture/failure.ts` tells them apart by a tag carried inside the
-message, because an Error crossing IPC keeps nothing else. The tag is also what keeps a
-*rejected* key from being reported as a busy camera: the SDK only discovers it at session
-start, so it arrives on the same path as a real camera fault and is told apart by the
-SDK's own error code, not by the call site guessing.
+a camera another application is holding is hardware; and an SDK failure a lost connection
+could explain, on a device that was offline when the capture started, is the connection
+(KV-104). None is about the person, none is stored as a check-in, and each says so in its
+own words rather than arriving as a raw error string. `core/capture/failure.ts` tells them
+apart by a tag carried inside the message, because an Error crossing IPC keeps nothing
+else. The tag is also what keeps a *rejected* key from being reported as a busy camera: the
+SDK only discovers it at session start, so it arrives on the same path as a real camera
+fault and is told apart by the SDK's own error code, not by the call site guessing.
 
-**An expired reading is neither of those.** It is a timer, and grouping it with setup and
-hardware hides the harder question: the person sat down, the camera measured well, they
-answered, and a clock ran out. Today that day is discarded, which is the very thing the
-paragraph above argues against. The TTL itself is right — a reading must not be stored
-beside answers about a different moment — but "these two cannot be one check-in" is not
-the same as "neither exists". Left open deliberately, and it belongs with #44.
+Being offline does not make every failure the connection. Only the codes a connection could
+produce are relabelled; a camera held by a video call is still the camera, offline or not,
+because naming the connection over it would send someone to reconnect only to be told about
+the camera on the next try. And a capture the SDK fails outright is not stored on any path,
+offline or not, whatever it had measured by then — that has not changed.
+
+**The connection also took one case from the other side, and that is an open cost.** A
+capture that starts with the device offline, runs to its ceiling and measures nothing a
+rule can read was stored as `insufficient-signal` until KV-104; it now reports the
+connection, and nothing is stored. The card it would have shown — "the camera ran but no
+reading came out" — named the wrong cause, on the one path where the SDK said nothing and
+the network was the likeliest reason. But that argues for a different card, not for losing
+the day, and the day is lost: the person sat down, the camera ran its whole ceiling, and
+because the capture now fails they are never asked the questions either, so the answers a
+stored `insufficient-signal` check-in would have carried are gone too. That is the thing
+this section argues against. It is left open with the expired reading below, and belongs
+with #44. A capture that ran to its ceiling and measured anything a rule can read is still
+stored and judged like any other.
+
+**An expired reading is none of those.** It is a timer, and grouping it with setup,
+hardware and the connection hides the harder question: the person sat down, the camera
+measured well, they answered, and a clock ran out. Today that day is discarded, which is the
+very thing this section argues against. The TTL itself is right — a reading must not
+be stored beside answers about a different moment — but "these two cannot be one check-in"
+is not the same as "neither exists". Left open deliberately, and it belongs with #44.
 
 ---
 
