@@ -6,6 +6,7 @@ import {
   MIN_CAPTURE_SECONDS,
   scoreSession,
   seededBaselineDisclosure,
+  seededDisclosureFor,
   unusableReason,
 } from '@core/scoring'
 import type { Assessment } from '@core/session/types'
@@ -709,6 +710,29 @@ describe('seededBaselineDisclosure', () => {
  * Exported so the capture can ask the scorer whether a reading would be
  * accepted, rather than restating the gates and drifting from them (KV-63).
  */
+describe('seededDisclosureFor', () => {
+  it('still discloses on a real capture compared against the seeded fortnight', () => {
+    // The card the sentence exists for: real readings, invented usual.
+    const real = session()
+    real.assessment = scoreSession(real, seededHistory(12))
+    expect(seededDisclosureFor(real)).not.toBeNull()
+    expect(seededDisclosureFor(real)).toBe(seededBaselineDisclosure(real.assessment))
+  })
+
+  it('shows nothing on a seeded card, whose own label already says so', () => {
+    // KV-103 scores the demo on display; without this, nine demo cards would
+    // each repeat the sentence and bury the one real card it is for.
+    const demo = session({ seeded: true })
+    demo.assessment = scoreSession(demo, seededHistory(12))
+    expect(seededBaselineDisclosure(demo.assessment)).not.toBeNull()
+    expect(seededDisclosureFor(demo)).toBeNull()
+  })
+
+  it('shows nothing on a card with no verdict', () => {
+    expect(seededDisclosureFor(session())).toBeNull()
+  })
+})
+
 describe('unusableReason', () => {
   it('accepts a capture the scorer would score', () => {
     expect(unusableReason(session().vitals)).toBeNull()

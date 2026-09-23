@@ -1,11 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { MIN_BASELINE_SESSIONS, computeBaseline } from '@core/baseline'
 import { ELEVATED_SEVERITY_THRESHOLD, scoreSession, unusableReason } from '@core/scoring'
-import { DEMO_PERSON_ID, seedDemoHistory } from '@core/seed/persona'
+import { DEMO_PERSON_ID, seedDemoHistory, withSeededVerdicts } from '@core/seed/persona'
+import type { Assessment } from '@core/session/types'
+import { session } from './helpers'
 
 /**
- * The demo persona's invented fortnight (KV-8), scored the way the dashboard
- * will score it (KV-14).
+ * The demo persona's invented fortnight (KV-8), as the dashboard shows it:
+ * stored without verdicts, and given the current scorer's verdict when shown
+ * (KV-103). These tests read what `withSeededVerdicts` hands the dashboard, not
+ * a sweep of their own (KV-14).
  *
  * `persona.ts` used to claim "nothing here should trip a rule". It does — see
  * the test below — and nothing checked, so a seed or weights change could have
@@ -35,23 +39,23 @@ const WORST_DAY_TODAY = 0.5668
  */
 const seeded = seedDemoHistory(undefined, AT)
 
-/**
- * Each seeded day scored against the days before it — what the dashboard would
- * show if it scored them. It does not yet: `demo:seed` stores seeded records
- * with no assessment. The path that does run today, a real capture scored
- * against the seeded fortnight, is `scoring.test.ts`'s `seededHistory(12)`.
- */
-const scored = seeded.map((s, i) => {
-  const assessment = scoreSession(s, seeded.slice(0, i))
-  return {
-    day: i,
-    assessment,
-    severity: assessment.firedRules.reduce((total, r) => total + r.severity, 0),
-  }
-})
+/** Each seeded day with the verdict the dashboard renders for it. */
+const shown = withSeededVerdicts(seeded)
+
+const severityOf = (a: Assessment | undefined): number =>
+  a?.firedRules.reduce((total, r) => total + r.severity, 0) ?? 0
+
+// A plain map: a day with no verdict fails the first test below, by name,
+// rather than stopping the file from loading and taking every other test with it.
+const scored = shown.map((s, i) => ({
+  day: i,
+  assessment: s.assessment,
+  severity: severityOf(s.assessment),
+}))
 type ScoredDay = (typeof scored)[number]
 
-const ruleIds = (d: ScoredDay): string => d.assessment.firedRules.map((r) => r.id).join(', ')
+const ruleIds = (d: ScoredDay): string =>
+  d.assessment?.firedRules.map((r) => r.id).join(', ') ?? '(no verdict)'
 
 /**
  * The worst day among those whose flag the severity sum actually decides. A
@@ -59,13 +63,50 @@ const ruleIds = (d: ScoredDay): string => d.assessment.firedRules.map((r) => r.i
  * whatever it sums to, so the threshold says nothing about it.
  */
 function worstDecidedDay(): ScoredDay {
-  const decided = scored.filter((d) => d.assessment.baselineSessions >= MIN_BASELINE_SESSIONS)
+  const decided = scored.filter(
+    (d) => (d.assessment?.baselineSessions ?? 0) >= MIN_BASELINE_SESSIONS,
+  )
   const [first, ...rest] = decided
   if (first === undefined) throw new Error('no seeded day has a mature baseline behind it')
   return rest.reduce((a, b) => (b.severity > a.severity ? b : a), first)
 }
 
 describe('the seeded demo history', () => {
+  it('shows every day with the verdict a real check-in on it would get', () => {
+    // KV-103: seeded records carry no verdict, and the dashboard rendered all
+    // twelve as "Not enough to say". Each is now scored as it is shown, against
+    // the days before it and never itself — the rule `submit` follows.
+    shown.forEach((s, i) => {
+      expect(s.assessment, `day ${i}`).toEqual(scoreSession(seeded[i]!, seeded.slice(0, i)))
+    })
+  })
+
+  it('stores no verdict, so none can go stale', () => {
+    // A seeded verdict is a view of the current rules, not a fact about a day.
+    // Stored, it would keep showing the old scorer after a weight moved.
+    for (const s of seeded) expect(s.assessment, s.id).toBeUndefined()
+  })
+
+  it('replaces a verdict a seeded record already carries, and leaves real ones alone', () => {
+    // An install seeded before KV-103 has no verdicts; one seeded by a build
+    // that stored them could have stale ones. Either way the current scorer
+    // decides. A real check-in's stored verdict is history and is never redone.
+    const stale = seeded.map((s) => ({ ...s, assessment: { ...shown[0]!.assessment! } }))
+    const real = session({ id: 'real', capturedAt: '2026-09-21T09:00:00.000Z' })
+    real.assessment = { ...shown[0]!.assessment!, summary: 'stored when it was scored' }
+
+    const out = withSeededVerdicts([...stale, real])
+
+    expect(out.slice(0, -1).map((s) => s.assessment)).toEqual(shown.map((s) => s.assessment))
+    expect(out.at(-1)).toBe(real)
+  })
+
+  it('keeps the order it was given', () => {
+    // The dashboard reverses what it is handed; scoring sorts by time internally.
+    const reversed = [...seeded].reverse()
+    expect(withSeededVerdicts(reversed).map((s) => s.id)).toEqual(reversed.map((s) => s.id))
+  })
+
   it('never scores a day as elevated', () => {
     // The property the demo actually needs, and the one `persona.ts` now
     // claims. The stronger reading of the old comment — that no rule fires at
@@ -78,7 +119,7 @@ describe('the seeded demo history', () => {
     // what would make it look like an emergency.
     for (const d of scored) {
       expect(
-        d.assessment.flag,
+        d.assessment?.flag,
         `day ${d.day} summed to ${d.severity.toFixed(4)}; rules [${ruleIds(d)}]`,
       ).not.toBe('elevated')
     }
@@ -121,7 +162,7 @@ describe('the seeded demo history', () => {
     // day rather than derived from the constant, so that raising the constant
     // — or shortening the default fortnight — fails here instead of quietly
     // greying out more of the demo.
-    const learning = scored.filter((d) => d.assessment.flag === 'insufficient-signal')
+    const learning = scored.filter((d) => d.assessment?.flag === 'insufficient-signal')
     expect(learning.map((d) => d.day)).toEqual([0, 1, 2])
 
     const baseline = computeBaseline(seeded.slice(0, -1))
@@ -145,6 +186,47 @@ describe('the seeded demo history', () => {
     expect(january.map((s) => s.answers)).toEqual(seeded.map((s) => s.answers))
     expect(january.map((s) => s.timeZone)).toEqual(seeded.map((s) => s.timeZone))
     expect(january.map((s) => s.capturedAt)).not.toEqual(seeded.map((s) => s.capturedAt))
+    // The verdict is the one thing computed rather than drawn. A rule that ever
+    // reads the date would make January's Margaret a different person.
+    expect(withSeededVerdicts(january).map((s) => s.assessment)).toEqual(
+      shown.map((s) => s.assessment),
+    )
+  })
+
+  it('draws exactly this fortnight', () => {
+    // Every other determinism test compares the generator with another run of
+    // itself, so they agree whatever it consumes. These are literals: anything
+    // that starts drawing from the PRNG — scoring included — moves them. A seed
+    // change fails here too, deliberately; update the literals with it.
+    expect(seeded.map((s) => s.vitals.pulseRateBpm)).toEqual([
+      70, 71, 68, 73, 69, 69, 71, 71, 74, 74, 72, 75,
+    ])
+    expect(seeded.map((s) => s.vitals.breathingRateBrpm)).toEqual([
+      15, 16, 15, 15, 14, 14, 16, 16, 15, 15, 16, 14,
+    ])
+    expect(seeded.map((s) => s.vitals.hrvRmssdMs)).toEqual([
+      30, 32, 34, 33, 36, 33, 35, 35, 31, 34, 34, 34,
+    ])
+    expect(
+      seeded.map(({ answers: a }) =>
+        [a.sleep, a.mood, a.eatenToday ? 'ate' : 'not-eaten', a.painReported ? 'pain' : '']
+          .filter(Boolean)
+          .join(' '),
+      ),
+    ).toEqual([
+      'well good not-eaten',
+      'ok ok not-eaten',
+      'poorly good ate',
+      'ok ok ate',
+      'well good ate',
+      'well good ate',
+      'ok low ate',
+      'well good ate',
+      'well good not-eaten',
+      'poorly good ate',
+      'poorly low ate',
+      'well good ate',
+    ])
   })
 
   it('marks every record as seeded and as the demo person', () => {

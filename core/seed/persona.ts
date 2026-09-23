@@ -1,4 +1,5 @@
-import type { SessionRecord, SleepAnswer, MoodAnswer } from '../session/types'
+import type { Assessment, SessionRecord, SleepAnswer, MoodAnswer } from '../session/types'
+import { scoreSession } from '../scoring'
 
 /**
  * A pre-seeded history for the demo persona (KV-8).
@@ -117,4 +118,31 @@ export function seedDemoHistory(
   }
 
   return out
+}
+
+/**
+ * The records to show, with every seeded one carrying the verdict the scorer
+ * gives it *now* (KV-103). Real records are returned untouched.
+ *
+ * Seeded records are stored without a verdict and scored here, when they are
+ * shown, rather than when they are written. A real check-in's stored verdict is
+ * a fact about a day and is never rescored. A seeded record is generated data,
+ * and its verdict is a view of the current rules: stored, it would go stale the
+ * first time a weight moved, and the demo would show a scorer the app no longer
+ * has. Scoring on display also reaches installs that seeded before this existed,
+ * which a stored verdict could not without a migration.
+ *
+ * Each seeded record is scored the way `submit` scores a real one — against the
+ * records before it in time, never itself. Input order is kept.
+ */
+export function withSeededVerdicts(records: readonly SessionRecord[]): SessionRecord[] {
+  const byTime = [...records].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
+  const verdicts = new Map<string, Assessment>()
+  byTime.forEach((record, i) => {
+    if (record.seeded === true) verdicts.set(record.id, scoreSession(record, byTime.slice(0, i)))
+  })
+  return records.map((record) => {
+    const assessment = verdicts.get(record.id)
+    return assessment === undefined ? record : { ...record, assessment }
+  })
 }

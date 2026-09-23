@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
-import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
+import { DEMO_PERSON_ID, DEMO_PERSON_NAME, withSeededVerdicts } from '@core/seed/persona'
 import { hasScorableVitals } from '@core/scoring'
 import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
 import {
@@ -143,7 +143,9 @@ export default function App(): React.JSX.Element {
     await refresh()
   }
 
-  const newest = sessions === null ? [] : [...sessions].reverse()
+  // Seeded days are scored here, as they are shown, so the demo always shows the
+  // current scorer's verdict (KV-103). Real check-ins keep the one they were given.
+  const newest = sessions === null ? [] : withSeededVerdicts(sessions).reverse()
 
   /**
    * Started here, on the press, rather than inside the capture screen. Opening
