@@ -1,5 +1,11 @@
 import { MIN_BASELINE_SESSIONS, type Baseline, type Stat } from '../baseline'
-import type { FiredRule, SessionRecord } from '../session/types'
+import type {
+  ComparedMetric,
+  FiredRule,
+  SessionRecord,
+  UncomparedMetric,
+  Vitals,
+} from '../session/types'
 
 /**
  * Every rule is a small, named, independently testable function. A rule that
@@ -53,6 +59,39 @@ const HRV_DROP_FULL_SEVERITY_AT = 0.5
  */
 const canBeCalledUsual = (usual: Stat | null): usual is Stat =>
   usual !== null && usual.n >= MIN_BASELINE_SESSIONS
+
+/**
+ * Each metric a rule compares, where its reading and its usual are found.
+ *
+ * A rule comparing a new metric belongs here too, or a reading of it with no
+ * usual would go unnamed and a card could say "normal" without having looked
+ * (KV-87).
+ */
+const COMPARED: readonly {
+  metric: ComparedMetric
+  reading: (v: Vitals) => number | null
+  usual: (b: Baseline) => Stat | null
+}[] = [
+  { metric: 'pulse', reading: (v) => v.pulseRateBpm, usual: (b) => b.pulseRateBpm },
+  { metric: 'breathing', reading: (v) => v.breathingRateBrpm, usual: (b) => b.breathingRateBrpm },
+  { metric: 'hrv', reading: (v) => v.hrvRmssdMs, usual: (b) => b.hrvRmssdMs },
+]
+
+/**
+ * The metrics this check-in measured that had no usual to compare them with
+ * (KV-87) — the same `canBeCalledUsual` that stops their rules firing, asked
+ * from the other side. A metric that produced nothing is not listed: it is not
+ * a gap in the comparison, just a reading that did not happen.
+ */
+export function uncomparedMetrics(session: SessionRecord, baseline: Baseline): UncomparedMetric[] {
+  return COMPARED.filter(
+    ({ reading, usual }) => reading(session.vitals) !== null && !canBeCalledUsual(usual(baseline)),
+  ).map(({ metric, usual }) => ({
+    metric,
+    readings: usual(baseline)?.n ?? 0,
+    needed: MIN_BASELINE_SESSIONS,
+  }))
+}
 
 export const hrvDrop: Rule = {
   id: 'hrv-drop',

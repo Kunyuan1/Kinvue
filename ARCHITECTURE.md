@@ -115,8 +115,9 @@ drop nor counts in the capture's confidence, which would otherwise delete a real
 breathing rate or carry them into a rule on HRV's number. Whether a metric whose own
 confidence is *poor* should be dropped too is a separate, threshold question, and still open.
 
-Until #87 names it on the card, a dropped rate shows as `—`, the same as one the camera never
-produced. And it compounds, through the per-metric gate below (KV-71): on hardware where
+A dropped rate shows as `—`, the same as one the camera never produced, and #87 does not
+name it either: it was not measured, so it is not a gap in the comparison. That is accepted,
+not solved — the mirror of inventing a number is silently erasing one. And it compounds, through the per-metric gate below (KV-71): on hardware where
 breathing habitually arrives unrated beside a rated pulse, breathing's own `n` never reaches
 `MIN_BASELINE_SESSIONS`, so breathing is never compared at all, and nothing on screen says
 so. That is the intended outcome — a usual should not be built from readings nothing vouched
@@ -153,6 +154,36 @@ manufactures the deviation it is meant to damp.
 
 So the answer rules still fire and the reading is still shown. What is withheld is the
 comparison, which is the part there is no evidence for.
+
+**What KV-71 did not reach was the verdict** (KV-87). `flag` is a sum of the rules that
+fired, and a rule held back contributes nothing — so a card read *"Looks normal — A normal
+day for them"* on a real check-in whose pulse was 101.5 against a usual of 82, because pulse
+had two readings of its own and three are needed. The rule was right not to fire; "Looks
+normal" is still an active claim that the check-in was compared with their usual, and for
+pulse it was not. That is the reassuring-and-wrong direction, reached by suppressing a
+comparison rather than by making one. And it is the ordinary state of a young baseline on
+this hardware, not a corner: pulse arrived in three captures of five and HRV in none.
+
+So a metric **measured at this check-in** with no usual — the same `canBeCalledUsual` that
+holds its rule back, asked from the other side — changes the verdict:
+
+| Would have been | Now | The card says |
+|---|---|---|
+| `normal` | `insufficient-signal` | which metric, how many readings it had of how many needed, and that the check-in is therefore not being called normal |
+| `elevated` | `elevated`, unchanged | the same gap, without the last clause |
+
+`elevated` stands because it rests on what *was* compared: withholding it would hide an
+answers-only amber — pain and no food — whenever pulse happened to be thin, trading a real
+signal for a missing one. A metric that produced **nothing** at this check-in changes
+nothing; it is not a gap in the comparison. An unusable capture or a baseline still learning
+writes nothing either, since its summary already says nothing was compared.
+
+`Assessment.uncomparedMetrics` stores the metric and the two counts, and
+`uncomparedDisclosure` composes the sentence where the card is shown, as the seeded
+disclosure is — the wording can change without rescoring history. A verdict scored before
+KV-87 has no such field, and says that it was not recorded rather than reading as "none".
+A rule comparing a new metric has to be listed in `COMPARED` beside the rules, or a reading
+of it with no usual would go unnamed.
 
 ---
 

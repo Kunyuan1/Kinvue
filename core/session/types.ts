@@ -109,6 +109,22 @@ export type Flag =
   /** Not enough usable signal, or not enough history, to say either way. */
   | 'insufficient-signal'
 
+/** The metrics a rule compares against their usual. `hrvSdnnMs` is not one. */
+export type ComparedMetric = 'pulse' | 'breathing' | 'hrv'
+
+/**
+ * A metric measured at this check-in that had no usual to compare it with
+ * (KV-87): its own history was shorter than the scorer needs. The counts are
+ * stored, not the sentence, so the wording can change without rescoring.
+ */
+export interface UncomparedMetric {
+  metric: ComparedMetric
+  /** Readings of this metric the baseline held. */
+  readings: number
+  /** Readings it needed — `MIN_BASELINE_SESSIONS` when this was scored. */
+  needed: number
+}
+
 export interface Assessment {
   flag: Flag
   /** Every rule that fired, highest severity first. Never summarised away. */
@@ -128,6 +144,17 @@ export interface Assessment {
    * "unknown", not as "none": absent means nobody asked the question.
    */
   baselineSeededSessions?: number
+  /**
+   * Metrics measured at this check-in that could not be compared, because
+   * their own history was too short (KV-87). Empty when every measured metric
+   * was compared.
+   *
+   * Written only when the check-in was compared against a baseline at all —
+   * not for an unusable capture, nor while the baseline is still learning,
+   * where the summary already says nothing was compared. Absent on a verdict
+   * scored before KV-87, and that reads as unknown, not as "none".
+   */
+  uncomparedMetrics?: UncomparedMetric[]
 }
 
 export interface SessionRecord {

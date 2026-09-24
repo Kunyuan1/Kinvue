@@ -1,4 +1,4 @@
-import { seededDisclosureFor } from '@core/scoring'
+import { seededDisclosureFor, uncomparedDisclosure } from '@core/scoring'
 import type { Flag, SessionRecord } from '@core/session/types'
 
 const FLAG_LABEL: Record<Flag, string> = {
@@ -25,6 +25,9 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
   // only where something on this card actually leans on the baseline (KV-53),
   // and not on a seeded card, whose own label already says so (KV-103).
   const seededNote = seededDisclosureFor(session)
+  // A metric measured at this check-in and never compared (KV-87). Above the
+  // seeded note: on a withheld card it is the reason for the verdict.
+  const uncomparedNote = assessment === undefined ? null : uncomparedDisclosure(assessment)
   // The day and time where the person was, not where whoever is reading this
   // happens to be (KV-28). Formatted in the recorded zone directly — turning it
   // into a date string and parsing that back would depend on the locale's
@@ -55,6 +58,9 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
         <div>
           <p className={`font-medium ${FLAG_COLOR[flag]}`}>{FLAG_LABEL[flag]}</p>
           <p className="text-sm text-(--color-muted)">{assessment?.summary}</p>
+          {uncomparedNote !== null && (
+            <p className="mt-1 text-sm text-(--color-muted)">{uncomparedNote}</p>
+          )}
           {seededNote !== null && (
             <p className="mt-1 text-sm text-(--color-muted)">{seededNote}</p>
           )}

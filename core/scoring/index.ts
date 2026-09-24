@@ -1,9 +1,14 @@
 import { computeBaseline, MIN_BASELINE_SESSIONS, type Baseline } from '../baseline'
-import type { Assessment, FiredRule, SessionRecord } from '../session/types'
+import type {
+  Assessment,
+  ComparedMetric,
+  FiredRule,
+  SessionRecord,
+} from '../session/types'
 import { unusableReason, type UnusableReason } from '../session/usable'
-import { ALL_RULES, BASELINE_RULE_IDS, type Rule } from './rules'
+import { ALL_RULES, BASELINE_RULE_IDS, uncomparedMetrics, type Rule } from './rules'
 
-export { ALL_RULES, BASELINE_RULE_IDS } from './rules'
+export { ALL_RULES, BASELINE_RULE_IDS, uncomparedMetrics } from './rules'
 export type { Rule, RuleContext } from './rules'
 
 /**
@@ -70,14 +75,13 @@ function summarise(flag: Assessment['flag'], fired: FiredRule[]): string {
 /** True when anything this assessment says out loud rests on the baseline. */
 function restsOnBaseline(assessment: Assessment): boolean {
   if (assessment.flag !== 'insufficient-signal') return true
-  // **Unreachable for anything scored from now on, and load-bearing anyway.**
-  // Since KV-71 no withheld verdict this scorer produces carries a rule that
-  // quotes "their usual": the unusable-capture path fires nothing, and a rule
-  // with no usual to quote does not fire. Records scored *before* KV-71 can
-  // carry one, and those are exactly what reaches this line — the disclosure
-  // is composed where the card is shown, not frozen into the record, so old
-  // assessments are read by today's code. Deleting this would silently drop
-  // the seeded disclosure from stored history.
+  // Two ways a withheld verdict carries a rule that quotes "their usual".
+  // Since KV-87, a day whose compared metrics fired lightly is withheld when
+  // another measured metric had no usual — breathing's rule is on the card,
+  // and the usual it quotes may be seeded. And records scored before KV-71
+  // can carry one: the disclosure is composed where the card is shown, not
+  // frozen into the record, so old assessments are read by today's code.
+  // Deleting this would silently drop the seeded disclosure from both.
   return assessment.firedRules.some((r) => BASELINE_RULE_IDS.has(r.id))
 }
 
@@ -110,6 +114,59 @@ export function seededBaselineDisclosure(assessment: Assessment): string | null 
         'comparison were invented, not measured.'
     : `Their usual here is partly seeded demo data — ${seeded} of the ${sessions} ` +
         'check-ins behind this comparison were invented, not measured.'
+}
+
+const METRIC_NAME: Record<ComparedMetric, string> = {
+  pulse: 'pulse',
+  breathing: 'breathing rate',
+  hrv: 'HRV',
+}
+
+const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
+
+/** "a", "a and b", "a, b and c". */
+function listOf(words: readonly string[]): string {
+  if (words.length <= 1) return words.join('')
+  return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1] ?? ''}`
+}
+
+/**
+ * The sentence naming a metric that was measured but never compared, or null
+ * (KV-87).
+ *
+ * "Looks normal" is an active claim that the check-in was checked against
+ * their usual. A pulse of 102 against a usual of 82 said nothing on a card
+ * reading "A normal day for them" because pulse had two earlier readings and
+ * three are needed — the rule correctly held back, and the verdict did not
+ * notice. So a would-be `normal` with such a metric is withheld, and this
+ * says which metric and why. An `elevated` verdict stands, since it rests on
+ * what *was* compared, and still names the gap.
+ *
+ * Composed from the stored counts where the card is shown, like the seeded
+ * disclosure, so the wording can change without rescoring. No relative time
+ * words (KV-93): "at this check-in", never "today".
+ */
+export function uncomparedDisclosure(assessment: Assessment): string | null {
+  const { flag, uncomparedMetrics: gaps } = assessment
+  if (gaps === undefined) {
+    // Only a verdict that claims a comparison has anything unknown to admit.
+    return flag === 'insufficient-signal'
+      ? null
+      : 'Whether every reading at this check-in was compared with their usual was not ' +
+          'recorded when it was scored.'
+  }
+  if (gaps.length === 0) return null
+
+  const names = gaps.map((g) => METRIC_NAME[g.metric])
+  const counts: string[] = gaps.map((g, i) =>
+    i === 0
+      ? `${gaps.length === 1 ? 'it' : names[i]} had ${g.readings} of the ${g.needed} readings needed to know it`
+      : `${names[i]} had ${g.readings} of ${g.needed}`,
+  )
+  const head =
+    `${capitalise(listOf(names))} ${gaps.length === 1 ? 'was' : 'were'} measured at this ` +
+    `check-in but not compared with their usual: ${listOf(counts)}.`
+  return flag === 'insufficient-signal' ? `${head} So this check-in is not being called normal.` : head
 }
 
 /**
@@ -182,7 +239,18 @@ export function scoreSession(
   }
 
   const total = fired.reduce((sum, r) => sum + r.severity, 0)
-  const flag = total >= ELEVATED_SEVERITY_THRESHOLD ? 'elevated' : 'normal'
+  const uncompared = uncomparedMetrics(session, baseline)
+  // A would-be `normal` with a measured metric nobody compared is withheld
+  // (KV-87): "normal" would claim a check that did not happen for that metric,
+  // which is the reassuring-and-wrong direction. `elevated` stands — it rests
+  // on what was compared, and withholding it would hide a real signal to cover
+  // a missing one. Either way `uncomparedDisclosure` names the gap.
+  const flag: Assessment['flag'] =
+    total >= ELEVATED_SEVERITY_THRESHOLD
+      ? 'elevated'
+      : uncompared.length > 0
+        ? 'insufficient-signal'
+        : 'normal'
 
   return {
     flag,
@@ -190,5 +258,6 @@ export function scoreSession(
     summary: summarise(flag, fired),
     baselineSessions: baseline.sessions,
     baselineSeededSessions: baseline.seededSessions,
+    uncomparedMetrics: uncompared,
   }
 }
