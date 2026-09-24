@@ -2,7 +2,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import App from '@renderer/App'
-import { UnreachableStoreError, UnreadableStoreError } from '@core/session/store'
+import {
+  NewerStoreError,
+  UnreachableStoreError,
+  UnreadableStoreError,
+} from '@core/session/store'
 import type { SessionRecord } from '@core/session/types'
 import { session } from './helpers'
 
@@ -169,15 +173,84 @@ describe('starting a new history (KV-98)', () => {
     await screen.findByText(/Looks normal|Not enough to say/)
     expect(screen.queryByText(/new, empty history/)).toBeNull()
     expect(screen.queryByText(/could not be read/)).toBeNull()
+    // A button that fired and did nothing says so (KV-98 review).
+    expect(screen.getByText('The history could be read after all, so nothing was moved.'))
+      .toBeTruthy()
   })
 
-  it('says so, and moves nothing it has not been told about, when starting one fails', async () => {
+  it('keeps the way out on screen when a press fails, so a held file can be tried again', async () => {
+    // Before the review this took the button away: the press's own error was
+    // untagged, so the box stopped being "unreadable" and became a dead end.
     listSessions.mockRejectedValue(unreadable())
-    startNewHistory.mockRejectedValue(fromMain(new Error('EPERM'), 'sessions:startNewHistory'))
+    startNewHistory
+      .mockRejectedValueOnce(fromMain(new Error('EBUSY'), 'sessions:startNewHistory'))
+      .mockResolvedValueOnce(`${PATH}.unreadable-2026-09-24`)
+    render(<App />)
+
+    fireEvent.click(await screen.findByText('Start a new history'))
+    expect(await screen.findByText(/could not be set aside just now, so nothing was moved/))
+      .toBeTruthy()
+
+    listSessions.mockResolvedValue([])
+    fireEvent.click(screen.getByText('Start a new history'))
+    expect(await screen.findByText(/kept, unchanged, as .*unreadable-2026-09-24/)).toBeTruthy()
+  })
+
+  it('offers no button when the press finds the file is from a newer version', async () => {
+    listSessions.mockRejectedValue(unreadable())
+    startNewHistory.mockRejectedValue(
+      fromMain(new NewerStoreError(PATH, 2), 'sessions:startNewHistory'),
+    )
     render(<App />)
 
     fireEvent.click(await screen.findByText('Start a new history'))
 
-    expect(await screen.findByText('A new history could not be started.')).toBeTruthy()
+    expect(await screen.findByText(/written by a newer version of Kinvue/)).toBeTruthy()
+    expect(screen.queryByText('Start a new history')).toBeNull()
+  })
+
+  it('still names where the old file went when the reload after it fails', async () => {
+    listSessions
+      .mockRejectedValueOnce(unreadable())
+      .mockRejectedValueOnce(fromMain(new Error('odd'), 'sessions:list'))
+    startNewHistory.mockResolvedValue(`${PATH}.unreadable-2026-09-24`)
+    render(<App />)
+
+    fireEvent.click(await screen.findByText('Start a new history'))
+
+    expect(
+      await screen.findByText(/old file was kept, unchanged, as .*unreadable-2026-09-24\. The list/),
+    ).toBeTruthy()
+  })
+
+  it('cannot be pressed twice while the first press is still running', async () => {
+    listSessions.mockRejectedValueOnce(unreadable()).mockResolvedValue([])
+    let finish: (value: string) => void = () => undefined
+    startNewHistory.mockReturnValue(new Promise<string>((resolve) => (finish = resolve)))
+    render(<App />)
+
+    const button = await screen.findByText('Start a new history')
+    fireEvent.click(button)
+    fireEvent.click(button)
+    expect(startNewHistory).toHaveBeenCalledTimes(1)
+    expect((button as HTMLButtonElement).disabled).toBe(true)
+
+    finish(`${PATH}.unreadable-2026-09-24`)
+    await screen.findByText(/new, empty history was started/)
+  })
+
+  it('clears the notice once the list is loaded again later', async () => {
+    listSessions.mockRejectedValueOnce(unreadable()).mockResolvedValue([])
+    startNewHistory.mockResolvedValue(`${PATH}.unreadable-2026-09-24`)
+    seedDemo.mockResolvedValue(12)
+    render(<App />)
+
+    fireEvent.click(await screen.findByText('Start a new history'))
+    await screen.findByText(/new, empty history was started/)
+
+    listSessions.mockResolvedValue([session({ id: 'seeded' })])
+    fireEvent.click(screen.getByText('Seed demo history'))
+    await screen.findByText(/Looks normal|Not enough to say/)
+    expect(screen.queryByText(/new, empty history was started/)).toBeNull()
   })
 })

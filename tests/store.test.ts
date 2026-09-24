@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   createJsonSessionStore,
+  NewerStoreError,
   UnreachableStoreError,
   UnreadableStoreError,
 } from '@core/session/store'
@@ -427,5 +428,83 @@ describe('starting a new history when the old one cannot be read (KV-98)', () =>
     const thrown = await createJsonSessionStore(path).list('p1').catch((e: unknown) => e)
     expect(String(thrown)).toMatch(/Nothing has been changed\.$/)
     expect(String(thrown)).not.toMatch(/move the file/i)
+  })
+})
+
+describe('what starting a new history will not do (KV-98 review)', () => {
+  const ON = new Date(2026, 8, 22, 10, 0)
+
+  it('never sets aside a history written by a newer version of the app', async () => {
+    // A whole history, not a broken one. Setting it aside would strand it: the
+    // newer version, installed again, would find no file and start from nothing.
+    const { path } = await storeIn()
+    const newer = JSON.stringify({ version: 2, sessions: [] })
+    await writeFile(path, newer, 'utf8')
+    const store = createJsonSessionStore(path, () => ON)
+
+    const listed = await store.list('test-person').catch((e: unknown) => e)
+    expect(listed).toBeInstanceOf(NewerStoreError)
+    expect(String(listed)).toMatch(/written by a newer version of Kinvue \(file version 2/)
+    expect(classifyDashboardError(listed)).toBe('store-newer')
+    expect(classifySubmitError(listed)).toBe('store-unreadable')
+
+    await expect(store.startNewHistory()).rejects.toBeInstanceOf(NewerStoreError)
+    expect(await readFile(path, 'utf8')).toBe(newer)
+  })
+
+  it('still sets aside a file whose version is broken rather than newer', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, JSON.stringify({ version: 'one', sessions: [] }), 'utf8')
+    await expect(createJsonSessionStore(path, () => ON).startNewHistory()).resolves.toMatch(
+      /\.unreadable-2026-09-22$/,
+    )
+  })
+
+  it('never overwrites a file already using the name, even one it did not put there', async () => {
+    const { path } = await storeIn()
+    await writeFile(`${path}.unreadable-2026-09-22`, 'someone else', 'utf8')
+    await writeFile(path, 'broken', 'utf8')
+
+    const aside = await createJsonSessionStore(path, () => ON).startNewHistory()
+
+    expect(aside).toBe(`${path}.unreadable-2026-09-22-2`)
+    expect(await readFile(`${path}.unreadable-2026-09-22`, 'utf8')).toBe('someone else')
+  })
+
+  it('gives up with a sentence, not a hang, when every name for the day is taken', async () => {
+    const { path } = await storeIn()
+    await writeFile(`${path}.unreadable-2026-09-22`, 'x', 'utf8')
+    for (let n = 2; n <= 100; n++) await writeFile(`${path}.unreadable-2026-09-22-${String(n)}`, 'x', 'utf8')
+    await writeFile(path, 'broken', 'utf8')
+
+    await expect(createJsonSessionStore(path, () => ON).startNewHistory()).rejects.toThrow(
+      /could not be set aside.*Nothing has been changed/,
+    )
+    expect(await readFile(path, 'utf8')).toBe('broken')
+  })
+
+  it('names the file for the local day, not the UTC one', async () => {
+    // 23:30 local on the 23rd is the 24th somewhere west of here in UTC terms;
+    // the person pressing the button is on the 23rd.
+    const { path } = await storeIn()
+    await writeFile(path, 'broken', 'utf8')
+    const late = new Date(2026, 8, 23, 23, 30)
+    await expect(createJsonSessionStore(path, () => late).startNewHistory()).resolves.toMatch(
+      /\.unreadable-2026-09-23$/,
+    )
+  })
+
+  it('leaves a note beside the set-aside files, once, that survives the notice on screen', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path, () => ON)
+    await writeFile(path, 'broken', 'utf8')
+    await store.startNewHistory()
+    const note = `${path}.unreadable-README.txt`
+    expect(await readFile(note, 'utf8')).toMatch(/Kinvue could not\sread/)
+
+    await writeFile(note, 'edited by someone', 'utf8')
+    await writeFile(path, 'broken again', 'utf8')
+    await store.startNewHistory()
+    expect(await readFile(note, 'utf8')).toBe('edited by someone')
   })
 })

@@ -423,9 +423,11 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   than treated as an empty history, because `append` is read-modify-write and "empty" would
   rename one record over the original. Until a new history is started, no history is shown
   and no check-in can be stored — a missing file and a zero-byte file are both still the
-  ordinary first run. The dashboard offers **Start a new history**, which renames the file
-  beside itself (`sessions.json.unreadable-<date>`), never deletes it, and refuses to move a
-  file that has become readable again (KV-98). The reasoning is in `ARCHITECTURE.md`.
+  ordinary first run. The dashboard offers **Start a new history**, which sets the file aside
+  beside itself (`sessions.json.unreadable-<date>`) without ever deleting it or overwriting an
+  earlier one, and refuses to move a file that has become readable again (KV-98). A history
+  written by a newer version of Kinvue is never set aside — the newer version reads it. The
+  reasoning is in `ARCHITECTURE.md`.
 - **Downgrading strands the history.** The store file's `version` is read, so a build that
   writes version *n* refuses a file written by version *n+1*. Bumping it is a one-way door
   until #30 designs a migration.

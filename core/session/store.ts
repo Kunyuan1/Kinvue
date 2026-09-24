@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { failureTag } from '../capture/failure'
 import type { SessionRecord } from './types'
@@ -129,6 +130,28 @@ export class UnreachableStoreError extends Error {
 }
 
 /**
+ * The history was written by a newer version of this app (KV-98 review).
+ *
+ * Not corruption: it is the person's whole history, in a format this build
+ * does not read. It used to be an `UnreadableStoreError` like any other, which
+ * meant *Start a new history* would set it aside — and a newer build installed
+ * again afterwards would find no `sessions.json`, start from nothing, and never
+ * look at the file set aside. So it has its own tag, the dashboard offers no
+ * button for it, and `startNewHistory` refuses to move it: the fix is the newer
+ * version, which reads it as it is. Migration is #30's.
+ */
+export class NewerStoreError extends Error {
+  constructor(path: string, version: number) {
+    super(
+      `${failureTag('store-newer')}: The check-in history at ${path} was written by a newer ` +
+        `version of Kinvue (file version ${String(version)}; this one reads version ` +
+        `${String(FILE_VERSION)}). Nothing has been changed. The newer version can read it.`,
+    )
+    this.name = 'NewerStoreError'
+  }
+}
+
+/**
  * Only what it actually checks: an object with a `sessions` array. The version
  * is checked separately, before this, and the records themselves are still not
  * validated — `isFileShape` says nothing about what is *in* `sessions`. KV-74
@@ -200,6 +223,9 @@ async function read(path: string): Promise<FileShape> {
   // sessions" — a claim about the person's data — instead of the version
   // mismatch, which names the real problem and implies the fix (KV-13 review).
   const version: unknown = (parsed as { version?: unknown }).version
+  if (typeof version === 'number' && Number.isFinite(version) && version > FILE_VERSION) {
+    throw new NewerStoreError(path, version)
+  }
   if (version !== FILE_VERSION) {
     throw new UnreadableStoreError(path, describeVersion(version))
   }
@@ -221,21 +247,67 @@ async function write(path: string, data: FileShape): Promise<void> {
   await rename(tmp, path)
 }
 
+/** How many same-day names to try before giving up with a sentence rather than hanging. */
+const MAX_ASIDE_NAMES = 100
+
+/** The local calendar day, as the person pressing the button would name it (KV-98 review). */
+function localDay(now: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${String(now.getFullYear())}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+}
+
 /**
- * Where an unreadable history is set aside: beside it, named for the day, and
- * never over anything already there. Two bad days in one day get `-2`, `-3`, so
- * setting one aside can never overwrite an earlier one.
+ * Sets an unreadable history aside beside itself, named for the day, and
+ * returns where it went. Two bad files in one day get `-2`, `-3`.
+ *
+ * **Exclusive, not check-then-act.** `rename` silently replaces whatever is at
+ * its destination, so a name that was free when checked could be taken by the
+ * time the rename ran, and an earlier set-aside file would be gone. Instead the
+ * bytes are copied with `COPYFILE_EXCL`, which fails rather than overwrite, and
+ * only then is the original removed. If the removal fails the history is still
+ * unreadable and a copy exists beside it — nothing is lost, and the next press
+ * sets it aside under the next name.
  */
-async function asidePath(path: string, now: Date): Promise<string> {
-  const base = `${path}.unreadable-${now.toISOString().slice(0, 10)}`
-  for (let n = 1; ; n++) {
+async function setAside(path: string, now: Date): Promise<string> {
+  const base = `${path}.unreadable-${localDay(now)}`
+  for (let n = 1; n <= MAX_ASIDE_NAMES; n++) {
     const candidate = n === 1 ? base : `${base}-${String(n)}`
     try {
-      await stat(candidate)
+      await copyFile(path, candidate, constants.COPYFILE_EXCL)
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return candidate
+      if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue
       throw err
     }
+    await unlink(path)
+    await explainSetAside(path)
+    return candidate
+  }
+  throw new Error(
+    `The check-in history at ${path} could not be set aside: ${String(MAX_ASIDE_NAMES)} ` +
+      'files for today already exist beside it. Nothing has been changed.',
+  )
+}
+
+/**
+ * A plain-text note beside the set-aside files, written once, so they still mean
+ * something after the on-screen notice is gone (KV-98 review). Best-effort: the
+ * history was already set aside, and failing to explain it must not undo that.
+ */
+async function explainSetAside(path: string): Promise<void> {
+  try {
+    await writeFile(
+      `${path}.unreadable-README.txt`,
+      [
+        'Files named sessions.json.unreadable-<date> are check-in histories Kinvue could not',
+        'read. When that happened, it offered to start a new history, and set the old file',
+        'aside here instead of deleting it. Each is kept exactly as it was, for someone to',
+        'look at. Kinvue does not read them again.',
+        '',
+      ].join('\n'),
+      { encoding: 'utf8', flag: 'wx' },
+    )
+  } catch {
+    /* already written, or not writable: the file set aside is what matters */
   }
 }
 
@@ -271,7 +343,8 @@ export function createJsonSessionStore(
     },
     /**
      * Person-initiated, never automatic, and it never deletes a byte: the file
-     * is renamed, and the next read finds no history and starts a fresh one
+     * is copied aside and only then removed (see `setAside`), and the next read
+     * finds no history and starts a fresh one
      * (KV-98). Code that quietly set a file aside on its own would be the
      * silent-empty fallback #13 removed, wearing a hat.
      *
@@ -282,7 +355,9 @@ export function createJsonSessionStore(
      * person is the one thing this must never do. A missing file is likewise
      * null: there is nothing to set aside. A file that cannot be opened at all
      * (`UnreachableStoreError`) is not moved either; that error is rethrown, since
-     * whatever is holding the file may hold it against a rename too.
+     * whatever is holding the file may hold it against a rename too. A file from a
+     * newer version of the app (`NewerStoreError`) is rethrown too: it is a whole
+     * history, not a broken one, and setting it aside would strand it.
      */
     async startNewHistory() {
       try {
@@ -291,9 +366,7 @@ export function createJsonSessionStore(
       } catch (err) {
         if (!(err instanceof UnreadableStoreError)) throw err
       }
-      const aside = await asidePath(path, now())
-      await rename(path, aside)
-      return aside
+      return await setAside(path, now())
     },
   }
 }

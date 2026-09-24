@@ -18,6 +18,9 @@ const FLOOR: Record<Exclude<DashboardFailure, 'unknown'>, string> = {
   'store-unreachable':
     'The saved check-in history could not be opened. Another program may be using it, ' +
     'or its permissions may need checking. Nothing has been changed.',
+  'store-newer':
+    'The saved check-in history was written by a newer version of Kinvue. Nothing has been ' +
+    'changed. The newer version can read it.',
 }
 
 /**

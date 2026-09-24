@@ -66,6 +66,12 @@ export type TaggedFailure =
    * `store-unreadable` this can clear by itself, which is why it is its own tag.
    */
   | 'store-unreachable'
+  /**
+   * The stored history was written by a newer version of the app (KV-98
+   * review). A whole history rather than a broken one, so it is never offered
+   * for setting aside: the newer version reads it.
+   */
+  | 'store-newer'
 
 /**
  * What the capture screen can be asked to say.
@@ -101,6 +107,8 @@ export type DashboardFailure =
   | 'store-unreadable'
   /** The history file cannot be opened at all. Its own sentence is shown too. */
   | 'store-unreachable'
+  /** The history was written by a newer version of the app. Its own sentence, no button. */
+  | 'store-newer'
   /** Anything else. Shown as a plain sentence; the original goes to the console. */
   | 'unknown'
 
@@ -143,6 +151,7 @@ const ON_CAPTURE: Record<TaggedFailure, CaptureFailure | null> = {
   // not because this screen expects it.
   'store-unreadable': 'unknown',
   'store-unreachable': 'unknown',
+  'store-newer': 'unknown',
 }
 
 /** Where every tag goes on the submit path. Never null: see `classifySubmitError`. */
@@ -162,6 +171,9 @@ const ON_SUBMIT: Record<TaggedFailure, SubmitFailure> = {
   // answers are held while it does, so `unknown`'s copy (no new reading, worth
   // another go) is already the right thing to say.
   'store-unreachable': 'unknown',
+  // Retrying cannot fix it any more than an unreadable file, so it gets the same
+  // "needs looking at" sentence rather than "worth another go".
+  'store-newer': 'store-unreadable',
 }
 
 /**
@@ -181,6 +193,7 @@ const ON_DASHBOARD: Record<TaggedFailure, DashboardFailure> = {
   // The two it exists for: `sessions:list` and `demo:seed` both read the file.
   'store-unreadable': 'store-unreadable',
   'store-unreachable': 'store-unreachable',
+  'store-newer': 'store-newer',
 }
 
 /**

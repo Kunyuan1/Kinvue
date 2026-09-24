@@ -244,6 +244,13 @@ describe('QuestionFlow says which failure it was', () => {
     expect(show('store-unreadable')).toMatch(/nothing already saved has been changed/i)
   })
 
+  it('points to the way out on the main screen, for whoever looks after the computer', () => {
+    // KV-98 put a button one screen away. The person being measured may be the
+    // one reading this, so it says where the way out is, not "do it yourself".
+    expect(show('store-unreadable')).toMatch(/whoever looks after this computer/i)
+    expect(show('store-unreadable')).toMatch(/start a new history from the main screen/i)
+  })
+
   it('leaks no tag into what the person reads', () => {
     for (const failure of ['expired', 'no-capture', 'store-unreadable', 'unknown'] as const) {
       cleanup()
