@@ -41,17 +41,17 @@ const SUBMIT_FAILURE: Record<SubmitFailure, string> = {
   'no-capture': 'That reading is no longer available. Taking a new one is the way forward.',
   // The one submit failure that retrying cannot fix, so it is the one that
   // must not say "try again" (KV-13). The file will fail to parse identically
-  // every time until someone moves it aside, and the answers are held in the
-  // main process meanwhile — so this says what is wrong and what would change
-  // it, and stops. The path is not in here, and nothing else on screen carries
-  // it at this point: this screen replaces the dashboard while answering, and
-  // the dashboard shows the store's sentence (path included, #95) only if the
-  // list itself failed to load. A file that broke after the app started shows
-  // here first, with no path anywhere. Whether this copy should carry it is
-  // #98's to settle, along with offering a way out.
+  // every time until a new history is started, and the answers are held in the
+  // main process meanwhile — so this says what is wrong and where the way out
+  // is, and stops. The way out is the dashboard's *Start a new history* (KV-98),
+  // one screen away. This screen is read by the person being measured too, so it
+  // points there for whoever looks after the computer rather than asking them to
+  // do it, and it carries no path: the dashboard names the file, and names where
+  // it went once it is set aside.
   'store-unreadable':
     'The saved check-in history could not be opened, so this check-in has not been stored. ' +
-    'Nothing already saved has been changed. This one needs looking at on the computer itself.',
+    'Nothing already saved has been changed. Whoever looks after this computer can start ' +
+    'a new history from the main screen.',
   // Says nothing about taking a new reading, deliberately. Every untagged
   // write failure lands here — a full disk, a permission — and `createCheckIn`
   // refiles the held reading on exactly that path, so the

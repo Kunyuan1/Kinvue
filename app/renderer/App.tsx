@@ -5,8 +5,10 @@ import { hasScorableVitals } from '@core/scoring'
 import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
 import {
   classifyCaptureError,
+  classifyDashboardError,
   classifySubmitError,
   type CaptureFailure,
+  type DashboardFailure,
   type SubmitFailure,
 } from '@core/capture/failure'
 import CaptureScreen from './components/CaptureScreen'
@@ -106,7 +108,15 @@ function ReadingSummary({
  */
 export default function App(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // The sentence, and which failure it is: an unreadable history is the one
+  // that offers a way out (KV-98), so the box needs to know which it is showing.
+  const [error, setError] = useState<{ text: string; failure: DashboardFailure } | null>(null)
+  // Said once a new history has been started, naming where the old one went.
+  const [notice, setNotice] = useState<string | null>(null)
+  // A press on a button that touches the store, still in flight. Two presses of
+  // "Start a new history" would race in main and put a success and a failure on
+  // screen at once (KV-98 review); seeding has the same shape.
+  const [busy, setBusy] = useState(false)
   const [capturing, setCapturing] = useState(false)
   // Asked of main rather than assumed: the countdown and the sentence under
   // the button both have to be the length a capture will actually run (#63).
@@ -125,15 +135,17 @@ export default function App(): React.JSX.Element {
     // A list that loaded is the current state of the screen, so an earlier
     // failure to load it is no longer true (KV-95 review). The post-submit
     // sentence is set only after its own refresh has failed, so this never
-    // clears it.
+    // clears it. The new-history notice goes the same way: it describes a
+    // moment, and a later reload is a later moment (KV-98 review).
     setError(null)
+    setNotice(null)
   }, [])
 
   // An unreadable history says so in its own words; anything else gets a plain
   // sentence here and the original in the console (KV-95).
   const showFailure = useCallback((e: unknown, fallback: string): void => {
     console.error(e)
-    setError(dashboardErrorText(e, fallback))
+    setError({ text: dashboardErrorText(e, fallback), failure: classifyDashboardError(e) })
   }, [])
 
   useEffect(() => {
@@ -151,11 +163,72 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
+  // KV-98. The caregiver's choice, never automatic. Main re-checks before it
+  // moves anything, so a history that has become readable since the error was
+  // shown comes back as null and is simply loaded.
+  const startNewHistory = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      let aside: string | null
+      try {
+        aside = await window.kinvue.startNewHistory()
+      } catch (e) {
+        // The press failed, but the history is no less unreadable than it was a
+        // second ago, so the way out stays on screen (KV-98 review): a file an
+        // antivirus scan or a backup held for a moment is free on the next go.
+        // A failure that has words of its own — the file turned out to be from
+        // a newer version, or could not be opened — says those instead.
+        console.error(e)
+        const failure = classifyDashboardError(e)
+        setError(
+          failure === 'unknown'
+            ? {
+                text:
+                  'The old history could not be set aside just now, so nothing was moved. ' +
+                  'It is worth another go.',
+                failure: 'store-unreadable',
+              }
+            : { text: dashboardErrorText(e, ''), failure },
+        )
+        return
+      }
+      try {
+        await refresh()
+      } catch (e) {
+        // The file was set aside; where it went must not be lost with the list.
+        showFailure(
+          e,
+          aside === null
+            ? 'The list could not be reloaded.'
+            : `A new, empty history was started and the old file was kept, unchanged, as ${aside}. ` +
+                'The list could not be reloaded.',
+        )
+        return
+      }
+      setNotice(
+        aside === null
+          ? 'The history could be read after all, so nothing was moved.'
+          : `A new, empty history was started. The old file was kept, unchanged, as ${aside}.`,
+      )
+    } finally {
+      setBusy(false)
+    }
+  }
+
   // Two steps that fail differently. Seeding can succeed and the reload after
   // it fail — a sync client briefly holding the file — and "could not be added"
   // would then be false with a fortnight sitting in it (KV-95 review). The
   // submit path makes the same split for the same reason.
   const seed = async (): Promise<void> => {
+    setBusy(true)
+    try {
+      await seedThenReload()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const seedThenReload = async (): Promise<void> => {
     try {
       await window.kinvue.seedDemo()
     } catch (e) {
@@ -244,8 +317,14 @@ export default function App(): React.JSX.Element {
           // the screen that clearing `answering` unmounts. Dropped silently, it
           // sent the person back to take a second reading of the same moment,
           // which would then enter the baseline twice.
-          await refresh().catch(() => {
-            setError('The check-in was saved, but the list could not be reloaded.')
+          await refresh().catch((e: unknown) => {
+            // The sentence is deliberate (KV-95), but which failure it is still
+            // decides whether the way out is offered, and the original is kept.
+            console.error(e)
+            setError({
+              text: 'The check-in was saved, but the list could not be reloaded.',
+              failure: classifyDashboardError(e),
+            })
           })
           setAnswering(null)
           setReading(null)
@@ -329,8 +408,30 @@ export default function App(): React.JSX.Element {
       )}
 
       {error !== null && (
-        <p className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm text-(--color-elevated)">
-          {error}
+        <div className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm">
+          <p className="text-(--color-elevated)">{error.text}</p>
+          {error.failure === 'store-unreadable' && (
+            <>
+              <p className="mt-2 text-(--color-muted)">
+                Starting a new history keeps this file as it is, renamed beside it, and begins
+                an empty one. Nothing in the old file is deleted.
+              </p>
+              <button
+                type="button"
+                onClick={() => void startNewHistory()}
+                disabled={busy}
+                className="mt-3 rounded-lg border border-(--color-line) px-4 py-2 hover:bg-(--color-raised)"
+              >
+                Start a new history
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {notice !== null && (
+        <p className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm text-(--color-muted)">
+          {notice}
         </p>
       )}
 
@@ -343,6 +444,7 @@ export default function App(): React.JSX.Element {
           <button
             type="button"
             onClick={() => void seed()}
+            disabled={busy}
             className="mt-4 rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-raised)"
           >
             Seed demo history

@@ -548,19 +548,42 @@ reassuring-and-wrong direction this product avoids everywhere else. Someone with
 check-ins would be shown none, with nothing to say anything was amiss.
 
 The cost is real and worth stating plainly: this is **fatal to reads and writes both**, so
-until the file is moved aside no history can be shown and no new check-in can be stored.
+until a new history is started no history can be shown and no new check-in can be stored.
 `submit` reads history before scoring, so a corrupt file is discovered *after* the capture
 ran and the questions were answered — which is why the error is tagged `store-unreadable`
 rather than left to classify as `unknown`, whose copy invites a retry that cannot succeed.
 Two cases are deliberately not refused: a **missing** file, which is the ordinary first run,
 and a **zero-byte** file, which is the one corruption holding no history to protect.
-Offering the person an explicit way out — quarantine the file and start a new history,
-rather than asking them to find a path inside `userData` — is #98.
+**The way out is the caregiver's choice, and it keeps the bytes** (KV-98). The dashboard
+offers *Start a new history* under the store's sentence, for an unreadable file only. It
+sets the file aside beside itself as `sessions.json.unreadable-<local date>` and names where
+it went. Setting aside is an exclusive copy followed by removing the original, not a rename:
+`rename` silently replaces whatever is at its destination, and the copy fails instead, so an
+earlier set-aside file can never be overwritten (`-2`, `-3` for more the same day). A plain
+note, `sessions.json.unreadable-README.txt`, is written beside them once, so they still mean
+something after the notice on screen is gone.
+
+It is never automatic — code that quietly set a file aside would be the silent-empty
+fallback this section rejects — and it re-checks at the press: a file that has become
+readable since the error was shown is left where it is, and the dashboard says so. A press
+that fails leaves the button on screen, since the history is no less unreadable than before.
+Three cases get no button. A file that cannot be opened at all (`UnreachableStoreError`,
+KV-95), because whatever holds it may hold it against a move too. That reasoning is right
+for a file another program has open, which does clear by itself; it is not right for a broken
+permission — `EACCES` after a restore, say — which does not, and whose only pointer is the
+sentence's "its permissions may need checking". If that turns up in practice it wants its own
+tag and a way out; it is not assumed away here. A history written by a
+**newer version** of the app (`NewerStoreError`), because it is a whole history rather than a
+broken one: set aside, it would be stranded, since the newer version installed again would
+find no file and start from nothing. And anything untagged. The set-aside file is not
+offered back; it is left for someone technical to look at.
 
 **An older build refuses a newer file outright, and there is no migration path.** The
 file's `version` is read, not decoration: a version this code does not write is refused
 with a message naming both. That makes bumping `FILE_VERSION` a one-way door — anyone who
-downgrades afterwards is locked out of their own history until the file is moved aside.
+downgrades afterwards is locked out of their own history until they install the newer
+version again. The dashboard says so, and deliberately offers no *Start a new history* for
+it (KV-98): the file is whole, and the newer version reads it as it is.
 That is the deliberate choice, on the grounds that misreading a newer file as though it
 were this one is the quieter and worse failure, but it is a real contract and the cost
 lands on a person, not a developer. A migration, when one is needed, is #30's to design,

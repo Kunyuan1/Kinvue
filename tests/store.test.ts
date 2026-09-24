@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   createJsonSessionStore,
+  NewerStoreError,
   UnreachableStoreError,
   UnreadableStoreError,
 } from '@core/session/store'
@@ -360,5 +361,150 @@ describe('a history file that exists but cannot be opened (KV-95 review)', () =>
   it('still treats a missing file as a first run', async () => {
     const { path } = await storeIn()
     await expect(createJsonSessionStore(path).list('p1')).resolves.toEqual([])
+  })
+})
+
+describe('starting a new history when the old one cannot be read (KV-98)', () => {
+  const ON = new Date('2026-09-22T10:00:00.000Z')
+  const BROKEN = '{ "version": 1, "sessions": [ not json'
+
+  it('sets the unreadable file aside with its bytes intact, and starts an empty history', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, BROKEN, 'utf8')
+    const store = createJsonSessionStore(path, () => ON)
+
+    const aside = await store.startNewHistory()
+
+    expect(aside).toBe(`${path}.unreadable-2026-09-22`)
+    expect(await readFile(aside!, 'utf8')).toBe(BROKEN)
+    await expect(store.list('test-person')).resolves.toEqual([])
+    await store.append(session({ id: 'first' }))
+    expect((await store.list('test-person')).map((s) => s.id)).toEqual(['first'])
+  })
+
+  it('never moves a history it can read', async () => {
+    // The dashboard showed the error a while ago; since then the file was
+    // fixed or restored. Moving it now would hide real history.
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path, () => ON)
+    await store.append(session({ id: 'kept' }))
+    const before = await readFile(path, 'utf8')
+
+    await expect(store.startNewHistory()).resolves.toBeNull()
+    expect(await readFile(path, 'utf8')).toBe(before)
+  })
+
+  it('has nothing to set aside when there is no file', async () => {
+    const { path } = await storeIn()
+    await expect(createJsonSessionStore(path, () => ON).startNewHistory()).resolves.toBeNull()
+  })
+
+  it('never overwrites an earlier file set aside the same day', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path, () => ON)
+    await writeFile(path, 'first bad file', 'utf8')
+    const one = await store.startNewHistory()
+    await writeFile(path, 'second bad file', 'utf8')
+    const two = await store.startNewHistory()
+
+    expect(two).toBe(`${path}.unreadable-2026-09-22-2`)
+    expect(await readFile(one!, 'utf8')).toBe('first bad file')
+    expect(await readFile(two!, 'utf8')).toBe('second bad file')
+  })
+
+  it('leaves a file it cannot open where it is, and says why', async () => {
+    const { path } = await storeIn()
+    await mkdir(path)
+    const thrown = await createJsonSessionStore(path, () => ON)
+      .startNewHistory()
+      .catch((e: unknown) => e)
+    expect(thrown).toBeInstanceOf(UnreachableStoreError)
+    await expect(readFile(`${path}.unreadable-2026-09-22`)).rejects.toThrow()
+  })
+
+  it('no longer tells the caregiver to move the file themselves', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, BROKEN, 'utf8')
+    const thrown = await createJsonSessionStore(path).list('p1').catch((e: unknown) => e)
+    expect(String(thrown)).toMatch(/Nothing has been changed\.$/)
+    expect(String(thrown)).not.toMatch(/move the file/i)
+  })
+})
+
+describe('what starting a new history will not do (KV-98 review)', () => {
+  const ON = new Date(2026, 8, 22, 10, 0)
+
+  it('never sets aside a history written by a newer version of the app', async () => {
+    // A whole history, not a broken one. Setting it aside would strand it: the
+    // newer version, installed again, would find no file and start from nothing.
+    const { path } = await storeIn()
+    const newer = JSON.stringify({ version: 2, sessions: [] })
+    await writeFile(path, newer, 'utf8')
+    const store = createJsonSessionStore(path, () => ON)
+
+    const listed = await store.list('test-person').catch((e: unknown) => e)
+    expect(listed).toBeInstanceOf(NewerStoreError)
+    expect(String(listed)).toMatch(/written by a newer version of Kinvue \(file version 2/)
+    expect(classifyDashboardError(listed)).toBe('store-newer')
+    expect(classifySubmitError(listed)).toBe('store-unreadable')
+
+    await expect(store.startNewHistory()).rejects.toBeInstanceOf(NewerStoreError)
+    expect(await readFile(path, 'utf8')).toBe(newer)
+  })
+
+  it('still sets aside a file whose version is broken rather than newer', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, JSON.stringify({ version: 'one', sessions: [] }), 'utf8')
+    await expect(createJsonSessionStore(path, () => ON).startNewHistory()).resolves.toMatch(
+      /\.unreadable-2026-09-22$/,
+    )
+  })
+
+  it('never overwrites a file already using the name, even one it did not put there', async () => {
+    const { path } = await storeIn()
+    await writeFile(`${path}.unreadable-2026-09-22`, 'someone else', 'utf8')
+    await writeFile(path, 'broken', 'utf8')
+
+    const aside = await createJsonSessionStore(path, () => ON).startNewHistory()
+
+    expect(aside).toBe(`${path}.unreadable-2026-09-22-2`)
+    expect(await readFile(`${path}.unreadable-2026-09-22`, 'utf8')).toBe('someone else')
+  })
+
+  it('gives up with a sentence, not a hang, when every name for the day is taken', async () => {
+    const { path } = await storeIn()
+    await writeFile(`${path}.unreadable-2026-09-22`, 'x', 'utf8')
+    for (let n = 2; n <= 100; n++) await writeFile(`${path}.unreadable-2026-09-22-${String(n)}`, 'x', 'utf8')
+    await writeFile(path, 'broken', 'utf8')
+
+    await expect(createJsonSessionStore(path, () => ON).startNewHistory()).rejects.toThrow(
+      /could not be set aside.*Nothing has been changed/,
+    )
+    expect(await readFile(path, 'utf8')).toBe('broken')
+  })
+
+  it('names the file for the local day, not the UTC one', async () => {
+    // 23:30 local on the 23rd is the 24th somewhere west of here in UTC terms;
+    // the person pressing the button is on the 23rd.
+    const { path } = await storeIn()
+    await writeFile(path, 'broken', 'utf8')
+    const late = new Date(2026, 8, 23, 23, 30)
+    await expect(createJsonSessionStore(path, () => late).startNewHistory()).resolves.toMatch(
+      /\.unreadable-2026-09-23$/,
+    )
+  })
+
+  it('leaves a note beside the set-aside files, once, that survives the notice on screen', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path, () => ON)
+    await writeFile(path, 'broken', 'utf8')
+    await store.startNewHistory()
+    const note = `${path}.unreadable-README.txt`
+    expect(await readFile(note, 'utf8')).toMatch(/Kinvue could not\sread/)
+
+    await writeFile(note, 'edited by someone', 'utf8')
+    await writeFile(path, 'broken again', 'utf8')
+    await store.startNewHistory()
+    expect(await readFile(note, 'utf8')).toBe('edited by someone')
   })
 })
