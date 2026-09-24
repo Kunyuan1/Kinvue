@@ -1,5 +1,11 @@
 import { MIN_BASELINE_SESSIONS, type Baseline, type Stat } from '../baseline'
-import type { FiredRule, SessionRecord } from '../session/types'
+import type {
+  ComparedMetric,
+  FiredRule,
+  SessionRecord,
+  UncomparedMetric,
+  Vitals,
+} from '../session/types'
 
 /**
  * Every rule is a small, named, independently testable function. A rule that
@@ -14,15 +20,28 @@ export interface RuleContext {
   baseline: Baseline
 }
 
+/** Which metric a rule compares against their usual, and where both are found. */
+export interface Comparison {
+  metric: ComparedMetric
+  reading: (v: Vitals) => number | null
+  usual: (b: Baseline) => Stat | null
+}
+
 export interface Rule {
   id: string
   /**
-   * True when the rule's explanation quotes "their usual" — that is, when what
-   * it says out loud depends on the baseline. Whether that baseline was seeded
-   * is then something the card has to disclose (KV-53), so the scorer needs to
-   * know which fired rules lean on it.
+   * The metric this rule compares against their usual; absent on a rule that
+   * reads only the answers.
+   *
+   * The single statement of two facts the scorer needs. A rule that compares
+   * quotes "their usual", so whether that usual was seeded has to be
+   * disclosed wherever it fires (KV-53, `BASELINE_RULE_IDS`). And a reading
+   * of its metric with no usual yet is a gap in the comparison, which keeps
+   * the verdict from reading "normal" (KV-87, `uncomparedMetrics`). Both are
+   * derived from this field, so a new comparison rule cannot be added to one
+   * list and forgotten from the other — that happened once (KV-71).
    */
-  usesBaseline?: true
+  compares?: Comparison
   /** Returns null when the rule does not fire. */
   evaluate(ctx: RuleContext): FiredRule | null
 }
@@ -54,12 +73,19 @@ const HRV_DROP_FULL_SEVERITY_AT = 0.5
 const canBeCalledUsual = (usual: Stat | null): usual is Stat =>
   usual !== null && usual.n >= MIN_BASELINE_SESSIONS
 
+
+const HRV_COMPARISON: Comparison = {
+  metric: 'hrv',
+  reading: (v) => v.hrvRmssdMs,
+  usual: (b) => b.hrvRmssdMs,
+}
+
 export const hrvDrop: Rule = {
   id: 'hrv-drop',
-  usesBaseline: true,
+  compares: HRV_COMPARISON,
   evaluate({ session, baseline }) {
-    const value = session.vitals.hrvRmssdMs
-    const usual = baseline.hrvRmssdMs
+    const value = HRV_COMPARISON.reading(session.vitals)
+    const usual = HRV_COMPARISON.usual(baseline)
     if (value === null || !canBeCalledUsual(usual) || usual.mean <= 0) return null
 
     const drop = (usual.mean - value) / usual.mean
@@ -109,8 +135,8 @@ interface ZRuleSpec {
    */
   singularUnit?: string
   peakSeverity: number
-  get: (s: SessionRecord) => number | null
-  usualOf: (b: Baseline) => Stat | null
+  /** The metric compared, where the reading and the usual are found. */
+  compares: Comparison
 }
 
 /** The spread a z was measured against, and whose number it is. */
@@ -200,15 +226,14 @@ function zRule({
   unit,
   singularUnit = unit,
   peakSeverity,
-  get,
-  usualOf,
+  compares,
 }: ZRuleSpec): Rule {
   return {
     id,
-    usesBaseline: true,
+    compares,
     evaluate({ session, baseline }) {
-      const value = get(session)
-      const usual = usualOf(baseline)
+      const value = compares.reading(session.vitals)
+      const usual = compares.usual(baseline)
       if (value === null || !canBeCalledUsual(usual)) return null
 
       // The floor in `spreadOf` only damps a real spread. On one or two
@@ -242,8 +267,7 @@ export const pulseElevated = zRule({
   noun: 'Pulse',
   unit: 'bpm',
   peakSeverity: 0.45,
-  get: (s) => s.vitals.pulseRateBpm,
-  usualOf: (b) => b.pulseRateBpm,
+  compares: { metric: 'pulse', reading: (v) => v.pulseRateBpm, usual: (b) => b.pulseRateBpm },
 })
 
 export const breathingElevated = zRule({
@@ -253,8 +277,11 @@ export const breathingElevated = zRule({
   unit: 'breaths/min',
   singularUnit: 'breath/min',
   peakSeverity: 0.4,
-  get: (s) => s.vitals.breathingRateBrpm,
-  usualOf: (b) => b.breathingRateBrpm,
+  compares: {
+    metric: 'breathing',
+    reading: (v) => v.breathingRateBrpm,
+    usual: (b) => b.breathingRateBrpm,
+  },
 })
 
 /**
@@ -359,14 +386,60 @@ export const ALL_RULES: readonly Rule[] = [
 ]
 
 /**
- * Rules whose explanation quotes the baseline. See `Rule.usesBaseline`.
+ * Rules whose explanation quotes the baseline. See `Rule.compares`.
  *
- * Derived rather than listed, so `usesBaseline` is the single place the concept
+ * Derived rather than listed, so `compares` is the single place the concept
  * is stated. Two hand-kept encodings agreed today and had nothing checking they
  * still would: a fourth comparison rule added with the flag and missing from
  * the list would disclose nothing on a seeded baseline, which is the failure
  * KV-53 exists to prevent.
  */
 export const BASELINE_RULE_IDS: ReadonlySet<string> = new Set(
-  ALL_RULES.filter((rule) => rule.usesBaseline === true).map((rule) => rule.id),
+  ALL_RULES.filter((rule) => rule.compares !== undefined).map((rule) => rule.id),
 )
+
+/**
+ * The metrics this check-in measured that had no usual to compare them with
+ * (KV-87), derived from the rules that compare them. A metric that produced
+ * nothing is not listed: it is not a gap in the comparison, just a reading
+ * that did not happen. One entry per metric, however many rules compare it.
+ *
+ * **The same gate the rules pass first, not every guard after it.** This asks
+ * `canBeCalledUsual`, which is what holds a rule back on a thin history. A
+ * rule can still decline past that gate — `zRule` on a spread of 0, `hrvDrop`
+ * on a usual mean of 0 — and such a reading is neither compared nor named
+ * here. Reachable only on a usual of exactly 0; closing it properly means a
+ * rule reporting "could not look" apart from "looked and found nothing",
+ * which is a change to `Rule.evaluate`, not to this.
+ *
+ * The usual's mean is kept alongside its count so the card can say what the
+ * thin history showed, as evidence and not as "their usual" (KV-87 review).
+ */
+export function uncomparedMetrics(
+  session: SessionRecord,
+  baseline: Baseline,
+): UncomparedMetric[] {
+  const seen = new Set<ComparedMetric>()
+  const gaps = ALL_RULES.flatMap(({ compares }) => {
+    if (compares === undefined || seen.has(compares.metric)) return []
+    seen.add(compares.metric)
+    const stat = compares.usual(baseline)
+    // Read before the guard: as a type guard, a `false` from
+    // `canBeCalledUsual` narrows `stat` to null, and a thin history is a real
+    // `Stat` with a small `n`.
+    const readings = stat?.n ?? 0
+    const mean = stat?.mean
+    if (compares.reading(session.vitals) === null || canBeCalledUsual(stat)) return []
+    const gap: UncomparedMetric = {
+      metric: compares.metric,
+      readings,
+      needed: MIN_BASELINE_SESSIONS,
+    }
+    if (readings > 0 && mean !== undefined) gap.mean = mean
+    return [gap]
+  })
+  // In the order the card shows the readings, not the order rules are listed.
+  return gaps.sort((a, b) => CARD_ORDER.indexOf(a.metric) - CARD_ORDER.indexOf(b.metric))
+}
+
+const CARD_ORDER: readonly ComparedMetric[] = ['pulse', 'breathing', 'hrv']

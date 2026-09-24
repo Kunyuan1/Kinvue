@@ -115,9 +115,11 @@ drop nor counts in the capture's confidence, which would otherwise delete a real
 breathing rate or carry them into a rule on HRV's number. Whether a metric whose own
 confidence is *poor* should be dropped too is a separate, threshold question, and still open.
 
-Until #87 names it on the card, a dropped rate shows as `—`, the same as one the camera never
-produced. And it compounds, through the per-metric gate below (KV-71): on hardware where
-breathing habitually arrives unrated beside a rated pulse, breathing's own `n` never reaches
+A dropped rate shows as `—`, the same as one the camera never produced, and #87 does not
+name it either: it was not measured, so it is not a gap in the comparison. That is accepted,
+not solved — the mirror of inventing a number is silently erasing one. And it compounds,
+through the per-metric gate below (KV-71): on hardware where breathing habitually arrives
+unrated beside a rated pulse, breathing's own `n` never reaches
 `MIN_BASELINE_SESSIONS`, so breathing is never compared at all, and nothing on screen says
 so. That is the intended outcome — a usual should not be built from readings nothing vouched
 for — but it is silent, and it is also the capture that runs to `DEFAULT_CAPTURE_SECONDS`
@@ -153,6 +155,54 @@ manufactures the deviation it is meant to damp.
 
 So the answer rules still fire and the reading is still shown. What is withheld is the
 comparison, which is the part there is no evidence for.
+
+**What KV-71 did not reach was the verdict** (KV-87). `flag` is a sum of the rules that
+fired, and a rule held back contributes nothing — so a card read *"Looks normal — A normal
+day for them"* on a real check-in whose pulse was 101.5 against a usual of 82, because pulse
+had two readings of its own and three are needed. The rule was right not to fire; "Looks
+normal" is still an active claim that the check-in was compared with their usual, and for
+pulse it was not. That is the reassuring-and-wrong direction, reached by suppressing a
+comparison rather than by making one. And it is the ordinary state of a young baseline on
+this hardware, not a corner: pulse arrived in three captures of five and HRV in none.
+
+So a metric **measured at this check-in** with no usual — the same `canBeCalledUsual` that
+holds its rule back, asked from the other side — changes the verdict:
+
+| Would have been | Now | The card says |
+|---|---|---|
+| `normal` | `insufficient-signal` | "Only partly compared with their usual", then which metric, how many readings it had of how many needed, and that the check-in is therefore not being called normal |
+| `elevated` | `elevated`, unchanged | the same gap, without the last clause |
+
+`elevated` stands because it rests on what *was* compared: withholding it would hide an
+answers-only amber — pain and no food — whenever pulse happened to be thin, trading a real
+signal for a missing one. A metric that produced **nothing** at this check-in changes
+nothing; it is not a gap in the comparison. An unusable capture or a baseline still learning
+writes nothing either, since its summary already says nothing was compared.
+
+`Assessment.uncomparedMetrics` stores the metric, the two counts and what the thin history
+averaged, and `uncomparedDisclosure` composes the sentence where the card is shown, as the
+seeded disclosure is — the wording can change without rescoring history. A verdict scored
+before KV-87 has no such field, and says that it was not recorded rather than reading as
+"none". A withheld verdict still claims a comparison of the other metrics, so the seeded
+disclosure shows on it too, whether or not a rule fired.
+
+**The thin history's average is quoted, as evidence and not as "their usual".** The card
+already shows *Pulse 102 bpm*; a sentence giving only "2 of the 3 readings" withholds the one
+number that makes 102 mean something. So it reads *"it had 2 of the 3 readings needed to
+know it (those 2 averaged 82 bpm)"*. That is not what KV-71 forbids. KV-71 forbids calling a
+two-reading mean *their usual* — "above their usual 82 bpm" off one morning. Stating the
+evidence and its weakness in one breath is the opposite claim, in the same idiom as the
+seeded disclosure. A single reading is quoted as that reading, not as an average.
+
+**Which metric a rule compares is stated once, on the rule** (`Rule.compares`). The seeded
+disclosure's rule set (`BASELINE_RULE_IDS`) and the gaps (`uncomparedMetrics`) are both
+derived from it, so a new comparison rule cannot reach one and miss the other: missing the
+second would reopen this ticket's hole silently, with a green card and no note. The gap test
+is `canBeCalledUsual`, the gate every comparison rule passes first — not every guard after
+it. A rule can still decline past that gate (`zRule` on a spread of 0, `hrvDrop` on a usual
+mean of 0), and such a reading is neither compared nor named. That needs a usual of exactly
+0. Closing it properly means `Rule.evaluate` reporting "could not look" apart from "looked
+and found nothing", which is a change to every rule, not to this.
 
 ---
 

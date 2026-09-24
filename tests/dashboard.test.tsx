@@ -8,7 +8,8 @@ import {
   UnreadableStoreError,
 } from '@core/session/store'
 import type { SessionRecord } from '@core/session/types'
-import { session } from './helpers'
+import { scoreSession } from '@core/scoring'
+import { history, session } from './helpers'
 
 /**
  * What the dashboard's error box says, from the call sites that decide it
@@ -252,5 +253,42 @@ describe('starting a new history (KV-98)', () => {
     fireEvent.click(screen.getByText('Seed demo history'))
     await screen.findByText(/Looks normal|Not enough to say/)
     expect(screen.queryByText(/new, empty history was started/)).toBeNull()
+  })
+})
+
+describe('a card whose pulse was never compared (KV-87)', () => {
+  it('reads "Not enough to say" and names the metric, not "Looks normal"', async () => {
+    const past = [
+      ...history(2, { pulseRateBpm: 82 }),
+      session({ id: 'h-2', capturedAt: '2026-09-03T09:00:00.000Z', vitals: { pulseRateBpm: null } }),
+    ]
+    const scored = session({ id: 'thin', vitals: { pulseRateBpm: 101.5 } })
+    scored.assessment = scoreSession(scored, past)
+    listSessions.mockResolvedValue([scored])
+    render(<App />)
+
+    expect(await screen.findByText('Not enough to say')).toBeTruthy()
+    expect(screen.getByText(/^Pulse was measured at this check-in but not compared/)).toBeTruthy()
+    expect(screen.queryByText('Looks normal')).toBeNull()
+  })
+
+  it('keeps an amber card amber, and names the gap under it without the withheld clause', async () => {
+    const past = [
+      ...history(2, { pulseRateBpm: 82 }),
+      session({ id: 'h-2', capturedAt: '2026-09-03T09:00:00.000Z', vitals: { pulseRateBpm: null } }),
+    ]
+    const scored = session({
+      id: 'amber',
+      vitals: { pulseRateBpm: 101.5 },
+      answers: { sleep: 'poorly', painReported: true, eatenToday: false },
+    })
+    scored.assessment = scoreSession(scored, past)
+    listSessions.mockResolvedValue([scored])
+    render(<App />)
+
+    expect(await screen.findByText('Looks different')).toBeTruthy()
+    const note = screen.getByText(/^Pulse was measured at this check-in but not compared/)
+    expect(note.textContent).toMatch(/\(those 2 averaged 82 bpm\)\.$/)
+    expect(note.textContent).not.toMatch(/not being called normal/)
   })
 })

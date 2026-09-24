@@ -7,8 +7,10 @@ import {
   scoreSession,
   seededBaselineDisclosure,
   seededDisclosureFor,
+  uncomparedDisclosure,
   unusableReason,
 } from '@core/scoring'
+import { seedDemoHistory, withSeededVerdicts } from '@core/seed/persona'
 import type { Assessment } from '@core/session/types'
 import { ALL_RULES, BASELINE_RULE_IDS } from '@core/scoring'
 import { history, seededHistory, session } from './helpers'
@@ -472,8 +474,14 @@ describe('scoreSession', () => {
       past,
     )
 
-    expect(assessment.flag).toBe('normal')
+    expect(assessment.flag).not.toBe('elevated')
     expect(ids(assessment)).toEqual(['not-eaten'])
+    // Not `normal` either, since KV-87: breathing was measured and never
+    // compared, so a green verdict would claim a check that did not happen.
+    expect(assessment.flag).toBe('insufficient-signal')
+    expect(assessment.uncomparedMetrics).toEqual([
+      { metric: 'breathing', readings: 1, needed: MIN_BASELINE_SESSIONS, mean: 15 },
+    ])
   })
 
   it('says how far out a z-rule reading is, not just that it is out', () => {
@@ -746,7 +754,7 @@ describe('seededBaselineDisclosure', () => {
     // with the flag and forgotten from the list would suppress correctly, so
     // every thin-baseline test would pass, and then quote an invented usual on
     // a mature seeded baseline with no disclosure (KV-71).
-    const flagged = ALL_RULES.filter((rule) => rule.usesBaseline === true).map((r) => r.id)
+    const flagged = ALL_RULES.filter((rule) => rule.compares !== undefined).map((r) => r.id)
 
     expect(flagged.length).toBeGreaterThan(0)
     expect([...BASELINE_RULE_IDS].sort()).toEqual([...flagged].sort())
@@ -876,6 +884,162 @@ describe('unusableReason', () => {
     for (const s of cases) {
       const scored = scoreSession(s, history(5))
       expect(scored.flag === 'insufficient-signal').toBe(unusableReason(s.vitals) !== null)
+    }
+  })
+})
+
+describe('a metric measured but never compared (KV-87)', () => {
+  /** Three usable sessions; pulse in only two of them, as on the real hardware. */
+  const thinPulse = (): ReturnType<typeof history> => [
+    ...history(2, { pulseRateBpm: 82 }),
+    session({ id: 'h-2', capturedAt: '2026-09-03T09:00:00.000Z', vitals: { pulseRateBpm: null } }),
+  ]
+
+  it('withholds "normal" when pulse was measured and had no usual — the check-in on the ticket', () => {
+    // 101.5 against a usual of 82 on two readings: pulse-elevated correctly
+    // held back (KV-71), and the card used to read "A normal day for them".
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 101.5 } }), thinPulse())
+
+    expect(ids(assessment)).not.toContain('pulse-elevated')
+    expect(assessment.flag).toBe('insufficient-signal')
+    // Not the card's label again: the summary says why the verdict is withheld.
+    expect(assessment.summary).toBe('Only partly compared with their usual — see the note below.')
+    expect(assessment.uncomparedMetrics).toEqual([
+      { metric: 'pulse', readings: 2, needed: MIN_BASELINE_SESSIONS, mean: 82 },
+    ])
+    // The 82 is quoted as what two readings showed, never as "their usual".
+    expect(uncomparedDisclosure(assessment)).toBe(
+      'Pulse was measured at this check-in but not compared with their usual: it had 2 of ' +
+        `the ${MIN_BASELINE_SESSIONS} readings needed to know it (those 2 averaged 82 bpm). ` +
+        'So this check-in is not being called normal.',
+    )
+    expect(uncomparedDisclosure(assessment)).not.toMatch(/their usual \d/)
+  })
+
+  it('lets an elevated verdict stand, and still names the gap', () => {
+    // Withholding it would hide a real signal to cover a missing one.
+    const assessment = scoreSession(
+      session({
+        vitals: { pulseRateBpm: 101.5 },
+        answers: { sleep: 'poorly', painReported: true, eatenToday: false },
+      }),
+      thinPulse(),
+    )
+
+    expect(assessment.flag).toBe('elevated')
+    expect(uncomparedDisclosure(assessment)).toBe(
+      'Pulse was measured at this check-in but not compared with their usual: it had 2 of ' +
+        `the ${MIN_BASELINE_SESSIONS} readings needed to know it (those 2 averaged 82 bpm).`,
+    )
+  })
+
+  it('does not count a metric that produced nothing as a gap', () => {
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: null } }), thinPulse())
+
+    expect(assessment.flag).toBe('normal')
+    expect(assessment.uncomparedMetrics).toEqual([])
+    expect(uncomparedDisclosure(assessment)).toBeNull()
+  })
+
+  it('is normal, with nothing to disclose, when every measured metric was compared', () => {
+    const assessment = scoreSession(session(), history(5))
+
+    expect(assessment.flag).toBe('normal')
+    expect(assessment.uncomparedMetrics).toEqual([])
+    expect(uncomparedDisclosure(assessment)).toBeNull()
+  })
+
+  it('names every metric that went uncompared, including one with no readings at all', () => {
+    const past = history(3, { hrvRmssdMs: null }).map((s, i) =>
+      i === 0 ? { ...s, vitals: { ...s.vitals, pulseRateBpm: null } } : s,
+    )
+    const assessment = scoreSession(session(), past)
+
+    expect(assessment.uncomparedMetrics).toEqual([
+      { metric: 'pulse', readings: 2, needed: MIN_BASELINE_SESSIONS, mean: 72 },
+      { metric: 'hrv', readings: 0, needed: MIN_BASELINE_SESSIONS },
+    ])
+    // Card order, whatever order the rules are listed in; no number for HRV,
+    // which had no readings to show.
+    expect(uncomparedDisclosure(assessment)).toBe(
+      'Pulse and HRV were measured at this check-in but not compared with their usual: pulse ' +
+        `had 2 of the ${MIN_BASELINE_SESSIONS} readings needed to know it (those 2 averaged ` +
+        `72 bpm) and HRV had 0 of ${MIN_BASELINE_SESSIONS}. So this check-in is not being ` +
+        'called normal.',
+    )
+  })
+
+  it('quotes a single reading as that one reading, not as an average', () => {
+    const past = [
+      session({ id: 'h-0', capturedAt: '2026-09-01T09:00:00.000Z' }),
+      ...history(2, { breathingRateBrpm: null }).map((s, i) => ({ ...s, id: `n-${i}` })),
+    ]
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 16 } }), past)
+
+    expect(uncomparedDisclosure(assessment)).toMatch(
+      /^Breathing rate was measured .*: it had 1 of the 3 readings needed to know it \(that one was 15 breaths\/min\)\./,
+    )
+  })
+
+  it('writes nothing for a capture it could not use, or a baseline still learning', () => {
+    // The summary already says nothing was compared; a second sentence would
+    // single out one metric from a comparison that never started.
+    const unusable = scoreSession(session({ vitals: { confidence: null } }), history(5))
+    const learning = scoreSession(session(), history(MIN_BASELINE_SESSIONS - 1))
+
+    for (const a of [unusable, learning]) {
+      expect(a.uncomparedMetrics).toBeUndefined()
+      expect(uncomparedDisclosure(a)).toBeNull()
+    }
+  })
+
+  it('reads a verdict scored before KV-87 as unknown, not as "none"', () => {
+    const { uncomparedMetrics: _absent, ...older } = scoreSession(session(), history(5))
+
+    expect(uncomparedDisclosure(older)).toBe(
+      'Whether every reading at this check-in was compared with their usual was not recorded ' +
+        'when it was scored.',
+    )
+    // A withheld verdict claimed no comparison, so there is nothing unknown to admit.
+    expect(uncomparedDisclosure({ ...older, flag: 'insufficient-signal' })).toBeNull()
+  })
+
+  it('says nothing relative to now', () => {
+    const past = history(3, { hrvRmssdMs: null })
+    for (const a of [
+      scoreSession(session({ vitals: { pulseRateBpm: 101.5 } }), thinPulse()),
+      scoreSession(session({ answers: { sleep: 'poorly', painReported: true } }), past),
+    ]) {
+      expect(a.summary).not.toMatch(RELATIVE_TIME)
+      expect(uncomparedDisclosure(a) ?? '').not.toMatch(RELATIVE_TIME)
+    }
+  })
+
+  it('keeps the seeded disclosure on a withheld card, even with no rule fired', () => {
+    // KV-87 review: "only partly compared" claims the other metrics were
+    // compared, so a seeded usual behind them must still be disclosed. Keyed
+    // on the flag, the note vanished when a pulse reading was *added*.
+    const past = [
+      ...seededHistory(2),
+      session({ id: 'real', capturedAt: '2026-09-03T09:00:00.000Z', vitals: { pulseRateBpm: null } }),
+    ]
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 90 } }), past)
+
+    expect(assessment.flag).toBe('insufficient-signal')
+    expect(assessment.firedRules).toEqual([])
+    expect(uncomparedDisclosure(assessment)).toMatch(/^Pulse was measured/)
+    expect(seededBaselineDisclosure(assessment)).toBe(
+      'Their usual here is partly seeded demo data — 2 of the 3 check-ins behind this ' +
+        'comparison were invented, not measured.',
+    )
+  })
+
+  it('leaves the seeded demo alone: every seeded day carries every metric', () => {
+    for (const day of withSeededVerdicts(seedDemoHistory())) {
+      expect(day.assessment?.flag, day.id).not.toBe('elevated')
+      if (day.assessment?.uncomparedMetrics !== undefined) {
+        expect(day.assessment.uncomparedMetrics, day.id).toEqual([])
+      }
     }
   })
 })
