@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { decodeMetrics, presage } from '@smartspectra/node-sdk/messages'
 import { createVitalsAccumulator, type MetricsLike } from '../app/main/metrics'
 import { scoreSession } from '@core/scoring'
+import { unusableReason } from '@core/session/usable'
 import { history, session } from './helpers'
 
 /**
@@ -24,8 +25,11 @@ const pulseMsg = (value: number, confidence = 90, stable = true): MetricsLike =>
   cardio: { pulseRate: [{ value, confidence, stable }] },
 })
 
-const hrvMsg = (rmssd: number, sdnn: number): MetricsLike => ({
-  cardio: { hrv: [{ rmssd, sdnn, meanNn: 600, baevsky: 2.5 }] },
+/** Unrated unless given one: no HRV confidence has been seen on this hardware. */
+const hrvMsg = (rmssd: number, sdnn: number, confidence?: number): MetricsLike => ({
+  cardio: {
+    hrv: [{ rmssd, sdnn, meanNn: 600, baevsky: 2.5, ...(confidence === undefined ? {} : { confidence }) }],
+  },
 })
 
 /** A trace-only message, which is most of what the stream actually carries. */
@@ -400,7 +404,10 @@ describe('a rated metric does not vouch for an unrated one (KV-79)', () => {
     const acc = createVitalsAccumulator()
     acc.add(breathingMsg(14, 70))
     acc.add(unratedPulse(110))
-    expect(acc.result(60).pulseRateBpm).toBeNull()
+    const result = acc.result(60)
+
+    expect(result.pulseRateBpm).toBeNull()
+    expect(result.breathingRateBrpm).toBe(14)
   })
 
   it('keeps an unrated reading when nothing in the capture was rated, as KV-12 decided', () => {
@@ -414,11 +421,65 @@ describe('a rated metric does not vouch for an unrated one (KV-79)', () => {
     expect(result.confidence).toBeNull()
   })
 
-  it('leaves HRV alone, rated or not, until its ratedness has been seen on hardware', () => {
+  it('keeps an unrated HRV beside a rated pulse, until its ratedness has been seen on hardware', () => {
     const acc = createVitalsAccumulator()
     acc.add(pulseMsg(64, 90))
     acc.add(hrvMsg(20, 30))
     expect(acc.result(60).hrvRmssdMs).toBe(20)
+  })
+
+  it('does not let a rated HRV delete the rates beside it, or vouch for them', () => {
+    // HRV neither vouches nor is vouched for (KV-79 review). Letting its rating
+    // count dropped a real pulse of 72 and breathing rate of 16.
+    const acc = createVitalsAccumulator()
+    acc.add(unratedPulse(72))
+    acc.add(unratedBreathing(16))
+    acc.add(hrvMsg(40, 55, 80))
+    const result = acc.result(60)
+
+    expect(result.pulseRateBpm).toBe(72)
+    expect(result.breathingRateBrpm).toBe(16)
+    expect(result.hrvRmssdMs).toBe(40)
+    // Not 0.8: HRV's number would otherwise carry the unrated rates into a rule.
+    expect(result.confidence).toBeNull()
+  })
+
+  it('does not call a capture empty when only HRV was rated and it carried no rmssd', () => {
+    // proto3 leaves rmssd unset when it is zero; the capture must still be
+    // withheld as unrated rather than reported as measuring nothing.
+    const acc = createVitalsAccumulator()
+    acc.add(unratedPulse(72))
+    acc.add(unratedBreathing(16))
+    acc.add({ cardio: { hrv: [{ sdnn: 55, confidence: 80 }] } })
+    const vitals = acc.result(60)
+
+    expect(vitals.pulseRateBpm).toBe(72)
+    expect(unusableReason(vitals)).toBe('unrated')
+  })
+
+  it('reports the rated reading, not a bare one that came after it in the same metric', () => {
+    // The ticket's failure one level further down: breathing rated 0.55 at 12,
+    // then a bare 30. Asking "is the metric rated" let 30 through on 12's number.
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(70, 90))
+    acc.add(breathingMsg(12, 55, false))
+    acc.add(unratedBreathing(30))
+    const result = acc.result(60)
+
+    expect(result.breathingRateBrpm).toBe(12)
+    expect(result.confidence).toBeCloseTo((0.9 + 0.55) / 2)
+  })
+
+  it('prefers a stable rated reading over a later unstable one, as before', () => {
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(70, 90))
+    acc.add(breathingMsg(14, 80, true))
+    acc.add(breathingMsg(25, 40, false))
+    acc.add(unratedBreathing(31))
+    const result = acc.result(60)
+
+    expect(result.breathingRateBrpm).toBe(14)
+    expect(result.confidence).toBeCloseTo((0.9 + 0.8) / 2)
   })
 
   it('keeps a rate that arrived unrated and was rated later in the capture', () => {
@@ -452,6 +513,7 @@ describe('a rated metric does not vouch for an unrated one (KV-79)', () => {
     const assessment = scoreSession(session({ vitals }), history(5))
 
     expect(assessment.firedRules.map((r) => r.id)).not.toContain('breathing-elevated')
-    expect(assessment.flag).not.toBe('insufficient-signal')
+    // Still scored, on the pulse: nothing gives a reason to withhold.
+    expect(unusableReason(vitals)).toBeNull()
   })
 })

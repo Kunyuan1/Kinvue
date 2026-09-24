@@ -70,6 +70,9 @@ const num = (v: unknown): number | null => (typeof v === 'number' ? v : null)
 class Tracked<T extends object> {
   latest: T | undefined
   latestStable: T | undefined
+  /** The same two, counting only readings that carried a confidence of their own (KV-79). */
+  private latestRated: T | undefined
+  private latestStableRated: T | undefined
   /** Timestamps already counted, so a repeated reading is not averaged twice. */
   private readonly counted = new Set<string>()
   /** This metric's confidences in [0, 1], split by the SDK's own verdict. */
@@ -94,7 +97,11 @@ class Tracked<T extends object> {
       const confidence = set(reading, 'confidence' as keyof T)
       if (typeof confidence === 'number') {
         this.every.push(confidence / 100)
-        if (isStable) this.settled.push(confidence / 100)
+        this.latestRated = reading
+        if (isStable) {
+          this.settled.push(confidence / 100)
+          this.latestStableRated = reading
+        }
       }
     }
   }
@@ -107,6 +114,21 @@ class Tracked<T extends object> {
    */
   get chosen(): T | undefined {
     return this.latestStable ?? this.latest
+  }
+
+  /**
+   * `chosen`, drawn only from readings that carried a confidence of their own:
+   * what to report once something in the capture was rated (KV-79).
+   *
+   * Asked of the reading, not of the metric. A metric that rated one reading
+   * and then sent a bare one would otherwise report the bare value under the
+   * other reading's confidence — breathing rated 0.55 at 12, then a bare 30,
+   * reported 30. Drawn this way it pairs exactly with `confidence` below:
+   * `settled` is non-empty precisely when there is a stable rated reading, so
+   * the number describes the reading actually reported.
+   */
+  get chosenRated(): T | undefined {
+    return this.latestStableRated ?? this.latestRated
   }
 
   /**
@@ -164,11 +186,13 @@ export function createVitalsAccumulator(): VitalsAccumulator {
   const pulse = new Tracked<RateReading>()
   const breathing = new Tracked<RateReading>()
   const hrv = new Tracked<HrvReading>()
-  const tracked = [pulse, breathing, hrv]
+  // The metrics whose ratings count, both to vouch and to be vouched for.
+  // HRV is in neither role (KV-79): see `result`.
+  const rates = [pulse, breathing]
 
   return {
     add(metrics) {
-      // Confidence spans every metric that reports one. Pulse alone would make
+      // Confidence spans both rates, whichever reported one. Pulse alone would make
       // this a pulse-presence check wearing a confidence threshold's clothes:
       // a capture with a clean breathing rate and no pulse would average zero
       // and be discarded as unusable (KV-12).
@@ -207,16 +231,25 @@ export function createVitalsAccumulator(): VitalsAccumulator {
       // reliable this reading was" into "no reading came out of it", which is
       // false.
       //
-      // Pulse and breathing only. Those two series rate themselves on this
-      // hardware, so an unrated one is a gap in the reading. HRV is left as it
-      // was: whether HRV ever carries a confidence has not been observed, and
-      // dropping it on absence would remove `hrv-drop` on no evidence. That
-      // half of #79 waits for HRV readings to inspect.
-      const anyRated = tracked.some((t) => t.confidence !== undefined)
-      const vouched = <T extends object>(t: Tracked<T>): T | undefined =>
-        anyRated && t.confidence === undefined ? undefined : t.chosen
-      const chosenPulse = vouched(pulse)
-      const chosenBreathing = vouched(breathing)
+      // Asked of the reading reported, not of the metric: once anything is
+      // rated, each rate reports its newest *rated* reading, or nothing. A
+      // metric that rated one reading must not lend that rating to a bare one
+      // that came after it (see `Tracked.chosenRated`).
+      //
+      // Pulse and breathing only, in both directions. Those two series rate
+      // themselves on this hardware, so an unrated one is a gap in the
+      // reading. Whether HRV ever carries a confidence has not been observed,
+      // so HRV neither vouches nor is vouched for: it is never dropped, which
+      // would remove `hrv-drop` on no evidence, and its rating neither decides
+      // whether the rates are dropped nor counts in `confidence` below — else a
+      // rated HRV would delete a real pulse and breathing rate, or carry them
+      // into a rule on its number. That half of #79 waits for HRV readings to
+      // inspect, and whichever way it goes is a change to `rates`.
+      const anyRated = rates.some((t) => t.confidence !== undefined)
+      const reported = (t: Tracked<RateReading>): RateReading | undefined =>
+        anyRated ? t.chosenRated : t.chosen
+      const chosenPulse = reported(pulse)
+      const chosenBreathing = reported(breathing)
       const chosenHrv = hrv.chosen
 
       return {
@@ -245,12 +278,13 @@ export function createVitalsAccumulator(): VitalsAccumulator {
         // shows.
         //
         // The *absent* half of per-metric confidence is decided above (KV-79):
-        // an unrated pulse or breathing rate is not reported beside a rated
-        // metric, so it can no longer ride on that metric's number here. The
+        // an unrated pulse or breathing reading is not reported beside a rated
+        // one, so it can no longer ride on that reading's number here. The
         // *poor* half — whether a metric whose own confidence is low should be
         // dropped too — is a threshold judgement and is still open; it belongs
-        // with `MIN_CAPTURE_CONFIDENCE`, not here.
-        confidence: averageOf(definedConfidences(tracked)),
+        // with `MIN_CAPTURE_CONFIDENCE`, not here. HRV's confidence is left out
+        // for the reason given above.
+        confidence: averageOf(definedConfidences(rates)),
         // True when the reading being reported is one the SDK itself called
         // settled. Reported per capture; nothing gates on it yet (KV-12).
         stable: reportedStable(chosenPulse, chosenBreathing),
