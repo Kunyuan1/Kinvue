@@ -68,7 +68,14 @@ that stopped noticing them come down. So `pulse-low` and `breathing-low` mirror 
 for a rise, with the same threshold (z ≥ 2), curve (full at z ≥ 4) and peak weights. That
 avoids inventing numbers only calibration (#22) can supply. The mirroring is exact, so it
 cuts both ways: that same 80, at z of about −1.2, still fires nothing, as +1.2 would not.
-HRV stays one-directional, since unusually high HRV is not a concern.
+
+HRV stays one-directional, and that is a different kind of reason, not an exception to the
+first. A pulse or breathing rate is compared as "their normal" because either direction away
+from it is a change a caregiver would want to see, and nothing about the number says which
+way is worse. HRV is not read that way anywhere in this app: `hrv-drop` exists because falling
+HRV tracks stress, illness onset and poor sleep, and a rise carries no such reading. So its
+direction is part of what the rule means, where for the rates the direction is only which
+side of their usual the reading landed.
 
 ---
 

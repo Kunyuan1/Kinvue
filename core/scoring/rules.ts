@@ -143,7 +143,21 @@ interface ZRuleSpec {
    * much "not their normal" as a spike, and mirroring the high side avoids
    * inventing numbers that only calibration (#22) can supply.
    */
-  direction: 'above' | 'below'
+  direction: Direction
+}
+
+type Direction = 'high' | 'low'
+
+/**
+ * The word the explanation uses for each direction. Stated rather than taken
+ * from `direction` itself, for the reason `noun` is: the discriminant is a
+ * name for code, and renaming it must not reach a sentence a caregiver reads
+ * ("Pulse was 40 bpm, low their usual 72 bpm"). Keyed by the union, so a new
+ * direction does not compile without its word (KV-9 review).
+ */
+const RELATION: Record<Direction, string> = {
+  high: 'above',
+  low: 'below',
 }
 
 /** The spread a z was measured against, and whose number it is. */
@@ -253,14 +267,14 @@ function zRule({
       // Measured in the rule's own direction, so both sides share one scale,
       // one threshold and one severity curve.
       const signed = (value - usual.mean) / spread.sd
-      const z = direction === 'above' ? signed : -signed
+      const z = direction === 'high' ? signed : -signed
       if (z < Z_FIRES_AT) return null
 
       return {
         id,
         title,
         explanation:
-          `${noun} was ${round(value)} ${unit}, ${direction} their ` +
+          `${noun} was ${round(value)} ${unit}, ${RELATION[direction]} their ` +
           `usual ${round(usual.mean)} ${unit}. ${howFarOut(spread, unit, singularUnit)}`,
         severity:
           peakSeverity *
@@ -292,7 +306,7 @@ export const pulseElevated = zRule({
   unit: 'bpm',
   peakSeverity: 0.45,
   compares: PULSE,
-  direction: 'above',
+  direction: 'high',
 })
 
 /**
@@ -307,7 +321,7 @@ export const pulseLow = zRule({
   unit: 'bpm',
   peakSeverity: 0.45,
   compares: PULSE,
-  direction: 'below',
+  direction: 'low',
 })
 
 export const breathingElevated = zRule({
@@ -318,7 +332,7 @@ export const breathingElevated = zRule({
   singularUnit: 'breath/min',
   peakSeverity: 0.4,
   compares: BREATHING,
-  direction: 'above',
+  direction: 'high',
 })
 
 export const breathingLow = zRule({
@@ -329,7 +343,7 @@ export const breathingLow = zRule({
   singularUnit: 'breath/min',
   peakSeverity: 0.4,
   compares: BREATHING,
-  direction: 'below',
+  direction: 'low',
 })
 
 /**

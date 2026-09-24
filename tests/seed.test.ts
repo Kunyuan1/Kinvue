@@ -42,6 +42,33 @@ const AT = new Date('2026-09-20T09:00:00.000Z')
 const WORST_DAY_TODAY = 0.3168
 
 /**
+ * The default fortnight as every install that seeded the demo holds it,
+ * frozen: the draw as of KV-101, which KV-9 did not move. See the test that
+ * reads it for why it must not be regenerated.
+ */
+const INSTALLED = {
+  pulse: [70, 71, 68, 73, 69, 69, 71, 71, 74, 72, 75, 72],
+  breathing: [15, 16, 15, 15, 14, 14, 16, 16, 15, 16, 14, 14],
+  hrv: [30, 32, 34, 33, 36, 33, 35, 35, 34, 34, 34, 38],
+  answers: (
+    [
+      ['well', 'good', false, false],
+      ['ok', 'ok', false, false],
+      ['poorly', 'good', true, false],
+      ['ok', 'ok', true, false],
+      ['well', 'good', true, false],
+      ['well', 'good', true, false],
+      ['ok', 'low', true, false],
+      ['well', 'good', true, false],
+      ['poorly', 'good', true, false],
+      ['poorly', 'low', true, false],
+      ['well', 'good', true, false],
+      ['well', 'low', true, false],
+    ] as const
+  ).map(([sleep, mood, eatenToday, painReported]) => ({ sleep, mood, eatenToday, painReported })),
+}
+
+/**
  * The fortnight the app actually seeds: `demo:seed` calls `seedDemoHistory()`
  * with no length, so neither does this.
  */
@@ -149,6 +176,42 @@ describe('the seeded demo history', () => {
         `${ELEVATED_SEVERITY_THRESHOLD}; rules [${ruleIds(worst)}]. If that is ` +
         `intended, update WORST_DAY_TODAY`,
     ).toBeCloseTo(WORST_DAY_TODAY, 4)
+  })
+
+  it("keeps the fortnight installs already hold out of amber under today's rules", () => {
+    // Every other test here regenerates the fortnight, and generation redraws
+    // under the current scorer — so it cannot see a change that would turn a
+    // fortnight *already stored* amber. That is the threat DEMO_DAY_CEILING's
+    // margin was sized for, and the margin covers a weight change, not a new
+    // rule (KV-9 review: a new rule adds at least 0.2 when it fires, and 9.6%
+    // of fortnights seeded before KV-9 under other seeds would go amber).
+    //
+    // No install holds another seed: `demo:seed` always calls
+    // `seedDemoHistory()` with every default. So this is the fortnight to
+    // protect, frozen as written below. When "draws exactly this fortnight"
+    // changes, do NOT update these literals — stores still hold this one. Add
+    // the new draw beside it instead.
+    const installed = seeded.map((record, i) => ({
+      ...record,
+      vitals: {
+        ...record.vitals,
+        pulseRateBpm: INSTALLED.pulse[i] ?? null,
+        breathingRateBrpm: INSTALLED.breathing[i] ?? null,
+        hrvRmssdMs: INSTALLED.hrv[i] ?? null,
+      },
+      answers: INSTALLED.answers[i] ?? record.answers,
+    }))
+    expect(installed).toHaveLength(INSTALLED.pulse.length)
+
+    withSeededVerdicts(installed).forEach(({ assessment }, day) => {
+      expect(assessment, `day ${day}`).toBeDefined()
+      expect(
+        assessment?.flag,
+        `day ${day} of the installed fortnight now sums to ` +
+          `${assessment === undefined ? '?' : totalSeverity(assessment).toFixed(4)}; ` +
+          `rules [${assessment?.firedRules.map((r) => r.id).join(', ') ?? ''}]`,
+      ).not.toBe('elevated')
+    })
   })
 
   it('keeps every day under the ceiling for any seed, not only this one', () => {

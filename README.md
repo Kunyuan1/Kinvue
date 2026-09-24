@@ -183,10 +183,11 @@ tests/                   Vitest. Covers baseline, scoring, validation, check-in,
   directions, below their usual as well as above, at the same thresholds (KV-9). The
   z-rules also say how far out the reading is, because "75 bpm, above their usual 72"
   reads as trivially true when the point is that three beats is a lot *for them*;
-  `hrv-drop` carries no such clause, since a percentage already carries its own magnitude. They quote a spread only when one was
-  measured — never the `MIN_SD_FRACTION_OF_MEAN` floor, and never a real spread rounded
-  down to "about 0" — because a number nobody produced is worse than saying plainly that
-  there is nothing to measure the difference against.
+  `hrv-drop` carries no such clause, since a percentage already carries its own
+  magnitude. They quote a spread only when one was measured — never the
+  `MIN_SD_FRACTION_OF_MEAN` floor, and never a real spread rounded down to "about 0" —
+  because a number nobody produced is worse than saying plainly that there is nothing to
+  measure the difference against.
 - **A baseline only contains captures the scorer would use.** A capture withheld as
   `insufficient-signal` — nothing measured, cut short, unrated, or rated below
   `MIN_CAPTURE_CONFIDENCE` — never becomes part of "their usual", and never counts toward

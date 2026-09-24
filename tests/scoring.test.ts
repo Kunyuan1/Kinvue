@@ -1065,6 +1065,26 @@ describe('readings below their usual (KV-9)', () => {
     )
   })
 
+  it('says how far they usually vary on the low side too, with the singular unit at 1', () => {
+    // KV-9 review: every other low-side text runs against a flat history, which
+    // takes the floored branch and never shows the spread clause. A spread of
+    // exactly 1 is the case `singularUnit` exists for.
+    const past = [14, 16, 14, 16, 15].map((breathing, i) =>
+      session({
+        id: `b-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { breathingRateBrpm: breathing },
+      }),
+    )
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 12 } }), past)
+
+    expect(ids(assessment)).toEqual(['breathing-low'])
+    expect(assessment.firedRules[0]?.explanation).toBe(
+      'Breathing was 12 breaths/min, below their usual 15 breaths/min. ' +
+        'They usually vary by about 1 breath/min either way.',
+    )
+  })
+
   it('weighs a fall exactly as it weighs the same rise', () => {
     // Mirrored, not re-tuned: same threshold, same curve, same peak (#22 calibrates).
     const varied = [72, 78, 69, 81, 75].map((pulse, i) =>
