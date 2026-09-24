@@ -137,6 +137,13 @@ interface ZRuleSpec {
   peakSeverity: number
   /** The metric compared, where the reading and the usual are found. */
   compares: Comparison
+  /**
+   * Which side of their usual fires the rule (KV-9). Pulse and breathing get
+   * one rule each way, at the same thresholds and weights: a collapse is as
+   * much "not their normal" as a spike, and mirroring the high side avoids
+   * inventing numbers that only calibration (#22) can supply.
+   */
+  direction: 'above' | 'below'
 }
 
 /** The spread a z was measured against, and whose number it is. */
@@ -227,6 +234,7 @@ function zRule({
   singularUnit = unit,
   peakSeverity,
   compares,
+  direction,
 }: ZRuleSpec): Rule {
   return {
     id,
@@ -242,14 +250,17 @@ function zRule({
       const spread = spreadOf(usual)
       if (spread.sd <= 0) return null
 
-      const z = (value - usual.mean) / spread.sd
+      // Measured in the rule's own direction, so both sides share one scale,
+      // one threshold and one severity curve.
+      const signed = (value - usual.mean) / spread.sd
+      const z = direction === 'above' ? signed : -signed
       if (z < Z_FIRES_AT) return null
 
       return {
         id,
         title,
         explanation:
-          `${noun} was ${round(value)} ${unit}, above their ` +
+          `${noun} was ${round(value)} ${unit}, ${direction} their ` +
           `usual ${round(usual.mean)} ${unit}. ${howFarOut(spread, unit, singularUnit)}`,
         severity:
           peakSeverity *
@@ -261,13 +272,42 @@ function zRule({
   }
 }
 
+/** Shared by both pulse rules, so they compare the one metric the one way. */
+const PULSE: Comparison = {
+  metric: 'pulse',
+  reading: (v) => v.pulseRateBpm,
+  usual: (b) => b.pulseRateBpm,
+}
+
+const BREATHING: Comparison = {
+  metric: 'breathing',
+  reading: (v) => v.breathingRateBrpm,
+  usual: (b) => b.breathingRateBrpm,
+}
+
 export const pulseElevated = zRule({
   id: 'pulse-elevated',
   title: 'Pulse above usual',
   noun: 'Pulse',
   unit: 'bpm',
   peakSeverity: 0.45,
-  compares: { metric: 'pulse', reading: (v) => v.pulseRateBpm, usual: (b) => b.pulseRateBpm },
+  compares: PULSE,
+  direction: 'above',
+})
+
+/**
+ * A reading well below their own usual (KV-9). Until this existed a pulse of
+ * 80 against a usual of 97 — compared, n of 5 — produced nothing, and a person
+ * whose usual drifted up got an app that stopped noticing them come down.
+ */
+export const pulseLow = zRule({
+  id: 'pulse-low',
+  title: 'Pulse below usual',
+  noun: 'Pulse',
+  unit: 'bpm',
+  peakSeverity: 0.45,
+  compares: PULSE,
+  direction: 'below',
 })
 
 export const breathingElevated = zRule({
@@ -277,11 +317,19 @@ export const breathingElevated = zRule({
   unit: 'breaths/min',
   singularUnit: 'breath/min',
   peakSeverity: 0.4,
-  compares: {
-    metric: 'breathing',
-    reading: (v) => v.breathingRateBrpm,
-    usual: (b) => b.breathingRateBrpm,
-  },
+  compares: BREATHING,
+  direction: 'above',
+})
+
+export const breathingLow = zRule({
+  id: 'breathing-low',
+  title: 'Breathing below usual',
+  noun: 'Breathing',
+  unit: 'breaths/min',
+  singularUnit: 'breath/min',
+  peakSeverity: 0.4,
+  compares: BREATHING,
+  direction: 'below',
 })
 
 /**
@@ -377,7 +425,9 @@ export const lowMood: Rule = {
 export const ALL_RULES: readonly Rule[] = [
   hrvDrop,
   pulseElevated,
+  pulseLow,
   breathingElevated,
+  breathingLow,
   poorSleepWithPain,
   poorSleep,
   painReported,
