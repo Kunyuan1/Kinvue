@@ -71,10 +71,9 @@ const empty = (): FileShape => ({ version: FILE_VERSION, sessions: [] })
  * depend on would be gone, on the one path where the app already knew
  * something was wrong (KV-13).
  *
- * The message is written for the person who will see it, not for a log. It
- * does not yet reach them in that shape — `listSessions` is a bare
- * `ipcRenderer.invoke` passthrough and the renderer prints `String(e)`, so
- * Electron's wrapper prefix arrives with it. #95 owns that.
+ * The message is written for the person who will see it, not for a log, and
+ * since KV-95 it reaches the dashboard in that shape: the renderer reads the
+ * sentence out from behind Electron's wrapper by its tag.
  *
  * **Tagged `store-unreadable`, and that matters most on the submit path.**
  * `submit` reads history before scoring, so this can be raised after the
@@ -85,8 +84,8 @@ const empty = (): FileShape => ({ version: FILE_VERSION, sessions: [] })
  * retry is the reassuring-and-wrong direction this class exists to remove.
  *
  * The tag rides in the message because that is the only thing that survives
- * IPC — see `core/capture/failure.ts`. It is never shown: #95 owns stripping
- * it, along with Electron's own wrapper, before any of this reaches a screen.
+ * IPC — see `core/capture/failure.ts`. It is never shown: `failureDetail`
+ * strips it, and Electron's wrapper with it, before a screen sees the sentence.
  */
 export class UnreadableStoreError extends Error {
   constructor(path: string, why: string) {
@@ -95,6 +94,31 @@ export class UnreadableStoreError extends Error {
         `${why}. Nothing has been changed. Move the file aside to start fresh.`,
     )
     this.name = 'UnreadableStoreError'
+  }
+}
+
+/**
+ * The history file exists but could not be opened at all: another program is
+ * holding it, or its permissions refuse this app (KV-95 review).
+ *
+ * Until this existed the filesystem's own error went out untagged —
+ * `EACCES: permission denied, open '…'` — and once the dashboard stopped
+ * printing raw errors, a locked file left an empty dashboard with no cause
+ * anywhere a caregiver could see. So it gets a tag and a sentence, like
+ * `UnreadableStoreError`, but a different one of each: this failure can clear
+ * on its own (a sync client lets go, a restore finishes), and that one cannot.
+ * The filesystem's code is kept in the sentence, because it is what someone
+ * helping will ask for, and the original error rides along as `cause`.
+ */
+export class UnreachableStoreError extends Error {
+  constructor(path: string, code: string | undefined, cause: unknown) {
+    super(
+      `${failureTag('store-unreachable')}: The check-in history at ${path} could not be ` +
+        `opened${code === undefined ? '' : ` (${code})`}. Another program may be using it, ` +
+        'or its permissions may need checking. Nothing has been changed.',
+      { cause },
+    )
+    this.name = 'UnreachableStoreError'
   }
 }
 
@@ -135,8 +159,9 @@ async function read(path: string): Promise<FileShape> {
     text = await readFile(path, 'utf8')
   } catch (err) {
     // A missing file is the normal first-run state, not an error.
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return empty()
-    throw err
+    const code = (err as NodeJS.ErrnoException).code
+    if (code === 'ENOENT') return empty()
+    throw new UnreachableStoreError(path, code, err)
   }
 
   // An empty file is the one corruption with nothing to protect.

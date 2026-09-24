@@ -43,8 +43,12 @@ const SUBMIT_FAILURE: Record<SubmitFailure, string> = {
   // must not say "try again" (KV-13). The file will fail to parse identically
   // every time until someone moves it aside, and the answers are held in the
   // main process meanwhile — so this says what is wrong and what would change
-  // it, and stops. The path is deliberately not in here: it arrives wrapped in
-  // IPC noise today and belongs in the sentence #95 builds.
+  // it, and stops. The path is not in here, and nothing else on screen carries
+  // it at this point: this screen replaces the dashboard while answering, and
+  // the dashboard shows the store's sentence (path included, #95) only if the
+  // list itself failed to load. A file that broke after the app started shows
+  // here first, with no path anywhere. Whether this copy should carry it is
+  // #98's to settle, along with offering a way out.
   'store-unreadable':
     'The saved check-in history could not be opened, so this check-in has not been stored. ' +
     'Nothing already saved has been changed. This one needs looking at on the computer itself.',
