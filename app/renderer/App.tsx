@@ -12,6 +12,7 @@ import {
 import CaptureScreen from './components/CaptureScreen'
 import QuestionFlow from './components/QuestionFlow'
 import SessionCard from './components/SessionCard'
+import { dashboardErrorText } from './dashboardError'
 
 /**
  * What a finished capture actually produced.
@@ -123,9 +124,16 @@ export default function App(): React.JSX.Element {
     setSessions(await window.kinvue.listSessions(DEMO_PERSON_ID))
   }, [])
 
+  // An unreadable history says so in its own words; anything else gets a plain
+  // sentence here and the original in the console (KV-95).
+  const showFailure = useCallback((e: unknown, fallback: string): void => {
+    console.error(e)
+    setError(dashboardErrorText(e, fallback))
+  }, [])
+
   useEffect(() => {
-    void refresh().catch((e: unknown) => setError(String(e)))
-  }, [refresh])
+    void refresh().catch((e: unknown) => showFailure(e, 'The check-ins could not be shown.'))
+  }, [refresh, showFailure])
 
   useEffect(() => {
     // Not worth a screen: the fallback is the default, so a failure here is
@@ -318,7 +326,11 @@ export default function App(): React.JSX.Element {
           </p>
           <button
             type="button"
-            onClick={() => void seed().catch((e: unknown) => setError(String(e)))}
+            onClick={() =>
+              void seed().catch((e: unknown) =>
+                showFailure(e, 'The demo history could not be added.'),
+              )
+            }
             className="mt-4 rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-raised)"
           >
             Seed demo history

@@ -85,6 +85,17 @@ export type SubmitFailure =
   /** Anything unclassified. The scorer carries no tag. */
   | 'unknown'
 
+/**
+ * What the dashboard can be asked to say when the check-in list cannot be shown
+ * (KV-95). Loading the list and seeding the demo both read the store, so the
+ * one failure with words of its own is the unreadable history.
+ */
+export type DashboardFailure =
+  /** The history file cannot be read. Its own sentence, from the store, is shown. */
+  | 'store-unreadable'
+  /** Anything else. Shown as a plain sentence; the original goes to the console. */
+  | 'unknown'
+
 /** The prefix a thrown message carries, e.g. `kinvue/expired: …`. */
 export const failureTag = (failure: TaggedFailure): string => `kinvue/${failure}`
 
@@ -141,7 +152,25 @@ const ON_SUBMIT: Record<TaggedFailure, SubmitFailure> = {
 }
 
 /**
- * Derived from the routing rather than from a third list: a tag that nothing
+ * Where every tag goes on the dashboard, which reads the store to list the
+ * check-ins and to seed the demo. Total for the same reason as the two above.
+ */
+const ON_DASHBOARD: Record<TaggedFailure, DashboardFailure> = {
+  // Camera and capture tags: the dashboard neither opens the camera nor holds
+  // a reading, so none of these can arrive here.
+  'no-api-key': 'unknown',
+  'camera-unavailable': 'unknown',
+  'no-connection': 'unknown',
+  'capture-in-progress': 'unknown',
+  cancelled: 'unknown',
+  expired: 'unknown',
+  'no-capture': 'unknown',
+  // The one it exists for: `sessions:list` and `demo:seed` both read the file.
+  'store-unreadable': 'store-unreadable',
+}
+
+/**
+ * Derived from the routing rather than from a fourth list: a tag that nothing
  * routes is a tag no screen decided about, and that is now impossible to write.
  */
 const TAGGED = Object.keys(ON_CAPTURE) as readonly TaggedFailure[]
@@ -207,4 +236,29 @@ export function classifyCaptureError(error: unknown): CaptureFailure | null {
 export function classifySubmitError(error: unknown): SubmitFailure {
   const tag = taggedFailure(error)
   return tag === null ? 'unknown' : ON_SUBMIT[tag]
+}
+
+/** What the dashboard should say when the check-in list cannot be shown. */
+export function classifyDashboardError(error: unknown): DashboardFailure {
+  const tag = taggedFailure(error)
+  return tag === null ? 'unknown' : ON_DASHBOARD[tag]
+}
+
+/**
+ * The sentence a tagged error was written with, without anything wrapped
+ * around it: the text after `kinvue/<tag>: `. Null when the error does not
+ * carry that tag.
+ *
+ * Electron delivers a main-process rejection to the renderer as "Error: Error
+ * invoking remote method 'sessions:list': UnreadableStoreError: kinvue/…: <the
+ * sentence>". Everything before the tag is transport; the sentence after it is
+ * what the code that threw wrote for a person (KV-95).
+ */
+export function failureDetail(error: unknown, failure: TaggedFailure): string | null {
+  const text = String(error)
+  const tag = `${failureTag(failure)}: `
+  const at = text.indexOf(tag)
+  if (at === -1) return null
+  const detail = text.slice(at + tag.length).trim()
+  return detail === '' ? null : detail
 }
