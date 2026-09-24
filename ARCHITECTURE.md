@@ -95,6 +95,34 @@ The verdict is withheld; the reading is not. The rate is still shown, because it
 — what is withheld is the comparison against their usual, which is the part that would
 treat an unvouched-for number as reliable.
 
+**That rule is capture-wide, and one level down it had a hole** (KV-79). A capture's
+confidence is the average over the metrics that reported one, so as soon as *one* metric was
+rated the capture counted as rated, and an unrated metric beside it rode on that number: a
+pulse rated 0.9 carried a breathing rate nothing had rated past the gate and into
+`breathing-elevated`, which quoted it to the caregiver. So once either rate is rated, each
+rate reports its newest reading that carried a confidence **of its own** — asked of the
+reading, not the metric, since a metric that rated one reading and then sent a bare one would
+otherwise report the bare value on the other's number — and a rate with no such reading is
+dropped before any rule can see it. **Only when something was rated**: when nothing was, the
+rule above stands and the reading is shown with the verdict withheld. A capture where only
+pulse was rated therefore becomes a pulse-only capture, and `hasScorableVitals` can now turn
+on a confidence judgement, not only on which readings arrived.
+
+HRV is outside this in both directions. Whether an HRV reading ever carries a confidence has
+not been seen on this hardware, so it is never dropped — that would remove `hrv-drop` on no
+evidence — and, on the same evidence, its rating decides nothing: it neither triggers the
+drop nor counts in the capture's confidence, which would otherwise delete a real pulse and
+breathing rate or carry them into a rule on HRV's number. Whether a metric whose own
+confidence is *poor* should be dropped too is a separate, threshold question, and still open.
+
+Until #87 names it on the card, a dropped rate shows as `—`, the same as one the camera never
+produced. And it compounds, through the per-metric gate below (KV-71): on hardware where
+breathing habitually arrives unrated beside a rated pulse, breathing's own `n` never reaches
+`MIN_BASELINE_SESSIONS`, so breathing is never compared at all, and nothing on screen says
+so. That is the intended outcome — a usual should not be built from readings nothing vouched
+for — but it is silent, and it is also the capture that runs to `DEFAULT_CAPTURE_SECONDS`
+every time, waiting for a rating that does not come.
+
 The tempting shortcut is to score the four questions alone when the camera reading fails
 and call the result `normal`. That would quietly redefine what the flag means, on exactly
 the days the measurement failed, without telling anyone. The rules that fired are still

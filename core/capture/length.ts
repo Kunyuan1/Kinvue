@@ -32,6 +32,13 @@ import { MIN_CAPTURE_SECONDS } from '../scoring'
  * better conditions exist rather than something observed working. Until it is
  * seen to fire, this is a 90-second capture, and the person whose camera never
  * produces HRV waits longest for least — every time, not occasionally.
+ *
+ * **A second way to reach it (KV-79).** Once either rate is rated, a rate
+ * counts as arrived only when it sends a reading rated in its own right. On
+ * hardware where one of them habitually sends bare values beside a rated
+ * other, that is not waiting for a rating that comes later: it is the ceiling,
+ * every capture, ending with that rate `null` anyway. Anything measuring runs
+ * against this number should know which of the two reasons it is seeing.
  */
 export const DEFAULT_CAPTURE_SECONDS = 90
 
