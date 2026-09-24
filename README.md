@@ -201,8 +201,8 @@ tests/                   Vitest. Covers baseline, scoring, validation, check-in,
   cheerful green. So does a metric measured at the check-in with too few readings of its
   own to have a usual: "Looks normal" would claim a comparison that did not happen, so a
   would-be `normal` is withheld and the card names the metric. An `elevated` verdict
-  stands and names it too (KV-87). Scoring the answers alone and calling it `normal` would misrepresent
-  what was actually measured.
+  stands and names it too (KV-87). Scoring the answers alone and calling it `normal`
+  would misrepresent what was actually measured.
 - **Missing is not zero.** A metric the SDK never reported with usable confidence stays
   `null` through the whole pipeline. A reading of zero and no reading at all must never
   look alike to a rule.

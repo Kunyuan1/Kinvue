@@ -480,7 +480,7 @@ describe('scoreSession', () => {
     // compared, so a green verdict would claim a check that did not happen.
     expect(assessment.flag).toBe('insufficient-signal')
     expect(assessment.uncomparedMetrics).toEqual([
-      { metric: 'breathing', readings: 1, needed: MIN_BASELINE_SESSIONS },
+      { metric: 'breathing', readings: 1, needed: MIN_BASELINE_SESSIONS, mean: 15 },
     ])
   })
 
@@ -754,7 +754,7 @@ describe('seededBaselineDisclosure', () => {
     // with the flag and forgotten from the list would suppress correctly, so
     // every thin-baseline test would pass, and then quote an invented usual on
     // a mature seeded baseline with no disclosure (KV-71).
-    const flagged = ALL_RULES.filter((rule) => rule.usesBaseline === true).map((r) => r.id)
+    const flagged = ALL_RULES.filter((rule) => rule.compares !== undefined).map((r) => r.id)
 
     expect(flagged.length).toBeGreaterThan(0)
     expect([...BASELINE_RULE_IDS].sort()).toEqual([...flagged].sort())
@@ -905,13 +905,15 @@ describe('a metric measured but never compared (KV-87)', () => {
     // Not the card's label again: the summary says why the verdict is withheld.
     expect(assessment.summary).toBe('Only partly compared with their usual — see the note below.')
     expect(assessment.uncomparedMetrics).toEqual([
-      { metric: 'pulse', readings: 2, needed: MIN_BASELINE_SESSIONS },
+      { metric: 'pulse', readings: 2, needed: MIN_BASELINE_SESSIONS, mean: 82 },
     ])
+    // The 82 is quoted as what two readings showed, never as "their usual".
     expect(uncomparedDisclosure(assessment)).toBe(
       'Pulse was measured at this check-in but not compared with their usual: it had 2 of ' +
-        `the ${MIN_BASELINE_SESSIONS} readings needed to know it. So this check-in is not ` +
-        'being called normal.',
+        `the ${MIN_BASELINE_SESSIONS} readings needed to know it (those 2 averaged 82 bpm). ` +
+        'So this check-in is not being called normal.',
     )
+    expect(uncomparedDisclosure(assessment)).not.toMatch(/their usual \d/)
   })
 
   it('lets an elevated verdict stand, and still names the gap', () => {
@@ -927,7 +929,7 @@ describe('a metric measured but never compared (KV-87)', () => {
     expect(assessment.flag).toBe('elevated')
     expect(uncomparedDisclosure(assessment)).toBe(
       'Pulse was measured at this check-in but not compared with their usual: it had 2 of ' +
-        `the ${MIN_BASELINE_SESSIONS} readings needed to know it.`,
+        `the ${MIN_BASELINE_SESSIONS} readings needed to know it (those 2 averaged 82 bpm).`,
     )
   })
 
@@ -954,13 +956,28 @@ describe('a metric measured but never compared (KV-87)', () => {
     const assessment = scoreSession(session(), past)
 
     expect(assessment.uncomparedMetrics).toEqual([
-      { metric: 'pulse', readings: 2, needed: MIN_BASELINE_SESSIONS },
+      { metric: 'pulse', readings: 2, needed: MIN_BASELINE_SESSIONS, mean: 72 },
       { metric: 'hrv', readings: 0, needed: MIN_BASELINE_SESSIONS },
     ])
+    // Card order, whatever order the rules are listed in; no number for HRV,
+    // which had no readings to show.
     expect(uncomparedDisclosure(assessment)).toBe(
       'Pulse and HRV were measured at this check-in but not compared with their usual: pulse ' +
-        `had 2 of the ${MIN_BASELINE_SESSIONS} readings needed to know it and HRV had 0 of ` +
-        `${MIN_BASELINE_SESSIONS}. So this check-in is not being called normal.`,
+        `had 2 of the ${MIN_BASELINE_SESSIONS} readings needed to know it (those 2 averaged ` +
+        `72 bpm) and HRV had 0 of ${MIN_BASELINE_SESSIONS}. So this check-in is not being ` +
+        'called normal.',
+    )
+  })
+
+  it('quotes a single reading as that one reading, not as an average', () => {
+    const past = [
+      session({ id: 'h-0', capturedAt: '2026-09-01T09:00:00.000Z' }),
+      ...history(2, { breathingRateBrpm: null }).map((s, i) => ({ ...s, id: `n-${i}` })),
+    ]
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 16 } }), past)
+
+    expect(uncomparedDisclosure(assessment)).toMatch(
+      /^Breathing rate was measured .*: it had 1 of the 3 readings needed to know it \(that one was 15 breaths\/min\)\./,
     )
   })
 
@@ -996,6 +1013,25 @@ describe('a metric measured but never compared (KV-87)', () => {
       expect(a.summary).not.toMatch(RELATIVE_TIME)
       expect(uncomparedDisclosure(a) ?? '').not.toMatch(RELATIVE_TIME)
     }
+  })
+
+  it('keeps the seeded disclosure on a withheld card, even with no rule fired', () => {
+    // KV-87 review: "only partly compared" claims the other metrics were
+    // compared, so a seeded usual behind them must still be disclosed. Keyed
+    // on the flag, the note vanished when a pulse reading was *added*.
+    const past = [
+      ...seededHistory(2),
+      session({ id: 'real', capturedAt: '2026-09-03T09:00:00.000Z', vitals: { pulseRateBpm: null } }),
+    ]
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 90 } }), past)
+
+    expect(assessment.flag).toBe('insufficient-signal')
+    expect(assessment.firedRules).toEqual([])
+    expect(uncomparedDisclosure(assessment)).toMatch(/^Pulse was measured/)
+    expect(seededBaselineDisclosure(assessment)).toBe(
+      'Their usual here is partly seeded demo data — 2 of the 3 check-ins behind this ' +
+        'comparison were invented, not measured.',
+    )
   })
 
   it('leaves the seeded demo alone: every seeded day carries every metric', () => {

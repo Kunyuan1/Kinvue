@@ -4,6 +4,7 @@ import type {
   ComparedMetric,
   FiredRule,
   SessionRecord,
+  UncomparedMetric,
 } from '../session/types'
 import { unusableReason, type UnusableReason } from '../session/usable'
 import { ALL_RULES, BASELINE_RULE_IDS, uncomparedMetrics, type Rule } from './rules'
@@ -57,14 +58,25 @@ function fire(rules: readonly Rule[], session: SessionRecord, baseline: Baseline
     .sort((a, b) => b.severity - a.severity)
 }
 
-function summarise(flag: Assessment['flag'], fired: FiredRule[]): string {
-  if (flag === 'insufficient-signal') {
-    // Reached only by KV-87's withheld verdict: the other withheld paths write
-    // their own summary. Not "Not enough to say", which the card's label has
+/**
+ * The summary for a check-in that was compared, from the verdict the rules
+ * reached *before* KV-87 withheld anything, and the gaps that withholding
+ * rests on. Taking the gaps rather than the withheld flag ties the sentence
+ * to the condition it describes: a later withheld case routed through here
+ * cannot inherit "only partly compared" with no note beneath it, because the
+ * type has no `insufficient-signal` to route.
+ */
+function summarise(
+  scored: 'normal' | 'elevated',
+  fired: FiredRule[],
+  uncompared: readonly UncomparedMetric[],
+): string {
+  if (scored === 'normal' && uncompared.length > 0) {
+    // Withheld (KV-87). Not "Not enough to say", which the card's label has
     // just said — this says *why*, and the note under it says which metric.
     return 'Only partly compared with their usual — see the note below.'
   }
-  if (flag === 'normal') {
+  if (scored === 'normal') {
     return fired.length === 0
       ? 'A normal day for them.'
       : 'Broadly normal, with one or two things worth noting.'
@@ -78,13 +90,16 @@ function summarise(flag: Assessment['flag'], fired: FiredRule[]): string {
 /** True when anything this assessment says out loud rests on the baseline. */
 function restsOnBaseline(assessment: Assessment): boolean {
   if (assessment.flag !== 'insufficient-signal') return true
-  // Two ways a withheld verdict carries a rule that quotes "their usual".
-  // Since KV-87, a day whose compared metrics fired lightly is withheld when
-  // another measured metric had no usual — breathing's rule is on the card,
-  // and the usual it quotes may be seeded. And records scored before KV-71
-  // can carry one: the disclosure is composed where the card is shown, not
-  // frozen into the record, so old assessments are read by today's code.
-  // Deleting this would silently drop the seeded disclosure from both.
+  // A verdict withheld by KV-87 still claims a comparison — "only partly
+  // compared" says the other metrics *were* compared, against a usual that
+  // may be seeded — whether or not any rule fired. `uncomparedMetrics` is
+  // written only on the path that compared, so its presence is the marker;
+  // the unusable and still-learning returns leave it absent.
+  if (assessment.uncomparedMetrics !== undefined) return true
+  // Records scored before KV-71 can carry a rule that quotes "their usual" on
+  // a withheld verdict: the disclosure is composed where the card is shown,
+  // not frozen into the record, so old assessments are read by today's code.
+  // Deleting this would silently drop the seeded disclosure from them.
   return assessment.firedRules.some((r) => BASELINE_RULE_IDS.has(r.id))
 }
 
@@ -125,12 +140,37 @@ const METRIC_NAME: Record<ComparedMetric, string> = {
   hrv: 'HRV',
 }
 
+/** The unit a metric's mean is quoted in, as the rules that compare it quote it. */
+const METRIC_UNIT: Record<ComparedMetric, string> = {
+  pulse: 'bpm',
+  breathing: 'breaths/min',
+  hrv: 'ms',
+}
+
 const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
 
 /** "a", "a and b", "a, b and c". */
 function listOf(words: readonly string[]): string {
   if (words.length <= 1) return words.join('')
+  // Never taken: the guard above proves the index. Here only for
+  // `noUncheckedIndexedAccess`; were the guard to move, a name would vanish
+  // from the sentence silently, so keep the two together.
   return `${words.slice(0, -1).join(', ')} and ${words[words.length - 1] ?? ''}`
+}
+
+/**
+ * What the thin history showed, as evidence with its weakness beside it:
+ * "(those 2 averaged 82 bpm)". Never "their usual 82 bpm" — that is the claim
+ * KV-71 forbids a history this short to make — but the number that makes the
+ * reading above it mean something, which the counts alone withhold (KV-87
+ * review). Nothing when there were no readings, or none was recorded.
+ */
+function whatItShowed(gap: UncomparedMetric): string {
+  if (gap.mean === undefined || gap.readings === 0) return ''
+  const value = `${Math.round(gap.mean)} ${METRIC_UNIT[gap.metric]}`
+  return gap.readings === 1
+    ? ` (that one was ${value})`
+    : ` (those ${gap.readings} averaged ${value})`
 }
 
 /**
@@ -161,15 +201,17 @@ export function uncomparedDisclosure(assessment: Assessment): string | null {
   if (gaps.length === 0) return null
 
   const names = gaps.map((g) => METRIC_NAME[g.metric])
-  const counts: string[] = gaps.map((g, i) =>
-    i === 0
-      ? `${gaps.length === 1 ? 'it' : names[i]} had ${g.readings} of the ${g.needed} readings needed to know it`
-      : `${names[i]} had ${g.readings} of ${g.needed}`,
-  )
+  const counts: string[] = gaps.map((g, i) => {
+    const who = gaps.length === 1 ? 'it' : names[i]
+    const of = i === 0 ? `of the ${g.needed} readings needed to know it` : `of ${g.needed}`
+    return `${who} had ${g.readings} ${of}${whatItShowed(g)}`
+  })
   const head =
     `${capitalise(listOf(names))} ${gaps.length === 1 ? 'was' : 'were'} measured at this ` +
     `check-in but not compared with their usual: ${listOf(counts)}.`
-  return flag === 'insufficient-signal' ? `${head} So this check-in is not being called normal.` : head
+  return flag === 'insufficient-signal'
+    ? `${head} So this check-in is not being called normal.`
+    : head
 }
 
 /**
@@ -248,17 +290,14 @@ export function scoreSession(
   // which is the reassuring-and-wrong direction. `elevated` stands — it rests
   // on what was compared, and withholding it would hide a real signal to cover
   // a missing one. Either way `uncomparedDisclosure` names the gap.
+  const scored = total >= ELEVATED_SEVERITY_THRESHOLD ? 'elevated' : 'normal'
   const flag: Assessment['flag'] =
-    total >= ELEVATED_SEVERITY_THRESHOLD
-      ? 'elevated'
-      : uncompared.length > 0
-        ? 'insufficient-signal'
-        : 'normal'
+    scored === 'normal' && uncompared.length > 0 ? 'insufficient-signal' : scored
 
   return {
     flag,
     firedRules: fired,
-    summary: summarise(flag, fired),
+    summary: summarise(scored, fired, uncompared),
     baselineSessions: baseline.sessions,
     baselineSeededSessions: baseline.seededSessions,
     uncomparedMetrics: uncompared,

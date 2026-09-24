@@ -271,4 +271,24 @@ describe('a card whose pulse was never compared (KV-87)', () => {
     expect(screen.getByText(/^Pulse was measured at this check-in but not compared/)).toBeTruthy()
     expect(screen.queryByText('Looks normal')).toBeNull()
   })
+
+  it('keeps an amber card amber, and names the gap under it without the withheld clause', async () => {
+    const past = [
+      ...history(2, { pulseRateBpm: 82 }),
+      session({ id: 'h-2', capturedAt: '2026-09-03T09:00:00.000Z', vitals: { pulseRateBpm: null } }),
+    ]
+    const scored = session({
+      id: 'amber',
+      vitals: { pulseRateBpm: 101.5 },
+      answers: { sleep: 'poorly', painReported: true, eatenToday: false },
+    })
+    scored.assessment = scoreSession(scored, past)
+    listSessions.mockResolvedValue([scored])
+    render(<App />)
+
+    expect(await screen.findByText('Looks different')).toBeTruthy()
+    const note = screen.getByText(/^Pulse was measured at this check-in but not compared/)
+    expect(note.textContent).toMatch(/\(those 2 averaged 82 bpm\)\.$/)
+    expect(note.textContent).not.toMatch(/not being called normal/)
+  })
 })

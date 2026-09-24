@@ -123,6 +123,12 @@ export interface UncomparedMetric {
   readings: number
   /** Readings it needed — `MIN_BASELINE_SESSIONS` when this was scored. */
   needed: number
+  /**
+   * What those readings averaged, when there were any. Shown as evidence with
+   * its weakness beside it — "those 2 averaged 82 bpm" — never as "their
+   * usual", which is what KV-71 forbids a thin history to be called.
+   */
+  mean?: number
 }
 
 export interface Assessment {
