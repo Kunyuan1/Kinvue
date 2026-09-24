@@ -95,6 +95,20 @@ The verdict is withheld; the reading is not. The rate is still shown, because it
 — what is withheld is the comparison against their usual, which is the part that would
 treat an unvouched-for number as reliable.
 
+**That rule is capture-wide, and one level down it had a hole** (KV-79). A capture's
+confidence is the average over the metrics that reported one, so as soon as *one* metric was
+rated the capture counted as rated, and an unrated metric beside it rode on that number: a
+pulse rated 0.9 carried a breathing rate nothing had rated past the gate and into
+`breathing-elevated`, which quoted it to the caregiver. So a pulse or breathing rate with no
+confidence of its own is dropped when the capture holds, before any rule can see it, **but
+only when some other metric was rated** — when nothing was, the rule above stands and the
+reading is shown with the verdict withheld. A capture where only pulse was rated therefore
+becomes a pulse-only capture, and `hasScorableVitals` can now turn on a confidence judgement,
+not only on which readings arrived. HRV is exempt for now: whether an HRV reading ever
+carries a confidence has not been seen on this hardware, and dropping it on absence would
+remove `hrv-drop` on no evidence. Whether a metric whose own confidence is *poor* should be
+dropped too is a separate, threshold question, and still open.
+
 The tempting shortcut is to score the four questions alone when the camera reading fails
 and call the result `normal`. That would quietly redefine what the flag means, on exactly
 the days the measurement failed, without telling anyone. The rules that fired are still

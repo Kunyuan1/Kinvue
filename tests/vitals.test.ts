@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest'
 // it does not load the native runtime — unlike the package root.
 import { decodeMetrics, presage } from '@smartspectra/node-sdk/messages'
 import { createVitalsAccumulator, type MetricsLike } from '../app/main/metrics'
+import { scoreSession } from '@core/scoring'
+import { history, session } from './helpers'
 
 /**
  * `app/main/metrics.ts` is the reduction, split out of `vitals.ts` so it can be
@@ -375,5 +377,81 @@ describe('hasEveryMetric', () => {
     expect(acc.hasEveryMetric()).toBe(
       pulseRateBpm !== null && breathingRateBrpm !== null && hrvRmssdMs !== null,
     )
+  })
+})
+
+/** A rate with a value and a timestamp and nothing else — how the real capture sent them (KV-12). */
+const unratedBreathing = (value: number): MetricsLike => ({ breathing: { rate: [{ value }] } })
+const unratedPulse = (value: number): MetricsLike => ({ cardio: { pulseRate: [{ value }] } })
+
+describe('a rated metric does not vouch for an unrated one (KV-79)', () => {
+  it('drops an unrated breathing rate that arrives beside a rated pulse', () => {
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(64, 90))
+    acc.add(unratedBreathing(24))
+    const result = acc.result(60)
+
+    expect(result.pulseRateBpm).toBe(64)
+    expect(result.breathingRateBrpm).toBeNull()
+    expect(result.confidence).toBeCloseTo(0.9)
+  })
+
+  it('drops an unrated pulse beside a rated breathing rate, the same way', () => {
+    const acc = createVitalsAccumulator()
+    acc.add(breathingMsg(14, 70))
+    acc.add(unratedPulse(110))
+    expect(acc.result(60).pulseRateBpm).toBeNull()
+  })
+
+  it('keeps an unrated reading when nothing in the capture was rated, as KV-12 decided', () => {
+    // The verdict is withheld as `unrated` and the reading is still shown.
+    // Dropping it would make the card say no reading came out, which is false.
+    const acc = createVitalsAccumulator()
+    acc.add(unratedBreathing(13))
+    const result = acc.result(60)
+
+    expect(result.breathingRateBrpm).toBe(13)
+    expect(result.confidence).toBeNull()
+  })
+
+  it('leaves HRV alone, rated or not, until its ratedness has been seen on hardware', () => {
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(64, 90))
+    acc.add(hrvMsg(20, 30))
+    expect(acc.result(60).hrvRmssdMs).toBe(20)
+  })
+
+  it('keeps a rate that arrived unrated and was rated later in the capture', () => {
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(64, 90))
+    acc.add(unratedBreathing(22))
+    acc.add(breathingMsg(15, 75))
+    expect(acc.result(60).breathingRateBrpm).toBe(15)
+  })
+
+  it('keeps waiting for a rated reading rather than stopping on an unrated one', () => {
+    // `hasEveryMetric` is derived from `result`, so an unrated breathing rate
+    // beside a rated pulse does not count as having arrived.
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(64, 90))
+    acc.add(hrvMsg(40, 50))
+    acc.add(unratedBreathing(22))
+    expect(acc.hasEveryMetric()).toBe(false)
+    acc.add(breathingMsg(15, 75))
+    expect(acc.hasEveryMetric()).toBe(true)
+  })
+
+  it('stops a rule quoting a breathing rate nothing vouched for', () => {
+    // The ticket's failure, end to end: a rated pulse at 0.9 used to carry an
+    // unrated breathing rate past the confidence gate and into
+    // `breathing-elevated`, which quoted it to the caregiver.
+    const acc = createVitalsAccumulator()
+    acc.add(pulseMsg(72, 90))
+    acc.add(unratedBreathing(30))
+    const vitals = acc.result(60)
+    const assessment = scoreSession(session({ vitals }), history(5))
+
+    expect(assessment.firedRules.map((r) => r.id)).not.toContain('breathing-elevated')
+    expect(assessment.flag).not.toBe('insufficient-signal')
   })
 })

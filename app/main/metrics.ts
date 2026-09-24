@@ -195,8 +195,28 @@ export function createVitalsAccumulator(): VitalsAccumulator {
     },
 
     result(durationSec) {
-      const chosenPulse = pulse.chosen
-      const chosenBreathing = breathing.chosen
+      // A rated metric must not vouch for an unrated one (KV-79). Once any
+      // metric in the capture reported a confidence, the capture is going to be
+      // scored on it — so a pulse or breathing rate that reported none of its
+      // own is dropped here, before any rule can quote it, rather than riding
+      // along on the other metric's number.
+      //
+      // Only then. When *nothing* was rated, KV-12's rule stands: the verdict
+      // is withheld as `unrated` and the reading is still shown, because it is
+      // real. Dropping it there too would turn "the camera did not say how
+      // reliable this reading was" into "no reading came out of it", which is
+      // false.
+      //
+      // Pulse and breathing only. Those two series rate themselves on this
+      // hardware, so an unrated one is a gap in the reading. HRV is left as it
+      // was: whether HRV ever carries a confidence has not been observed, and
+      // dropping it on absence would remove `hrv-drop` on no evidence. That
+      // half of #79 waits for HRV readings to inspect.
+      const anyRated = tracked.some((t) => t.confidence !== undefined)
+      const vouched = <T extends object>(t: Tracked<T>): T | undefined =>
+        anyRated && t.confidence === undefined ? undefined : t.chosen
+      const chosenPulse = vouched(pulse)
+      const chosenBreathing = vouched(breathing)
       const chosenHrv = hrv.chosen
 
       return {
@@ -224,13 +244,12 @@ export function createVitalsAccumulator(): VitalsAccumulator {
         // reading and its confidence, because that reading is what the card
         // shows.
         //
-        // Left open, because it changes which rules fire rather than whether a
-        // verdict is given: whether a metric whose own confidence is absent or
-        // poor should be nulled here instead of averaged over. The absent case
-        // is the one KV-12 is about, and at capture granularity it is closed
-        // while at metric granularity it is not — a capture where pulse rated
-        // 0.9 and breathing rated nothing averages to 0.9, passes the gate, and
-        // lets a rule quote a breathing rate nothing vouched for.
+        // The *absent* half of per-metric confidence is decided above (KV-79):
+        // an unrated pulse or breathing rate is not reported beside a rated
+        // metric, so it can no longer ride on that metric's number here. The
+        // *poor* half — whether a metric whose own confidence is low should be
+        // dropped too — is a threshold judgement and is still open; it belongs
+        // with `MIN_CAPTURE_CONFIDENCE`, not here.
         confidence: averageOf(definedConfidences(tracked)),
         // True when the reading being reported is one the SDK itself called
         // settled. Reported per capture; nothing gates on it yet (KV-12).
