@@ -33,6 +33,12 @@ const api = {
 
   seedDemo: (): Promise<number> => ipcRenderer.invoke('demo:seed'),
 
+  /**
+   * Sets an unreadable history aside and starts an empty one (KV-98). Resolves
+   * to where the old file now is, or null when there was nothing to set aside.
+   */
+  startNewHistory: (): Promise<string | null> => ipcRenderer.invoke('sessions:startNewHistory'),
+
   /** Returns an unsubscribe function. */
   onCaptureProgress: (fn: (elapsedSec: number) => void): (() => void) => {
     const listener = (_e: unknown, elapsedSec: number): void => fn(elapsedSec)

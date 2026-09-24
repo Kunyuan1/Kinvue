@@ -362,3 +362,70 @@ describe('a history file that exists but cannot be opened (KV-95 review)', () =>
     await expect(createJsonSessionStore(path).list('p1')).resolves.toEqual([])
   })
 })
+
+describe('starting a new history when the old one cannot be read (KV-98)', () => {
+  const ON = new Date('2026-09-22T10:00:00.000Z')
+  const BROKEN = '{ "version": 1, "sessions": [ not json'
+
+  it('sets the unreadable file aside with its bytes intact, and starts an empty history', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, BROKEN, 'utf8')
+    const store = createJsonSessionStore(path, () => ON)
+
+    const aside = await store.startNewHistory()
+
+    expect(aside).toBe(`${path}.unreadable-2026-09-22`)
+    expect(await readFile(aside!, 'utf8')).toBe(BROKEN)
+    await expect(store.list('test-person')).resolves.toEqual([])
+    await store.append(session({ id: 'first' }))
+    expect((await store.list('test-person')).map((s) => s.id)).toEqual(['first'])
+  })
+
+  it('never moves a history it can read', async () => {
+    // The dashboard showed the error a while ago; since then the file was
+    // fixed or restored. Moving it now would hide real history.
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path, () => ON)
+    await store.append(session({ id: 'kept' }))
+    const before = await readFile(path, 'utf8')
+
+    await expect(store.startNewHistory()).resolves.toBeNull()
+    expect(await readFile(path, 'utf8')).toBe(before)
+  })
+
+  it('has nothing to set aside when there is no file', async () => {
+    const { path } = await storeIn()
+    await expect(createJsonSessionStore(path, () => ON).startNewHistory()).resolves.toBeNull()
+  })
+
+  it('never overwrites an earlier file set aside the same day', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path, () => ON)
+    await writeFile(path, 'first bad file', 'utf8')
+    const one = await store.startNewHistory()
+    await writeFile(path, 'second bad file', 'utf8')
+    const two = await store.startNewHistory()
+
+    expect(two).toBe(`${path}.unreadable-2026-09-22-2`)
+    expect(await readFile(one!, 'utf8')).toBe('first bad file')
+    expect(await readFile(two!, 'utf8')).toBe('second bad file')
+  })
+
+  it('leaves a file it cannot open where it is, and says why', async () => {
+    const { path } = await storeIn()
+    await mkdir(path)
+    const thrown = await createJsonSessionStore(path, () => ON)
+      .startNewHistory()
+      .catch((e: unknown) => e)
+    expect(thrown).toBeInstanceOf(UnreachableStoreError)
+    await expect(readFile(`${path}.unreadable-2026-09-22`)).rejects.toThrow()
+  })
+
+  it('no longer tells the caregiver to move the file themselves', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, BROKEN, 'utf8')
+    const thrown = await createJsonSessionStore(path).list('p1').catch((e: unknown) => e)
+    expect(String(thrown)).toMatch(/Nothing has been changed\.$/)
+    expect(String(thrown)).not.toMatch(/move the file/i)
+  })
+})

@@ -21,15 +21,18 @@ const fromMain = (err: Error, channel: string): Error =>
 
 let listSessions: ReturnType<typeof vi.fn<() => Promise<SessionRecord[]>>>
 let seedDemo: ReturnType<typeof vi.fn<() => Promise<number>>>
+let startNewHistory: ReturnType<typeof vi.fn<() => Promise<string | null>>>
 
 beforeEach(() => {
   listSessions = vi.fn<() => Promise<SessionRecord[]>>()
   seedDemo = vi.fn<() => Promise<number>>()
+  startNewHistory = vi.fn<() => Promise<string | null>>()
   Object.defineProperty(window, 'kinvue', {
     configurable: true,
     value: {
       listSessions,
       seedDemo,
+      startNewHistory,
       captureSeconds: vi.fn(() => Promise.resolve(90)),
       cancelCapture: vi.fn(() => Promise.resolve()),
     },
@@ -111,5 +114,70 @@ describe('seeding the demo', () => {
     fireEvent.click(screen.getByText('Seed demo history'))
     await screen.findByText(/Looks normal|Not enough to say/)
     expect(screen.queryByText('The demo history could not be added.')).toBeNull()
+  })
+})
+
+describe('starting a new history (KV-98)', () => {
+  const unreadable = (): Error =>
+    fromMain(new UnreadableStoreError(PATH, 'it is not valid JSON'), 'sessions:list')
+
+  it('is offered for an unreadable history, and says the old file is kept', async () => {
+    listSessions.mockRejectedValue(unreadable())
+    render(<App />)
+
+    expect(await screen.findByText('Start a new history')).toBeTruthy()
+    expect(document.body.textContent).toMatch(/Nothing in the old file is deleted/)
+  })
+
+  it('is not offered for a history that could not be opened, or for anything else', async () => {
+    listSessions.mockRejectedValue(
+      fromMain(new UnreachableStoreError(PATH, 'EBUSY', new Error('busy')), 'sessions:list'),
+    )
+    render(<App />)
+    await screen.findByText(/could not be opened \(EBUSY\)/)
+    expect(screen.queryByText('Start a new history')).toBeNull()
+
+    cleanup()
+    listSessions.mockRejectedValue(fromMain(new Error('odd'), 'sessions:list'))
+    render(<App />)
+    await screen.findByText('The check-ins could not be shown.')
+    expect(screen.queryByText('Start a new history')).toBeNull()
+  })
+
+  it('sets the file aside on the press, clears the error, and names where the old file went', async () => {
+    listSessions.mockRejectedValueOnce(unreadable()).mockResolvedValue([])
+    startNewHistory.mockResolvedValue(`${PATH}.unreadable-2026-09-22`)
+    render(<App />)
+
+    fireEvent.click(await screen.findByText('Start a new history'))
+
+    expect(await screen.findByText(/kept, unchanged, as .*unreadable-2026-09-22/)).toBeTruthy()
+    expect(startNewHistory).toHaveBeenCalledTimes(1)
+    expect(screen.queryByText(/could not be read/)).toBeNull()
+    // Empty now, so the demo can be seeded again.
+    expect(screen.getByText('Seed demo history')).toBeTruthy()
+  })
+
+  it('just loads the history when it has become readable in the meantime', async () => {
+    // Main found nothing to set aside, so there is no "new history" to claim.
+    listSessions.mockRejectedValueOnce(unreadable()).mockResolvedValue([session({ id: 'kept' })])
+    startNewHistory.mockResolvedValue(null)
+    render(<App />)
+
+    fireEvent.click(await screen.findByText('Start a new history'))
+
+    await screen.findByText(/Looks normal|Not enough to say/)
+    expect(screen.queryByText(/new, empty history/)).toBeNull()
+    expect(screen.queryByText(/could not be read/)).toBeNull()
+  })
+
+  it('says so, and moves nothing it has not been told about, when starting one fails', async () => {
+    listSessions.mockRejectedValue(unreadable())
+    startNewHistory.mockRejectedValue(fromMain(new Error('EPERM'), 'sessions:startNewHistory'))
+    render(<App />)
+
+    fireEvent.click(await screen.findByText('Start a new history'))
+
+    expect(await screen.findByText('A new history could not be started.')).toBeTruthy()
   })
 })

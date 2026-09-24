@@ -240,6 +240,13 @@ function registerIpc(): void {
     },
   );
 
+  // KV-98. Only ever on a press, and the store re-checks before it moves
+  // anything: a history it can read is left where it is and null comes back.
+  ipcMain.handle(
+    "sessions:startNewHistory",
+    async (): Promise<string | null> => await store.startNewHistory(),
+  );
+
   // KV-8. Opt-in, and every record it writes is marked `seeded: true`.
   ipcMain.handle("demo:seed", async (): Promise<number> => {
     const existing = await store.list(DEMO_PERSON_ID);

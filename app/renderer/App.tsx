@@ -5,8 +5,10 @@ import { hasScorableVitals } from '@core/scoring'
 import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
 import {
   classifyCaptureError,
+  classifyDashboardError,
   classifySubmitError,
   type CaptureFailure,
+  type DashboardFailure,
   type SubmitFailure,
 } from '@core/capture/failure'
 import CaptureScreen from './components/CaptureScreen'
@@ -106,7 +108,11 @@ function ReadingSummary({
  */
 export default function App(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  // The sentence, and which failure it is: an unreadable history is the one
+  // that offers a way out (KV-98), so the box needs to know which it is showing.
+  const [error, setError] = useState<{ text: string; failure: DashboardFailure } | null>(null)
+  // Said once a new history has been started, naming where the old one went.
+  const [notice, setNotice] = useState<string | null>(null)
   const [capturing, setCapturing] = useState(false)
   // Asked of main rather than assumed: the countdown and the sentence under
   // the button both have to be the length a capture will actually run (#63).
@@ -133,7 +139,7 @@ export default function App(): React.JSX.Element {
   // sentence here and the original in the console (KV-95).
   const showFailure = useCallback((e: unknown, fallback: string): void => {
     console.error(e)
-    setError(dashboardErrorText(e, fallback))
+    setError({ text: dashboardErrorText(e, fallback), failure: classifyDashboardError(e) })
   }, [])
 
   useEffect(() => {
@@ -150,6 +156,28 @@ export default function App(): React.JSX.Element {
       console.error('Could not read the capture length; using the default.', err)
     })
   }, [])
+
+  // KV-98. The caregiver's choice, never automatic. Main re-checks before it
+  // moves anything, so a history that has become readable since the error was
+  // shown comes back as null and is simply loaded.
+  const startNewHistory = async (): Promise<void> => {
+    let aside: string | null
+    try {
+      aside = await window.kinvue.startNewHistory()
+    } catch (e) {
+      showFailure(e, 'A new history could not be started.')
+      return
+    }
+    try {
+      await refresh()
+    } catch (e) {
+      showFailure(e, 'A new history was started, but the list could not be reloaded.')
+      return
+    }
+    if (aside !== null) {
+      setNotice(`A new, empty history was started. The old file was kept, unchanged, as ${aside}.`)
+    }
+  }
 
   // Two steps that fail differently. Seeding can succeed and the reload after
   // it fail — a sync client briefly holding the file — and "could not be added"
@@ -245,7 +273,10 @@ export default function App(): React.JSX.Element {
           // sent the person back to take a second reading of the same moment,
           // which would then enter the baseline twice.
           await refresh().catch(() => {
-            setError('The check-in was saved, but the list could not be reloaded.')
+            setError({
+              text: 'The check-in was saved, but the list could not be reloaded.',
+              failure: 'unknown',
+            })
           })
           setAnswering(null)
           setReading(null)
@@ -329,8 +360,29 @@ export default function App(): React.JSX.Element {
       )}
 
       {error !== null && (
-        <p className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm text-(--color-elevated)">
-          {error}
+        <div className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm">
+          <p className="text-(--color-elevated)">{error.text}</p>
+          {error.failure === 'store-unreadable' && (
+            <>
+              <p className="mt-2 text-(--color-muted)">
+                Starting a new history keeps this file as it is, renamed beside it, and begins
+                an empty one. Nothing in the old file is deleted.
+              </p>
+              <button
+                type="button"
+                onClick={() => void startNewHistory()}
+                className="mt-3 rounded-lg border border-(--color-line) px-4 py-2 hover:bg-(--color-raised)"
+              >
+                Start a new history
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {notice !== null && (
+        <p className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm text-(--color-muted)">
+          {notice}
         </p>
       )}
 

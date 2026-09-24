@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { failureTag } from '../capture/failure'
 import type { SessionRecord } from './types'
@@ -19,6 +19,12 @@ export interface SessionStore {
   append(record: SessionRecord): Promise<void>
   /** Every person with at least one session. */
   people(): Promise<string[]>
+  /**
+   * Sets an unreadable history aside so a new, empty one can begin (KV-98).
+   * Returns where the old file now is, or null when there was nothing to set
+   * aside — see the implementation for why a readable file is never moved.
+   */
+  startNewHistory(): Promise<string | null>
 }
 
 /**
@@ -91,7 +97,7 @@ export class UnreadableStoreError extends Error {
   constructor(path: string, why: string) {
     super(
       `${failureTag('store-unreadable')}: The check-in history at ${path} could not be read: ` +
-        `${why}. Nothing has been changed. Move the file aside to start fresh.`,
+        `${why}. Nothing has been changed.`,
     )
     this.name = 'UnreadableStoreError'
   }
@@ -215,7 +221,28 @@ async function write(path: string, data: FileShape): Promise<void> {
   await rename(tmp, path)
 }
 
-export function createJsonSessionStore(path: string): SessionStore {
+/**
+ * Where an unreadable history is set aside: beside it, named for the day, and
+ * never over anything already there. Two bad days in one day get `-2`, `-3`, so
+ * setting one aside can never overwrite an earlier one.
+ */
+async function asidePath(path: string, now: Date): Promise<string> {
+  const base = `${path}.unreadable-${now.toISOString().slice(0, 10)}`
+  for (let n = 1; ; n++) {
+    const candidate = n === 1 ? base : `${base}-${String(n)}`
+    try {
+      await stat(candidate)
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return candidate
+      throw err
+    }
+  }
+}
+
+export function createJsonSessionStore(
+  path: string,
+  now: () => Date = () => new Date(),
+): SessionStore {
   return {
     async list(personId) {
       const { sessions } = await read(path)
@@ -241,6 +268,32 @@ export function createJsonSessionStore(path: string): SessionStore {
     async people() {
       const { sessions } = await read(path)
       return [...new Set(sessions.map((s) => s.personId))]
+    },
+    /**
+     * Person-initiated, never automatic, and it never deletes a byte: the file
+     * is renamed, and the next read finds no history and starts a fresh one
+     * (KV-98). Code that quietly set a file aside on its own would be the
+     * silent-empty fallback #13 removed, wearing a hat.
+     *
+     * **It re-checks before it moves anything.** Only a file that is unreadable
+     * *now* is set aside. One that reads — fixed by hand, or restored by a sync
+     * client since the dashboard showed the error — is left exactly where it is
+     * and null comes back, because moving a readable history out from under the
+     * person is the one thing this must never do. A missing file is likewise
+     * null: there is nothing to set aside. A file that cannot be opened at all
+     * (`UnreachableStoreError`) is not moved either; that error is rethrown, since
+     * whatever is holding the file may hold it against a rename too.
+     */
+    async startNewHistory() {
+      try {
+        await read(path)
+        return null
+      } catch (err) {
+        if (!(err instanceof UnreadableStoreError)) throw err
+      }
+      const aside = await asidePath(path, now())
+      await rename(path, aside)
+      return aside
     },
   }
 }

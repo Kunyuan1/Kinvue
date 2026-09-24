@@ -124,7 +124,7 @@ describe('the dashboard, when the history will not open (KV-95)', () => {
 
     expect(text).toBe(
       `The check-in history at ${path} could not be read: it is not valid JSON. ` +
-        'Nothing has been changed. Move the file aside to start fresh.',
+        'Nothing has been changed.',
     )
     expect(text).not.toMatch(/invoking remote method|UnreadableStoreError|kinvue\//)
   })
@@ -163,12 +163,18 @@ describe('the dashboard, when the history will not open (KV-95)', () => {
     const withStack = new Error(
       `${String(unreadable)}\n    at read (store.ts:160:11)\n    at list (store.ts:210:5)`,
     )
-    expect(dashboardErrorText(withStack, 'fallback')).toMatch(/Move the file aside to start fresh\.$/)
+    expect(dashboardErrorText(withStack, 'fallback')).toMatch(
+      /it is not valid JSON\. Nothing has been changed\.$/,
+    )
   })
 
-  it('falls back to its own sentence, action included, if the tag arrives with none', () => {
+  it('falls back to its own sentence if the tag arrives with none', () => {
+    // The way out is the dashboard's button now (KV-98), not an instruction in
+    // the sentence, so the floor only has to say what is wrong and what is safe.
     const bare = new Error(`${failureTag('store-unreadable')}: `)
-    expect(dashboardErrorText(bare, 'fallback')).toMatch(/Move the file aside to start fresh\./)
+    expect(dashboardErrorText(bare, 'fallback')).toBe(
+      'The saved check-in history could not be read. Nothing in it has been changed.',
+    )
   })
 
   it('reads a tagged sentence out of any wrapping, and says nothing when the tag is absent', () => {
