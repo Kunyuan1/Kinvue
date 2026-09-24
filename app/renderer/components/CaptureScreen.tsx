@@ -35,6 +35,12 @@ import type { CaptureFailure } from '@core/capture/failure'
  * app blaming someone for its own setup (KV-7). `capture-in-progress` and
  * `unknown` make no claim either way.
  *
+ * `unknown` used to say "Something went wrong with the camera" — a cause,
+ * and nearly always the wrong one (KV-80). Every SDK failure is tagged and
+ * has its own sentence above, so what reaches `unknown` is a fault in the app
+ * itself or a tag that belongs to the other screen. Naming the camera there
+ * blamed it, to the one person in this app who is being filmed.
+ *
  * `no-connection` is the exception, and deliberately so. Telling someone
  * whose Wi-Fi is off that nothing is wrong on their side is untrue, and it is
  * the one thing that would stop anyone looking at the connection (KV-104). But
@@ -94,7 +100,7 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
   },
   unknown: {
     title: 'The reading could not be taken',
-    detail: 'Something went wrong with the camera. Trying again is worth a go.',
+    detail: 'Something went wrong while taking it. Trying again is worth a go.',
   },
 }
 

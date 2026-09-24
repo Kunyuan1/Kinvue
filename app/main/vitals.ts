@@ -224,14 +224,26 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
   // costs one screen; a wrong refusal costs the check-in.
   const online = net.isOnline()
 
-  const sdk = new SmartSpectraSDK({
-    apiKey,
-    requestedMetrics: [...breathingMetrics, ...cardioMetrics],
-    // Opt out of SDK telemetry, which defaults to on. It does not make the app
-    // offline — the SDK still contacts Presage when a session starts (KV-65) —
-    // but an aggregate telemetry channel is a separate thing to decline.
-    enableTelemetry: false,
-  })
+  // Tagged like every other SDK failure (KV-80). This was the one SDK call
+  // outside a tagged path, so a throw here arrived untagged and read as
+  // `unknown` — which no longer names the camera, since almost nothing else
+  // that reaches `unknown` is the camera. The same mapping as `start()` below:
+  // an account or configuration code says the app is not set up, anything
+  // else is the capture's hardware side.
+  let sdk: SmartSpectraSDK
+  try {
+    sdk = new SmartSpectraSDK({
+      apiKey,
+      requestedMetrics: [...breathingMetrics, ...cardioMetrics],
+      // Opt out of SDK telemetry, which defaults to on. It does not make the app
+      // offline — the SDK still contacts Presage when a session starts (KV-65) —
+      // but an aggregate telemetry channel is a separate thing to decline.
+      enableTelemetry: false,
+    })
+  } catch (err) {
+    const failure = sdkFailure(sdkErrorCode(err), online)
+    throw captureError(failure, 'the capture could not be set up.', err)
+  }
 
   const collected = createVitalsAccumulator()
   const startedAt = Date.now()

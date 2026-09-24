@@ -596,6 +596,13 @@ else. The tag is also what keeps a *rejected* key from being reported as a busy 
 SDK only discovers it at session start, so it arrives on the same path as a real camera
 fault and is told apart by the SDK's own error code, not by the call site guessing.
 
+**A failure with no tag names no cause** (KV-80). Every SDK failure is tagged, including the
+SDK's construction, which was the one call outside a tagged path. So what reaches `unknown` on
+the capture screen is a fault in the app itself or a tag that belongs to the questions screen,
+and none of that is the camera. It used to say "Something went wrong with the camera", a
+confident wrong sentence to the person being filmed. It now says only that the reading could
+not be taken. A cause belongs in its own tagged entry, never in the one for having none.
+
 **A stop is the one rejection that does not cross IPC as a rejection** (KV-89). Electron logs
 every rejection from an `ipcMain.handle` handler as "Error occurred in handler" with a stack
 trace, so pressing Stop — the one thing the capture screen invites — printed ten lines of
