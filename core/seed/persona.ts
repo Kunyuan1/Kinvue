@@ -51,6 +51,15 @@ function rng(seed: number): () => number {
  * is judged by every later one. At 0.6 the default fortnight kept a 0.03 margin
  * and a later weight change could turn a stored demo amber; at 0.5 every seeded
  * day starts at least 0.1 clear, twice the lightest rule.
+ *
+ * **That margin absorbs a weight change, not a new rule.** A rule added later
+ * contributes its whole minimum the first time it fires on a stored day — at
+ * least 0.2 for KV-9's `pulse-low` and `breathing-low`, twice the margin. The
+ * redraw cannot help, since it only runs when a fortnight is seeded. What
+ * protects stored demos from a new rule is `tests/seed.test.ts` re-scoring the
+ * fortnight installs already hold, frozen there rather than regenerated.
+ * Only the default seed is ever stored (`demo:seed` passes no arguments), so
+ * that one fortnight is the whole of the exposure.
  */
 export const DEMO_DAY_CEILING = 0.5
 // Also, deliberately, exactly `notEaten` + `lowMood` (0.3 + 0.2), the heaviest

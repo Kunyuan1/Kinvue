@@ -212,6 +212,8 @@ describe('scoreSession', () => {
       scoreSession(session({ answers: { sleep: 'poorly' } }), history(5)),
       scoreSession(session({ answers: { painReported: true } }), history(5)),
       scoreSession(session({ vitals: { pulseRateBpm: 95 } }), varied),
+      // The low side (KV-9), against the same flat history.
+      scoreSession(session({ vitals: { pulseRateBpm: 40, breathingRateBrpm: 6 } }), history(5)),
     ].flatMap((a) => a.firedRules)
 
     // The spread clause is actually in there, not just a rule that can carry it.
@@ -1041,5 +1043,110 @@ describe('a metric measured but never compared (KV-87)', () => {
         expect(day.assessment.uncomparedMetrics, day.id).toEqual([])
       }
     }
+  })
+})
+
+describe('readings below their usual (KV-9)', () => {
+  it('fires pulse-low on a pulse well below their usual, in numbers', () => {
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 40 } }), history(5))
+
+    expect(ids(assessment)).toEqual(['pulse-low'])
+    const rule = assessment.firedRules[0]
+    expect(rule?.title).toBe('Pulse below usual')
+    expect(rule?.explanation).toMatch(/^Pulse was 40 bpm, below their usual 72 bpm\./)
+  })
+
+  it('fires breathing-low on breathing well below their usual', () => {
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 6 } }), history(5))
+
+    expect(ids(assessment)).toEqual(['breathing-low'])
+    expect(assessment.firedRules[0]?.explanation).toMatch(
+      /^Breathing was 6 breaths\/min, below their usual 15 breaths\/min\./,
+    )
+  })
+
+  it('says how far they usually vary on the low side too, with the singular unit at 1', () => {
+    // KV-9 review: every other low-side text runs against a flat history, which
+    // takes the floored branch and never shows the spread clause. A spread of
+    // exactly 1 is the case `singularUnit` exists for.
+    const past = [14, 16, 14, 16, 15].map((breathing, i) =>
+      session({
+        id: `b-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { breathingRateBrpm: breathing },
+      }),
+    )
+    const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 12 } }), past)
+
+    expect(ids(assessment)).toEqual(['breathing-low'])
+    expect(assessment.firedRules[0]?.explanation).toBe(
+      'Breathing was 12 breaths/min, below their usual 15 breaths/min. ' +
+        'They usually vary by about 1 breath/min either way.',
+    )
+  })
+
+  it('weighs a fall exactly as it weighs the same rise', () => {
+    // Mirrored, not re-tuned: same threshold, same curve, same peak (#22 calibrates).
+    const varied = [72, 78, 69, 81, 75].map((pulse, i) =>
+      session({
+        id: `v-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { pulseRateBpm: pulse },
+      }),
+    )
+    const mean = 75
+    // The spread is about 4.7, so these are z of about 2.1, 3 and 4.2.
+    for (const by of [10, 14, 20]) {
+      const up = scoreSession(session({ vitals: { pulseRateBpm: mean + by } }), varied)
+      const down = scoreSession(session({ vitals: { pulseRateBpm: mean - by } }), varied)
+      expect(ids(up), `+${by}`).toEqual(['pulse-elevated'])
+      expect(ids(down), `-${by}`).toEqual(['pulse-low'])
+      expect(down.firedRules[0]?.severity).toBeCloseTo(up.firedRules[0]?.severity ?? NaN)
+    }
+  })
+
+  it('does not fire on a fall inside the same threshold the rise must clear', () => {
+    // The hardware reading on #9: 80 against a usual of about 97, spread about
+    // 13 — z of about -1.25. Below Z_FIRES_AT, as +1.25 would be on the high
+    // side, so it still produces nothing. That is the mirrored threshold as
+    // decided, not an oversight; moving it is #22's calibration.
+    const past = [101, 109, 108, 80, 85.5].map((pulse, i) =>
+      session({
+        id: `hw-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { pulseRateBpm: pulse },
+      }),
+    )
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 80.1 } }), past)
+
+    expect(ids(assessment)).not.toContain('pulse-low')
+    expect(assessment.flag).toBe('normal')
+  })
+
+  it('never fires both directions on one reading', () => {
+    for (const pulse of [30, 60, 72, 84, 140]) {
+      const fired = ids(scoreSession(session({ vitals: { pulseRateBpm: pulse } }), history(5)))
+      expect(fired.includes('pulse-low') && fired.includes('pulse-elevated'), `${pulse}`).toBe(false)
+    }
+  })
+
+  it('does not quote "below their usual" off a thin history, and names the gap once', () => {
+    // The same per-metric gate as the high side (KV-71). Two rules now compare
+    // pulse, and the uncompared note must still name it once, not twice (KV-87).
+    const past = [
+      ...history(2, { pulseRateBpm: 82 }),
+      session({ id: 'h-2', capturedAt: '2026-09-03T09:00:00.000Z', vitals: { pulseRateBpm: null } }),
+    ]
+    const assessment = scoreSession(session({ vitals: { pulseRateBpm: 50 } }), past)
+
+    expect(ids(assessment)).not.toContain('pulse-low')
+    expect(assessment.uncomparedMetrics).toEqual([
+      { metric: 'pulse', readings: 2, needed: MIN_BASELINE_SESSIONS, mean: 82 },
+    ])
+  })
+
+  it('discloses a seeded usual behind a fall, as it does behind a rise', () => {
+    expect(BASELINE_RULE_IDS.has('pulse-low')).toBe(true)
+    expect(BASELINE_RULE_IDS.has('breathing-low')).toBe(true)
   })
 })

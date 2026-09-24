@@ -60,6 +60,23 @@ person with naturally variable readings is not flagged for ordinary variation.
 `MIN_SD_FRACTION_OF_MEAN` floors the sd so an unusually consistent fortnight cannot make
 every subsequent reading a 6-sigma event.
 
+**Both directions** (KV-9). The question is "does this look like their normal", and a pulse
+or breathing rate that falls well below their usual is as much an answer as one that rises.
+Until KV-9 only the rise could fire: a real check-in with a pulse of 80 against a usual of 97
+(compared, `n` of 5) produced nothing, and a person whose usual drifted upward got an app
+that stopped noticing them come down. So `pulse-low` and `breathing-low` mirror the rules
+for a rise, with the same threshold (z ≥ 2), curve (full at z ≥ 4) and peak weights. That
+avoids inventing numbers only calibration (#22) can supply. The mirroring is exact, so it
+cuts both ways: that same 80, at z of about −1.2, still fires nothing, as +1.2 would not.
+
+HRV stays one-directional, and that is a different kind of reason, not an exception to the
+first. A pulse or breathing rate is compared as "their normal" because either direction away
+from it is a change a caregiver would want to see, and nothing about the number says which
+way is worse. HRV is not read that way anywhere in this app: `hrv-drop` exists because falling
+HRV tracks stress, illness onset and poor sleep, and a rise carries no such reading. So its
+direction is part of what the rule means, where for the rates the direction is only which
+side of their usual the reading landed.
+
 ---
 
 ## Why `insufficient-signal` is a first-class verdict
@@ -271,8 +288,8 @@ which is the wrong tool for the job; showing the answers on the card apart from 
 What this does not settle: that the camera finds it much harder to raise a flag than the
 questions do. Only an HRV drop of half or more reaches the threshold alone; a pulse four
 standard deviations above usual caps at 0.45. Whether a large vitals deviation should flag
-on its own is the other half of the same balance, and belongs with #9 and #22 rather than
-here.
+on its own is the other half of the same balance. #9 answered only the direction — a fall
+now weighs exactly what the same rise does — so the magnitude question belongs with #22.
 
 ---
 
