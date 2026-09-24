@@ -169,7 +169,7 @@ holds its rule back, asked from the other side — changes the verdict:
 
 | Would have been | Now | The card says |
 |---|---|---|
-| `normal` | `insufficient-signal` | which metric, how many readings it had of how many needed, and that the check-in is therefore not being called normal |
+| `normal` | `insufficient-signal` | "Only partly compared with their usual", then which metric, how many readings it had of how many needed, and that the check-in is therefore not being called normal |
 | `elevated` | `elevated`, unchanged | the same gap, without the last clause |
 
 `elevated` stands because it rests on what *was* compared: withholding it would hide an

@@ -902,7 +902,8 @@ describe('a metric measured but never compared (KV-87)', () => {
 
     expect(ids(assessment)).not.toContain('pulse-elevated')
     expect(assessment.flag).toBe('insufficient-signal')
-    expect(assessment.summary).toBe('Not enough to say — see the note below.')
+    // Not the card's label again: the summary says why the verdict is withheld.
+    expect(assessment.summary).toBe('Only partly compared with their usual — see the note below.')
     expect(assessment.uncomparedMetrics).toEqual([
       { metric: 'pulse', readings: 2, needed: MIN_BASELINE_SESSIONS },
     ])

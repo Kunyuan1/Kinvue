@@ -59,7 +59,10 @@ function fire(rules: readonly Rule[], session: SessionRecord, baseline: Baseline
 
 function summarise(flag: Assessment['flag'], fired: FiredRule[]): string {
   if (flag === 'insufficient-signal') {
-    return 'Not enough to say — see the note below.'
+    // Reached only by KV-87's withheld verdict: the other withheld paths write
+    // their own summary. Not "Not enough to say", which the card's label has
+    // just said — this says *why*, and the note under it says which metric.
+    return 'Only partly compared with their usual — see the note below.'
   }
   if (flag === 'normal') {
     return fired.length === 0
