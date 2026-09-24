@@ -18,7 +18,12 @@ import { dashboardErrorText } from '@renderer/dashboardError'
  * and only one of the three is about their day (KV-7).
  */
 
-/** What Electron hands back: the original message, wrapped twice over. */
+/**
+ * What Electron hands back for a rejected handler: the original message,
+ * wrapped twice over. Not the shape a *stop* arrives in any more — that crosses
+ * as a reply and the preload rejects with the bare sentence (KV-89), which
+ * `capture-reply.test.ts` covers.
+ */
 const overIpc = (message: string): Error =>
   new Error(`Error invoking remote method 'checkin:capture': Error: ${message}`)
 

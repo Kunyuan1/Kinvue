@@ -4,7 +4,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage } from "electron";
 import { scoreSession } from "@core/scoring";
 import { createJsonSessionStore } from "@core/session/store";
 import { createCheckIn } from "@core/session/checkin";
-import type { CaptureResult, SessionRecord } from "@core/session/types";
+import type { SessionRecord } from "@core/session/types";
 import { parseCheckInAnswers, parsePersonId } from "@core/session/validate";
 import { DEMO_PERSON_ID, seedDemoHistory } from "@core/seed/persona";
 import { createGuidanceGate } from "@core/capture/guidance";
@@ -18,6 +18,7 @@ import {
 } from "./capture-length";
 import { loadDotEnv } from "./env";
 import { captureVitals } from "./vitals";
+import { toCaptureReply, type CaptureReply } from "../shared/capture-reply";
 
 /**
  * The SmartSpectra key lives in `.env` during development and reaches the SDK
@@ -125,7 +126,7 @@ function registerIpc(): void {
 
   ipcMain.handle(
     "checkin:capture",
-    async (event, personId: unknown): Promise<CaptureResult> => {
+    async (event, personId: unknown): Promise<CaptureReply> => {
       const id = parsePersonId(personId);
       if (id === null) throw new Error("checkin:capture needs a person id.");
       // One gate per capture, so nothing carries over from the last one.
@@ -139,7 +140,7 @@ function registerIpc(): void {
       const controller = new AbortController();
 
       try {
-        return await checkIn.capture(id, () => {
+        const capture = checkIn.capture(id, () => {
           // Claimed here, not before the call: `checkIn.capture` refuses a
           // second capture while one is running, and claiming first took the
           // slot from the capture doing the refusing — leaving the running one
@@ -213,6 +214,10 @@ function registerIpc(): void {
             },
           });
         });
+        // A stop resolves as a reply rather than rejecting: Electron logs every
+        // handler rejection as a fault, and pressing Stop is not one (KV-89).
+        // The preload turns it back into the rejection the screen reads.
+        return await toCaptureReply(capture);
       } finally {
         // Only when it is still ours: a refused capture must not release the
         // slot belonging to the capture that refused it.

@@ -27,13 +27,12 @@ export class MissingApiKeyError extends Error {
   }
 }
 
-/** Thrown when the person stopped the capture. Not a failure to report as one. */
-export class CaptureCancelledError extends Error {
-  constructor() {
-    super(`${failureTag('cancelled')}: the reading was stopped.`)
-    this.name = 'CaptureCancelledError'
-  }
-}
+/**
+ * Thrown when the person stopped the capture. Defined beside the reply that
+ * keeps it out of Electron's handler log (KV-89), and re-exported here with
+ * the capture's other errors.
+ */
+export { CaptureCancelledError } from '../shared/capture-reply'
 
 /**
  * Codes that mean the account or its key, not the camera.

@@ -22,6 +22,9 @@ export default defineConfig({
   },
   preload: {
     plugins: [externalizeDepsPlugin()],
+    // The capture reply is decoded here (KV-89), so the preload now bundles a
+    // little of core/ rather than only its types.
+    resolve: { alias: { '@core': core } },
     build: {
       outDir: 'out/preload',
       lib: { entry: resolve(__dirname, 'app/preload/index.ts') },
