@@ -10,6 +10,7 @@ import {
   emptyCaptureFailure,
   sdkErrorCode,
   sdkFailure,
+  setupFailure,
 } from '../app/main/capture-errors'
 import { session } from './helpers'
 
@@ -115,6 +116,33 @@ describe('sdkFailure', () => {
     // selecting an input is local. The measured offline failure was code 8.
     expect(sdkFailure(undefined, ONLINE)).toBe('camera-unavailable')
     expect(sdkFailure(undefined, OFFLINE)).toBe('camera-unavailable')
+  })
+})
+
+describe('setupFailure', () => {
+  /** An SDK-shaped throw: a JS Error carrying a numeric `code`. */
+  const sdkError = (code?: number): Error => Object.assign(new Error('sdk'), { code })
+
+  it('names the setup for an account code, as start() would', () => {
+    for (const code of [2, 3, 4]) {
+      expect(classifyCaptureError(setupFailure(sdkError(code))), `code ${code}`).toBe('no-api-key')
+    }
+  })
+
+  it('does not name the camera, which nothing has opened yet', () => {
+    // KV-80 review: `sdkFailure` sends anything it does not recognise to
+    // `camera-unavailable` — right for `start()`, wrong before a device is
+    // selected. Here it stays untagged and reads as `unknown`, which names no
+    // cause. A codeless throw is the likely shape: the SDK documents codes on
+    // lifecycle methods only.
+    for (const err of [sdkError(), sdkError(1), sdkError(7)]) {
+      expect(setupFailure(err)).toBe(err)
+      expect(classifyCaptureError(setupFailure(err))).toBe('unknown')
+    }
+  })
+
+  it('does not name the connection either, since the SDK reaches Presage only at start', () => {
+    expect(classifyCaptureError(setupFailure(sdkError(8)))).toBe('unknown')
   })
 })
 

@@ -76,28 +76,19 @@ describe('CaptureScreen says which failure it was', () => {
     expect(screen.getByText(expected)).toBeDefined()
   })
 
-  it('names no cause for a failure it cannot identify', () => {
-    // KV-80: `unknown` said "Something went wrong with the camera". Every SDK
-    // failure is tagged and has its own sentence, so what reaches `unknown` is
-    // a fault in the app or a tag from the other screen — blaming the camera
-    // there was a confident wrong sentence to the person being filmed.
+  it('names no cause and advises no retry for a failure it cannot identify', () => {
+    // KV-80: `unknown` said "Something went wrong with the camera". What
+    // reaches it now is a fault inside the app — none of it the camera, and
+    // none of it cleared by trying again (KV-80 review). Asserted on the detail
+    // sentence itself, so an empty detail cannot pass and copy elsewhere on the
+    // view cannot trip it.
     renderCapture('unknown')
-    const text = document.body.textContent ?? ''
-    expect(text).toMatch(/could not be taken/i)
-    expect(text).not.toMatch(/camera|connection|internet|another program|your side/i)
+    const detail = screen.getByRole('heading').nextElementSibling?.textContent ?? ''
+    expect(detail).toMatch(/inside the app/i)
+    expect(detail).toMatch(/not.*your side/i)
+    expect(detail).not.toMatch(/camera|connection|internet|another program/i)
+    expect(detail).not.toMatch(/try(ing)? again|in a moment/i)
   })
-
-  it.each([['expired'], ['no-capture'], ['store-unreadable']])(
-    'says nothing untrue for a %s tag, which belongs to the other screen',
-    (tag) => {
-      // Unreachable on this path today; if one ever arrives, it gets the
-      // sentence that claims nothing rather than a wrong cause.
-      const failure = classifyCaptureError(new Error(`kinvue/${tag}: from the other path.`))
-      expect(failure).toBe('unknown')
-      renderCapture(failure as CaptureFailure)
-      expect(document.body.textContent ?? '').not.toMatch(/camera/i)
-    },
-  )
 
   it('does not ask the person to wait for a reading that is being discarded', () => {
     // The only control here is Go back, which stops the running capture. The

@@ -244,9 +244,11 @@ export function taggedFailure(error: unknown): TaggedFailure | null {
  * A tag belonging to the other path answers `unknown`, the same as an untagged
  * throw. That is safe because `unknown` on this screen names no cause (KV-80):
  * it used to read "Something went wrong with the camera", which was the right
- * answer for almost nothing that could reach it — every SDK failure is tagged
- * with its own sentence, so `unknown` is left with faults in the app itself
- * and tags from the other path, none of them the camera.
+ * answer for almost nothing that could reach it. Every SDK call that touches
+ * the camera or the service is tagged with its own sentence, so `unknown` is
+ * left with faults inside the app — its own code, tags from the other path,
+ * and the SDK failing to be set up before any camera was asked for — none of
+ * them the camera.
  */
 export function classifyCaptureError(error: unknown): CaptureFailure | null {
   const tag = taggedFailure(error)
