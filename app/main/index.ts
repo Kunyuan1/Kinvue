@@ -8,7 +8,6 @@ import type { SessionRecord } from "@core/session/types";
 import { parseCheckInAnswers, parsePersonId } from "@core/session/validate";
 import { DEMO_PERSON_ID, seedDemoHistory } from "@core/seed/persona";
 import { createGuidanceGate } from "@core/capture/guidance";
-import { toCaptureReply, type CaptureReply } from "@core/capture/reply";
 import { deviceTimeZone } from "./device";
 import { createFrameThrottle, toPreview } from "./frames";
 import { createInFlightCapture } from "./in-flight";
@@ -18,7 +17,8 @@ import {
   resolveCaptureSeconds,
 } from "./capture-length";
 import { loadDotEnv } from "./env";
-import { CaptureCancelledError, captureVitals } from "./vitals";
+import { captureVitals } from "./vitals";
+import { toCaptureReply, type CaptureReply } from "../shared/capture-reply";
 
 /**
  * The SmartSpectra key lives in `.env` during development and reaches the SDK
@@ -140,10 +140,7 @@ function registerIpc(): void {
       const controller = new AbortController();
 
       try {
-        // A stop resolves as a reply rather than rejecting: Electron logs every
-        // handler rejection as a fault, and pressing Stop is not one (KV-89).
-        // The preload turns it back into the rejection the screen reads.
-        return await toCaptureReply(() => checkIn.capture(id, () => {
+        const capture = checkIn.capture(id, () => {
           // Claimed here, not before the call: `checkIn.capture` refuses a
           // second capture while one is running, and claiming first took the
           // slot from the capture doing the refusing — leaving the running one
@@ -216,7 +213,11 @@ function registerIpc(): void {
               event.sender.send("checkin:frame", jpeg);
             },
           });
-        }), (err) => err instanceof CaptureCancelledError);
+        });
+        // A stop resolves as a reply rather than rejecting: Electron logs every
+        // handler rejection as a fault, and pressing Stop is not one (KV-89).
+        // The preload turns it back into the rejection the screen reads.
+        return await toCaptureReply(capture);
       } finally {
         // Only when it is still ours: a refused capture must not release the
         // slot belonging to the capture that refused it.

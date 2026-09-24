@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
-import { fromCaptureReply } from '@core/capture/reply'
+import { fromCaptureReply } from '../shared/capture-reply'
 
 /**
  * The entire surface the renderer gets. Everything is a named call — no generic

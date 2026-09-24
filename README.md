@@ -132,6 +132,9 @@ app/
     vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk
   preload/
     index.ts             contextBridge surface. The API key never crosses this line.
+  shared/
+    capture-reply.ts     how a capture crosses IPC, so a pressed Stop is not logged as
+                         a fault (KV-89). Main and preload both use it; no Electron here
   renderer/
     index.html           CSP: default-src 'self' — the UI loads nothing off the
                          network. img-src also allows blob:, for the self-view.
@@ -160,7 +163,8 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
 
 tests/                   Vitest. Covers baseline, scoring, validation, check-in, time,
-                         device, guidance, frames, answers, failures, vitals and env.
+                         device, guidance, frames, answers, failures, the capture reply,
+                         vitals and env.
 ```
 
 ---

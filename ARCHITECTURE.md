@@ -534,11 +534,14 @@ every rejection from an `ipcMain.handle` handler as "Error occurred in handler" 
 trace, so pressing Stop — the one thing the capture screen invites — printed ten lines of
 fault, directly beneath the `[capture] camera release` line #86 added so a stuck camera would
 be visible, on the path where that line is likeliest to matter. `checkin:capture` therefore
-resolves a cancellation as a value (`core/capture/reply.ts`) and the preload turns it back
-into the same tagged rejection, so the screen reads exactly what it did before. Only
-cancellation: every other capture failure is a fault and still reaches the log as one.
+resolves a cancellation as a value (`app/shared/capture-reply.ts`) and the preload turns it
+back into a rejection carrying the same tag, so the screen classifies it exactly as before —
+though the rejection is a bare `Error` now, not Electron's `Error invoking remote method …`
+wrapping. Only cancellation: every other capture failure is a fault and still reaches the log as one.
 Making every failure a value would change the contract of every handler and hide the faults
-the log exists for; what `app/main` logs, and where, is still #86's open question.
+the log exists for; what `app/main` logs, and where, is still #86's open question. The module
+sits in `app/shared/`, not `core/`: it exists because of how Electron logs a handler, which is
+not a domain concern, and `core/` is meant for clients that have no `ipcMain` (#38).
 
 Being offline does not make every failure the connection. Only the codes a connection could
 produce are relabelled; a camera held by a video call is still the camera, offline or not,

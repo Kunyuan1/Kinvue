@@ -1,5 +1,4 @@
 import { failureTag, type TaggedFailure } from '@core/capture/failure'
-import { CANCELLED_MESSAGE } from '@core/capture/reply'
 import { hasScorableVitals } from '@core/session/usable'
 import type { Vitals } from '@core/session/types'
 
@@ -29,16 +28,11 @@ export class MissingApiKeyError extends Error {
 }
 
 /**
- * Thrown when the person stopped the capture. Not a failure to report as one:
- * `checkin:capture` turns it into a reply rather than letting it reach
- * Electron's handler log (KV-89), and the preload rethrows the same sentence.
+ * Thrown when the person stopped the capture. Defined beside the reply that
+ * keeps it out of Electron's handler log (KV-89), and re-exported here with
+ * the capture's other errors.
  */
-export class CaptureCancelledError extends Error {
-  constructor() {
-    super(CANCELLED_MESSAGE)
-    this.name = 'CaptureCancelledError'
-  }
-}
+export { CaptureCancelledError } from '../shared/capture-reply'
 
 /**
  * Codes that mean the account or its key, not the camera.
