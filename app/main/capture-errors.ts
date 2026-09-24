@@ -1,4 +1,5 @@
 import { failureTag, type TaggedFailure } from '@core/capture/failure'
+import { CANCELLED_MESSAGE } from '@core/capture/reply'
 import { hasScorableVitals } from '@core/session/usable'
 import type { Vitals } from '@core/session/types'
 
@@ -27,10 +28,14 @@ export class MissingApiKeyError extends Error {
   }
 }
 
-/** Thrown when the person stopped the capture. Not a failure to report as one. */
+/**
+ * Thrown when the person stopped the capture. Not a failure to report as one:
+ * `checkin:capture` turns it into a reply rather than letting it reach
+ * Electron's handler log (KV-89), and the preload rethrows the same sentence.
+ */
 export class CaptureCancelledError extends Error {
   constructor() {
-    super(`${failureTag('cancelled')}: the reading was stopped.`)
+    super(CANCELLED_MESSAGE)
     this.name = 'CaptureCancelledError'
   }
 }

@@ -529,6 +529,17 @@ else. The tag is also what keeps a *rejected* key from being reported as a busy 
 SDK only discovers it at session start, so it arrives on the same path as a real camera
 fault and is told apart by the SDK's own error code, not by the call site guessing.
 
+**A stop is the one rejection that does not cross IPC as a rejection** (KV-89). Electron logs
+every rejection from an `ipcMain.handle` handler as "Error occurred in handler" with a stack
+trace, so pressing Stop — the one thing the capture screen invites — printed ten lines of
+fault, directly beneath the `[capture] camera release` line #86 added so a stuck camera would
+be visible, on the path where that line is likeliest to matter. `checkin:capture` therefore
+resolves a cancellation as a value (`core/capture/reply.ts`) and the preload turns it back
+into the same tagged rejection, so the screen reads exactly what it did before. Only
+cancellation: every other capture failure is a fault and still reaches the log as one.
+Making every failure a value would change the contract of every handler and hide the faults
+the log exists for; what `app/main` logs, and where, is still #86's open question.
+
 Being offline does not make every failure the connection. Only the codes a connection could
 produce are relabelled; a camera held by a video call is still the camera, offline or not,
 because naming the connection over it would send someone to reconnect only to be told about

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
+import { fromCaptureReply } from '@core/capture/reply'
 
 /**
  * The entire surface the renderer gets. Everything is a named call — no generic
@@ -17,9 +18,14 @@ const api = {
    */
   captureSeconds: (): Promise<number> => ipcRenderer.invoke('capture:seconds'),
 
-  /** The reading is held in main for this person; `submit` must name the same one. */
+  /**
+   * The reading is held in main for this person; `submit` must name the same one.
+   *
+   * A stop arrives as a reply, not a rejection, so main does not log it as a
+   * fault; it is turned back into the tagged rejection here (KV-89).
+   */
   capture: (personId: string): Promise<CaptureResult> =>
-    ipcRenderer.invoke('checkin:capture', personId),
+    ipcRenderer.invoke('checkin:capture', personId).then(fromCaptureReply),
 
   /**
    * Abandons a running capture and releases the camera. The person in front of
