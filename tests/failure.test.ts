@@ -8,7 +8,7 @@ import {
   taggedFailure,
   type TaggedFailure,
 } from '@core/capture/failure'
-import { UnreadableStoreError } from '@core/session/store'
+import { UnreachableStoreError, UnreadableStoreError } from '@core/session/store'
 import { dashboardErrorText } from '@renderer/dashboardError'
 
 /**
@@ -148,6 +148,27 @@ describe('the dashboard, when the history will not open (KV-95)', () => {
   it('does not treat a capture tag as a store failure', () => {
     const capture = fromMain(new Error(`${failureTag('camera-unavailable')}: held`))
     expect(classifyDashboardError(capture)).toBe('unknown')
+  })
+
+  it('shows the sentence for a file that could not be opened at all, with its code', () => {
+    const locked = fromMain(new UnreachableStoreError(path, 'EBUSY', new Error('busy')))
+    expect(classifyDashboardError(locked)).toBe('store-unreachable')
+    expect(dashboardErrorText(locked, 'fallback')).toBe(
+      `The check-in history at ${path} could not be opened (EBUSY). Another program may ` +
+        'be using it, or its permissions may need checking. Nothing has been changed.',
+    )
+  })
+
+  it('stops at the end of the sentence, whatever is appended after it', () => {
+    const withStack = new Error(
+      `${String(unreadable)}\n    at read (store.ts:160:11)\n    at list (store.ts:210:5)`,
+    )
+    expect(dashboardErrorText(withStack, 'fallback')).toMatch(/Move the file aside to start fresh\.$/)
+  })
+
+  it('falls back to its own sentence, action included, if the tag arrives with none', () => {
+    const bare = new Error(`${failureTag('store-unreadable')}: `)
+    expect(dashboardErrorText(bare, 'fallback')).toMatch(/Move the file aside to start fresh\./)
   })
 
   it('reads a tagged sentence out of any wrapping, and says nothing when the tag is absent', () => {

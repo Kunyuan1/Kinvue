@@ -60,6 +60,12 @@ export type TaggedFailure =
    * until someone moves it aside.
    */
   | 'store-unreadable'
+  /**
+   * The stored history exists and could not be opened at all — locked by
+   * another program, or refused by its permissions (KV-95 review). Unlike
+   * `store-unreadable` this can clear by itself, which is why it is its own tag.
+   */
+  | 'store-unreachable'
 
 /**
  * What the capture screen can be asked to say.
@@ -93,6 +99,8 @@ export type SubmitFailure =
 export type DashboardFailure =
   /** The history file cannot be read. Its own sentence, from the store, is shown. */
   | 'store-unreadable'
+  /** The history file cannot be opened at all. Its own sentence is shown too. */
+  | 'store-unreachable'
   /** Anything else. Shown as a plain sentence; the original goes to the console. */
   | 'unknown'
 
@@ -134,6 +142,7 @@ const ON_CAPTURE: Record<TaggedFailure, CaptureFailure | null> = {
   // and only `submit` reads history. Routed here because the record is total,
   // not because this screen expects it.
   'store-unreadable': 'unknown',
+  'store-unreachable': 'unknown',
 }
 
 /** Where every tag goes on the submit path. Never null: see `classifySubmitError`. */
@@ -149,6 +158,10 @@ const ON_SUBMIT: Record<TaggedFailure, SubmitFailure> = {
   expired: 'expired',
   'no-capture': 'no-capture',
   'store-unreadable': 'store-unreadable',
+  // Unlike an unreadable file this can clear — a sync client lets go — and the
+  // answers are held while it does, so `unknown`'s copy (no new reading, worth
+  // another go) is already the right thing to say.
+  'store-unreachable': 'unknown',
 }
 
 /**
@@ -165,8 +178,9 @@ const ON_DASHBOARD: Record<TaggedFailure, DashboardFailure> = {
   cancelled: 'unknown',
   expired: 'unknown',
   'no-capture': 'unknown',
-  // The one it exists for: `sessions:list` and `demo:seed` both read the file.
+  // The two it exists for: `sessions:list` and `demo:seed` both read the file.
   'store-unreadable': 'store-unreadable',
+  'store-unreachable': 'store-unreachable',
 }
 
 /**
@@ -253,12 +267,17 @@ export function classifyDashboardError(error: unknown): DashboardFailure {
  * invoking remote method 'sessions:list': UnreadableStoreError: kinvue/…: <the
  * sentence>". Everything before the tag is transport; the sentence after it is
  * what the code that threw wrote for a person (KV-95).
+ *
+ * Only to the end of that line. Nothing appends to these messages today, but a
+ * stack, or context a later handler adds on a new line, would otherwise land in
+ * the caregiver's box — this keeps "only the sentence" true by construction
+ * rather than by the current wording of every thrower.
  */
 export function failureDetail(error: unknown, failure: TaggedFailure): string | null {
   const text = String(error)
   const tag = `${failureTag(failure)}: `
   const at = text.indexOf(tag)
   if (at === -1) return null
-  const detail = text.slice(at + tag.length).trim()
+  const detail = text.slice(at + tag.length).split(/\r?\n/, 1)[0]?.trim() ?? ''
   return detail === '' ? null : detail
 }

@@ -2,8 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { createJsonSessionStore, UnreadableStoreError } from '@core/session/store'
-import { classifySubmitError } from '@core/capture/failure'
+import {
+  createJsonSessionStore,
+  UnreachableStoreError,
+  UnreadableStoreError,
+} from '@core/session/store'
+import { classifyDashboardError, classifySubmitError } from '@core/capture/failure'
 import { session } from './helpers'
 
 /**
@@ -332,5 +336,29 @@ describe('the temp-then-rename write', () => {
 
     await store.append(session({ id: 'one' }))
     expect((await store.list('test-person')).map((s) => s.id)).toEqual(['one'])
+  })
+})
+
+describe('a history file that exists but cannot be opened (KV-95 review)', () => {
+  it('is tagged and says so, instead of passing the filesystem error through raw', async () => {
+    // A directory where the file should be: reading it fails with EISDIR on
+    // every platform, which stands in for a lock or a permission refusal —
+    // anything other than "missing", which is a first run.
+    const { path } = await storeIn()
+    await mkdir(path)
+    const thrown = await createJsonSessionStore(path).list('p1').catch((e: unknown) => e)
+
+    expect(thrown).toBeInstanceOf(UnreachableStoreError)
+    expect(String(thrown)).toMatch(/could not be opened \(EISDIR\)/)
+    expect(String(thrown)).toMatch(/Nothing has been changed/)
+    expect(classifyDashboardError(thrown)).toBe('store-unreachable')
+    // It can clear by itself, so the questions screen keeps its "worth another
+    // go" sentence rather than the unreadable file's "needs looking at".
+    expect(classifySubmitError(thrown)).toBe('unknown')
+  })
+
+  it('still treats a missing file as a first run', async () => {
+    const { path } = await storeIn()
+    await expect(createJsonSessionStore(path).list('p1')).resolves.toEqual([])
   })
 })

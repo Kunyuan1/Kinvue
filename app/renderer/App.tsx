@@ -122,6 +122,11 @@ export default function App(): React.JSX.Element {
 
   const refresh = useCallback(async (): Promise<void> => {
     setSessions(await window.kinvue.listSessions(DEMO_PERSON_ID))
+    // A list that loaded is the current state of the screen, so an earlier
+    // failure to load it is no longer true (KV-95 review). The post-submit
+    // sentence is set only after its own refresh has failed, so this never
+    // clears it.
+    setError(null)
   }, [])
 
   // An unreadable history says so in its own words; anything else gets a plain
@@ -146,9 +151,20 @@ export default function App(): React.JSX.Element {
     })
   }, [])
 
+  // Two steps that fail differently. Seeding can succeed and the reload after
+  // it fail — a sync client briefly holding the file — and "could not be added"
+  // would then be false with a fortnight sitting in it (KV-95 review). The
+  // submit path makes the same split for the same reason.
   const seed = async (): Promise<void> => {
-    await window.kinvue.seedDemo()
-    await refresh()
+    try {
+      await window.kinvue.seedDemo()
+    } catch (e) {
+      showFailure(e, 'The demo history could not be added.')
+      return
+    }
+    await refresh().catch((e: unknown) =>
+      showFailure(e, 'The demo history was added, but the list could not be reloaded.'),
+    )
   }
 
   // Seeded days are scored here, as they are shown, so the demo always shows the
@@ -326,11 +342,7 @@ export default function App(): React.JSX.Element {
           </p>
           <button
             type="button"
-            onClick={() =>
-              void seed().catch((e: unknown) =>
-                showFailure(e, 'The demo history could not be added.'),
-              )
-            }
+            onClick={() => void seed()}
             className="mt-4 rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-raised)"
           >
             Seed demo history
