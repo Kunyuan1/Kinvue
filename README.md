@@ -310,7 +310,7 @@ One record per check-in, appended to a JSON file. Sessions are never edited in p
 | `Vitals` | `pulseRateBpm`, `breathingRateBrpm`, `hrvRmssdMs`, `hrvSdnnMs`, plus `confidence`, `stable` and `durationSec`. Any metric may be `null`. `confidence` describes the readings actually reported: per metric, the ones the SDK called settled, falling back to all of that metric’s readings when it settled on none. It is `null` when nothing rated the readings at all, and a null withholds the verdict rather than scoring it (KV-12). Once either rate in the capture is rated, each reports its newest reading that carried a confidence of its own, or `null` — an unrated reading cannot ride on another's number (KV-79). HRV neither vouches nor is vouched for: its own rating decides nothing and counts in no average, until HRV ratings have been seen on hardware. |
 | `CheckInAnswers` | `mood`, `sleep`, `eatenToday`, `painReported` (+ optional `painNote`). All four are required: there is no way to say "not asked", so the flow collects all of them or stores nothing. |
 | `FiredRule` | `id`, `title`, `explanation`, `severity`. One per rule that fired. |
-| `Assessment` | `flag`, `firedRules`, `summary`, `baselineSessions`, `baselineSeededSessions`, `uncomparedMetrics`. Written by the scorer. `uncomparedMetrics` lists the metrics measured at the check-in with too few readings of their own to have a usual, with the counts and what those readings averaged; a would-be `normal` with any is withheld (KV-87). Absent on a verdict scored before it, which reads as unknown. |
+| `Assessment` | `flag`, `firedRules`, `summary`, `baselineSessions`, plus the optional `baselineSeededSessions` and `uncomparedMetrics`. Written by the scorer. `uncomparedMetrics` lists the metrics measured at the check-in with too few readings of their own to have a usual, each with how many readings it had and how many were needed, and, when it had any, what they averaged; a would-be `normal` with any entry is withheld (KV-87). It is written only when the check-in was compared against a baseline at all, so it is **absent for two different reasons**: on an unusable capture or a baseline still learning, where nothing was compared and absence is correct, and on a verdict scored before KV-87, where absence means unknown. Read it as unknown only on a `normal` or `elevated` verdict. |
 | `SessionRecord` | The above plus `id`, `personId`, `capturedAt` (UTC), `timeZone`, and `seeded` for demo history. |
 
 `timeZone` is the IANA zone of the device at capture time, e.g. `Europe/London` — not a
@@ -396,12 +396,15 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
 
 ## Known Limitations / Gotchas
 
-- **The SDK has been validated on one machine, in one room (KV-1).** Real captures have
-  returned pulse, breathing and HRV, and corrected several assumptions the reduction was
-  first written on — see `ARCHITECTURE.md` and the `Vitals` row under *Data Model* for what
-  it does now. Everything the scorer believes about what the SDK reports still rests on
-  that one setting. HRV in particular has arrived in few captures, and whether it ever
-  carries a confidence of its own has not been seen (KV-79).
+- **The SDK is validated in exactly one setting (KV-1).** One machine, one room. Real
+  captures corrected several assumptions the reduction was first written on — see
+  `ARCHITECTURE.md` and the `Vitals` row under *Data Model* for what it does now — and
+  everything the scorer believes about what the SDK reports still rests on that setting.
+  **HRV is the thinnest part of it.** HRV entries do arrive in the stream (30 in the first
+  real capture), but an HRV reading reaching the record is rare: it arrived in one capture
+  of eight counted in `core/capture/length.ts`, and in none of the five KV-87 was scored
+  against. Whether an HRV reading ever carries a confidence of its own has not been seen
+  (KV-79).
 - **Signal quality depends on lighting and framing.** This is the SDK's constraint, not
   ours, and it is the most likely way a capture fails. Test in the actual room,
   early.
@@ -424,10 +427,11 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   so that the combination the product exists to catch clears the threshold and a single
   soft signal does not. Answers can clear it on their own — six combinations do, all with
   pain — and one light answer rule, poor sleep, can tip a day the camera already has close
-  to the line. Both are decisions, pinned in tests (KV-10, KV-91). The camera, by contrast,
-  cannot flag a day alone unless HRV falls by half: a pulse or breathing rate four standard
-  deviations from their usual, in either direction, caps at 0.45 or 0.40 (KV-9). None of
-  this is calibrated against outcomes, and it should not be presented as if it were (KV-22).
+  to the line. Both are decisions, pinned in tests (KV-10, KV-91). On the camera side, no
+  single rule flags a day by itself except an HRV drop of half or more; two camera rules
+  together can. The arithmetic, and which camera-only days flag, is in `ARCHITECTURE.md`
+  and pinned in `tests/scoring.test.ts`. None of this is calibrated against outcomes, and
+  it should not be presented as if it were (KV-22).
 - **A JSON file is the store.** Correct at one small record per person per day, and it
   avoids a native rebuild against Electron's ABI. `SessionStore` in
   `core/session/store.ts` is the seam to swap if that stops being true.
