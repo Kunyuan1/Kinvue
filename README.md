@@ -310,7 +310,7 @@ One record per check-in, appended to a JSON file. Sessions are never edited in p
 | `Vitals` | `pulseRateBpm`, `breathingRateBrpm`, `hrvRmssdMs`, `hrvSdnnMs`, plus `confidence`, `stable` and `durationSec`. Any metric may be `null`. `confidence` describes the readings actually reported: per metric, the ones the SDK called settled, falling back to all of that metric’s readings when it settled on none. It is `null` when nothing rated the readings at all, and a null withholds the verdict rather than scoring it (KV-12). Once either rate in the capture is rated, each reports its newest reading that carried a confidence of its own, or `null` — an unrated reading cannot ride on another's number (KV-79). HRV neither vouches nor is vouched for: its own rating decides nothing and counts in no average, until HRV ratings have been seen on hardware. |
 | `CheckInAnswers` | `mood`, `sleep`, `eatenToday`, `painReported` (+ optional `painNote`). All four are required: there is no way to say "not asked", so the flow collects all of them or stores nothing. |
 | `FiredRule` | `id`, `title`, `explanation`, `severity`. One per rule that fired. |
-| `Assessment` | `flag`, `firedRules`, `summary`, `baselineSessions`, `baselineSeededSessions`. Written by the scorer. |
+| `Assessment` | `flag`, `firedRules`, `summary`, `baselineSessions`, `baselineSeededSessions`, `uncomparedMetrics`. Written by the scorer. `uncomparedMetrics` lists the metrics measured at the check-in with too few readings of their own to have a usual, with the counts and what those readings averaged; a would-be `normal` with any is withheld (KV-87). Absent on a verdict scored before it, which reads as unknown. |
 | `SessionRecord` | The above plus `id`, `personId`, `capturedAt` (UTC), `timeZone`, and `seeded` for demo history. |
 
 `timeZone` is the IANA zone of the device at capture time, e.g. `Europe/London` — not a
@@ -396,11 +396,12 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
 
 ## Known Limitations / Gotchas
 
-- **The SDK is not yet validated on hardware (KV-1).** `app/main/vitals.ts` is written
-  against the documented Node API and has never returned a real reading in this repo. The
-  reduction it does — last settled sample for pulse and breathing, last `stable` sample
-  for HRV, confidence averaged across the capture — is a reasonable reading of the docs
-  and needs confirming against a live session.
+- **The SDK has been validated on one machine, in one room (KV-1).** Real captures have
+  returned pulse, breathing and HRV, and corrected several assumptions the reduction was
+  first written on — see `ARCHITECTURE.md` and the `Vitals` row under *Data Model* for what
+  it does now. Everything the scorer believes about what the SDK reports still rests on
+  that one setting. HRV in particular has arrived in few captures, and whether it ever
+  carries a confidence of its own has not been seen (KV-79).
 - **Signal quality depends on lighting and framing.** This is the SDK's constraint, not
   ours, and it is the most likely way a capture fails. Test in the actual room,
   early.
@@ -423,8 +424,10 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   so that the combination the product exists to catch clears the threshold and a single
   soft signal does not. Answers can clear it on their own — six combinations do, all with
   pain — and one light answer rule, poor sleep, can tip a day the camera already has close
-  to the line. Both are decisions, pinned in tests (KV-10, KV-91). They are not calibrated
-  against outcomes and should not be presented as if they were.
+  to the line. Both are decisions, pinned in tests (KV-10, KV-91). The camera, by contrast,
+  cannot flag a day alone unless HRV falls by half: a pulse or breathing rate four standard
+  deviations from their usual, in either direction, caps at 0.45 or 0.40 (KV-9). None of
+  this is calibrated against outcomes, and it should not be presented as if it were (KV-22).
 - **A JSON file is the store.** Correct at one small record per person per day, and it
   avoids a native rebuild against Electron's ABI. `SessionStore` in
   `core/session/store.ts` is the seam to swap if that stops being true.
