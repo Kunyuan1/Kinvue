@@ -20,6 +20,12 @@ updates:
       # the group, and an SDK release, which can change what the capture sends
       # over the network, is never hidden inside a chore. Neither is proven by a
       # green CI run — see README "Conventions & Workflow".
+      #
+      # Both are pinned exactly in package.json, not with a caret (KV-131), so
+      # this PR-per-release is the only way either version moves: with `^`,
+      # `npm update` could take a new Electron or SDK with no PR, no app run
+      # and no capture checked against the privacy claims. Dependabot rewrites
+      # an exact pin, so nothing is lost. Do not relax it back to a range.
       minor-and-patch:
         update-types: ["minor", "patch"]
         exclude-patterns: ["electron", "@smartspectra/*"]
