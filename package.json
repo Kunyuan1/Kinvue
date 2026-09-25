@@ -5,7 +5,7 @@
   "description": "A daily check-in that tells a caregiver when an older adult's day looks different from their own baseline.",
   "main": "./out/main/index.js",
   "engines": {
-    "node": ">=20.12"
+    "node": "^22.13.0 || ^24.0.0 || >=26.0.0"
   },
   "scripts": {
     "dev": "electron-vite dev",

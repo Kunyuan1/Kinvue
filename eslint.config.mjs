@@ -1,9 +1,19 @@
+// `@eslint/js` stays on 10.0.x beside a newer `eslint`: since v10 it is
+// released on its own cadence, and 10.0.1 is the latest there is. Asking for
+// `^10.11.0` to match `eslint` fails to install (KV-134).
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
   { ignores: ['out/**', 'dist/**', 'release/**', 'node_modules/**'] },
   js.configs.recommended,
+  // The non-type-aware preset: there is no `projectService`, so no rule that
+  // needs type information runs — `no-floating-promises` and
+  // `no-misused-promises` among them, which `app/main`'s `void` promises and
+  // its "returned rather than swallowed" comments currently hold by hand.
+  // Whether to turn them on for `app/main/**` is #135, undecided. Until then
+  // this is a known gap, not an oversight. `tests/lint-rules.test.ts` pins
+  // which rules this does run (KV-134).
   ...tseslint.configs.recommended,
   {
     files: ['**/*.ts', '**/*.tsx'],
