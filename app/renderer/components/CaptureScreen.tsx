@@ -35,6 +35,20 @@ import type { CaptureFailure } from '@core/capture/failure'
  * app blaming someone for its own setup (KV-7). `capture-in-progress` and
  * `unknown` make no claim either way.
  *
+ * `unknown` used to say "Something went wrong with the camera" — a cause,
+ * and nearly always the wrong one (KV-80). Every SDK call that touches the
+ * camera or the service is tagged and has its own sentence above, so what
+ * reaches `unknown` is a fault inside the app: its own code, a tag that
+ * belongs to the other screen, or the SDK failing to be set up before any
+ * camera was asked for. Naming the camera blamed it, to the one person in
+ * this app who is being filmed.
+ *
+ * Nor does it advise a retry. Everything that reaches it is deterministic —
+ * a malformed reply or a missing id fails the same way every time — and
+ * "trying again is worth a go" is a claim about that, not a shrug (the lesson
+ * KV-13 taught the questions screen). So it says whose problem it is, which is
+ * true of all of them, and who can act, as `no-api-key` does.
+ *
  * `no-connection` is the exception, and deliberately so. Telling someone
  * whose Wi-Fi is off that nothing is wrong on their side is untrue, and it is
  * the one thing that would stop anyone looking at the connection (KV-104). But
@@ -94,7 +108,9 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
   },
   unknown: {
     title: 'The reading could not be taken',
-    detail: 'Something went wrong with the camera. Trying again is worth a go.',
+    detail:
+      'Something went wrong inside the app, and nothing is wrong on your side. ' +
+      'Whoever set it up may need to look at it.',
   },
 }
 

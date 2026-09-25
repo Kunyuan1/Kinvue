@@ -596,6 +596,23 @@ else. The tag is also what keeps a *rejected* key from being reported as a busy 
 SDK only discovers it at session start, so it arrives on the same path as a real camera
 fault and is told apart by the SDK's own error code, not by the call site guessing.
 
+**A failure with no tag names no cause, and advises no retry** (KV-80). Every SDK call sits
+inside a path that decides what its failure says, and every one that touches the camera or the
+service is tagged with its own sentence. Setting the SDK up — the constructor and the event
+registrations, before anything has asked for the camera — is mapped separately
+(`setupFailure`): an account code says the app is not set up, and anything else stays
+untagged, since naming the camera there would name a device nobody had opened. So what reaches
+`unknown` on the capture screen is a fault inside the app: its own code, a tag that belongs to
+the questions screen, or the SDK failing to be set up. None of that is the camera, and none of
+it is cleared by trying again.
+
+It used to say "Something went wrong with the camera. Trying again is worth a go." — a
+confident wrong cause to the person being filmed, and wrong advice beside it. It now says that
+something went wrong inside the app, that nothing is wrong on their side, and that whoever set
+it up may need to look. A cause belongs in its own tagged entry, never in the one for having
+none. A setup failure also tears the constructed session down, since the SDK warns that
+`destroy()` owns process-global state and an undestroyed session could fail the next capture.
+
 **A stop is the one rejection that does not cross IPC as a rejection** (KV-89). Electron logs
 every rejection from an `ipcMain.handle` handler as "Error occurred in handler" with a stack
 trace, so pressing Stop — the one thing the capture screen invites — printed ten lines of

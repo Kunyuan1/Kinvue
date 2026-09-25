@@ -76,6 +76,20 @@ describe('CaptureScreen says which failure it was', () => {
     expect(screen.getByText(expected)).toBeDefined()
   })
 
+  it('names no cause and advises no retry for a failure it cannot identify', () => {
+    // KV-80: `unknown` said "Something went wrong with the camera". What
+    // reaches it now is a fault inside the app — none of it the camera, and
+    // none of it cleared by trying again (KV-80 review). Asserted on the detail
+    // sentence itself, so an empty detail cannot pass and copy elsewhere on the
+    // view cannot trip it.
+    renderCapture('unknown')
+    const detail = screen.getByRole('heading').nextElementSibling?.textContent ?? ''
+    expect(detail).toMatch(/inside the app/i)
+    expect(detail).toMatch(/not.*your side/i)
+    expect(detail).not.toMatch(/camera|connection|internet|another program/i)
+    expect(detail).not.toMatch(/try(ing)? again|in a moment/i)
+  })
+
   it('does not ask the person to wait for a reading that is being discarded', () => {
     // The only control here is Go back, which stops the running capture. The
     // copy used to say "try again in a few seconds" beside it: a wait that

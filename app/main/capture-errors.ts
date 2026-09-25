@@ -120,6 +120,29 @@ export function emptyCaptureFailure(vitals: Vitals, online: boolean): 'no-connec
   return !online && !hasScorableVitals(vitals) ? 'no-connection' : null
 }
 
+/**
+ * What a failure *setting the SDK up* rejects with: the constructor and the
+ * event registrations, before anything has asked for the camera (KV-80
+ * review).
+ *
+ * Not `sdkFailure`. That is written for `useCamera()` and `start()`, where the
+ * camera is genuinely being opened, so anything it does not recognise falls to
+ * `camera-unavailable` — "another program may have it open". Here nothing has
+ * selected a device, so that sentence would name one nobody touched, to the
+ * person in front of it. Only an account code means anything this early; the
+ * connection cannot, since the SDK reaches Presage at session start (KV-65).
+ *
+ * Anything else is returned **untagged**, and reads as `unknown`, which names
+ * no cause. The SDK's typings document codes on the lifecycle methods only, so
+ * a codeless throw is the likely shape here.
+ */
+export function setupFailure(err: unknown): unknown {
+  const code = sdkErrorCode(err)
+  return code !== undefined && ACCOUNT_CODES.has(code)
+    ? captureError('no-api-key', 'the capture could not be set up.', err)
+    : err
+}
+
 /** Reads the numeric `code` the SDK puts on the errors its methods throw. */
 export function sdkErrorCode(err: unknown): number | undefined {
   if (typeof err !== 'object' || err === null) return undefined

@@ -62,9 +62,10 @@ const SUBMIT_FAILURE: Record<SubmitFailure, string> = {
   // Since KV-75 this bucket also holds capture-path tags, which `ON_SUBMIT`
   // routes here because this screen has no words for them. The refiling
   // argument above does not cover those — it is about untagged write failures
-  // — and nothing can raise one on this path today, because the camera has
-  // been closed since before the questions were asked. If that ever changes,
-  // this sentence needs revisiting rather than widening (KV-80).
+  // — but the sentence still holds for them, because it names no cause: the
+  // check-in was not saved, which is true of any failure here. That is the
+  // property KV-80 gave the capture screen's `unknown`, which used to blame
+  // the camera. Keep it: a cause belongs in its own entry, never in this one.
   //
   // A corrupt store used to land here too, and that was the bug KV-13's review
   // caught: retrying clears a full disk, never an unparseable file. It has its

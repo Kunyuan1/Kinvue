@@ -24,6 +24,7 @@ import {
   emptyCaptureFailure,
   sdkErrorCode,
   sdkFailure,
+  setupFailure,
 } from './capture-errors'
 import type { CaptureGuidance } from '@core/capture/guidance'
 import type { SdkFrame } from './frames'
@@ -224,14 +225,23 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
   // costs one screen; a wrong refusal costs the check-in.
   const online = net.isOnline()
 
-  const sdk = new SmartSpectraSDK({
-    apiKey,
-    requestedMetrics: [...breathingMetrics, ...cardioMetrics],
-    // Opt out of SDK telemetry, which defaults to on. It does not make the app
-    // offline — the SDK still contacts Presage when a session starts (KV-65) —
-    // but an aggregate telemetry channel is a separate thing to decline.
-    enableTelemetry: false,
-  })
+  // Setting the SDK up touches no camera, so a failure here is not mapped the
+  // way `start()`'s is: an account code says the app is not set up, and
+  // anything else stays untagged and reads as `unknown`, which names no cause
+  // (KV-80). See `setupFailure`.
+  let sdk: SmartSpectraSDK
+  try {
+    sdk = new SmartSpectraSDK({
+      apiKey,
+      requestedMetrics: [...breathingMetrics, ...cardioMetrics],
+      // Opt out of SDK telemetry, which defaults to on. It does not make the app
+      // offline — the SDK still contacts Presage when a session starts (KV-65) —
+      // but an aggregate telemetry channel is a separate thing to decline.
+      enableTelemetry: false,
+    })
+  } catch (err) {
+    throw setupFailure(err)
+  }
 
   const collected = createVitalsAccumulator()
   const startedAt = Date.now()
@@ -335,74 +345,88 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       if (Date.now() - completeAt >= SETTLE_AFTER_COMPLETE_SECONDS * 1000) finish()
     }, 1000)
 
-    // NOTE: `on()` REPLACES the callback for an event rather than adding one,
-    // so there is exactly one registration per event here. Do not add a second.
-    sdk.on('metrics', (buf: Buffer) => {
-      firstFrameAt ??= Date.now()
-      try {
-        collected.add(decodeMetrics(buf))
-      } catch (err) {
-        // Thrown inside an SDK callback, so nothing here would catch it and
-        // the capture would resolve as if the lost samples never existed.
-        cleanUp()
-        reject(captureError('camera-unavailable', 'could not decode metrics.', err))
-      }
-    })
-
-    sdk.on('validationStatus', (code: ValidationCodeValue, _ts: number) => {
-      firstFrameAt ??= Date.now()
-      if (code === ValidationCode.kOk) {
-        onGuidance?.(null)
-        return
-      }
-      onGuidance?.({
-        message: VALIDATION_HINTS[code as Advisable],
-        settlingArtefact: SETTLING_CODES.has(code),
-      })
-    })
-
-    // NOTE: one registration per event — `on()` replaces rather than adds.
-    // Registered whether or not anyone wants the frames: it is what marks the
-    // first frame, and a capture must not measure its own length differently
-    // because the screen asked for a picture.
-    sdk.on(
-      'videoOutput',
-      (data: Buffer, width: number, height: number, stride: number, pixelFormat: number) => {
-        firstFrameAt ??= Date.now()
-        // Best-effort, like progress and guidance: a preview that throws must
-        // not take down the measurement it is showing.
-        try {
-          onFrame?.({ data, width, height, stride, pixelFormat })
-        } catch {
-          /* the reading matters more than the picture of it */
-        }
-      },
-    )
-
-    signal?.addEventListener(
-      'abort',
-      () => {
-        cleanUp()
-        reject(new CaptureCancelledError())
-      },
-      { once: true },
-    )
-
-    sdk.on('error', (code: number, message: string) => {
-      cleanUp()
-      // Not all of the SDK's failures are the camera's. A key that is present
-      // but rejected, expired or out of credit surfaces here, and calling that
-      // a busy camera sends the person to close a video call that was never
-      // the problem. `sdkFailure` keeps the two apart (KV-7) — and keeps a
-      // capture that failed with the network down from being called a camera
-      // fault either, which the SDK's own code cannot tell us (KV-104).
-      reject(captureError(sdkFailure(code, online), `SmartSpectra — ${message}`))
-    })
-
     // The ceiling. Reaching it means something never arrived, and the capture
     // is scored on what did — which is the behaviour a fixed clock had for
     // every capture, now reserved for the ones that need it.
     const timer = setTimeout(finish, durationSec * 1000)
+
+    // One `try` over every registration, so every SDK call sits inside a path
+    // that decides what its failure says — by construction rather than by
+    // reading (KV-80 review). They are bookkeeping and touch no device, so a throw is
+    // mapped as setup, not as the camera — and the session is torn down, since
+    // it was constructed: the SDK warns that `destroy()` owns process-global
+    // state, and a session left undestroyed could fail the next capture.
+    // `timer` is set above rather than below for this reason too: `cleanUp`
+    // clears it, and must be callable from here.
+    try {
+      // NOTE: `on()` REPLACES the callback for an event rather than adding one,
+      // so there is exactly one registration per event here. Do not add a second.
+      sdk.on('metrics', (buf: Buffer) => {
+        firstFrameAt ??= Date.now()
+        try {
+          collected.add(decodeMetrics(buf))
+        } catch (err) {
+          // Thrown inside an SDK callback, so nothing here would catch it and
+          // the capture would resolve as if the lost samples never existed.
+          cleanUp()
+          reject(captureError('camera-unavailable', 'could not decode metrics.', err))
+        }
+      })
+
+      sdk.on('validationStatus', (code: ValidationCodeValue, _ts: number) => {
+        firstFrameAt ??= Date.now()
+        if (code === ValidationCode.kOk) {
+          onGuidance?.(null)
+          return
+        }
+        onGuidance?.({
+          message: VALIDATION_HINTS[code as Advisable],
+          settlingArtefact: SETTLING_CODES.has(code),
+        })
+      })
+
+      // NOTE: one registration per event — `on()` replaces rather than adds.
+      // Registered whether or not anyone wants the frames: it is what marks the
+      // first frame, and a capture must not measure its own length differently
+      // because the screen asked for a picture.
+      sdk.on(
+        'videoOutput',
+        (data: Buffer, width: number, height: number, stride: number, pixelFormat: number) => {
+          firstFrameAt ??= Date.now()
+          // Best-effort, like progress and guidance: a preview that throws must
+          // not take down the measurement it is showing.
+          try {
+            onFrame?.({ data, width, height, stride, pixelFormat })
+          } catch {
+            /* the reading matters more than the picture of it */
+          }
+        },
+      )
+
+      signal?.addEventListener(
+        'abort',
+        () => {
+          cleanUp()
+          reject(new CaptureCancelledError())
+        },
+        { once: true },
+      )
+
+      sdk.on('error', (code: number, message: string) => {
+        cleanUp()
+        // Not all of the SDK's failures are the camera's. A key that is present
+        // but rejected, expired or out of credit surfaces here, and calling that
+        // a busy camera sends the person to close a video call that was never
+        // the problem. `sdkFailure` keeps the two apart (KV-7) — and keeps a
+        // capture that failed with the network down from being called a camera
+        // fault either, which the SDK's own code cannot tell us (KV-104).
+        reject(captureError(sdkFailure(code, online), `SmartSpectra — ${message}`))
+      })
+    } catch (err) {
+      cleanUp()
+      reject(setupFailure(err))
+      return
+    }
 
     try {
       sdk.useCamera()

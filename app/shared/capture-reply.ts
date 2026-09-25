@@ -82,9 +82,9 @@ const isCaptureResult = (v: unknown): v is CaptureResult =>
  * classifies as `cancelled`. Anything that is not a reply of that shape is
  * refused rather than handed on.
  *
- * The refusal is untagged, so the capture screen shows it as `unknown` —
- * whose wording is #80's problem, not a reason to invent a tag here. Main
- * cannot send such a reply; this is the floor, not a path.
+ * The refusal is untagged, so the capture screen shows it as `unknown`, which
+ * since KV-80 names no cause and advises no retry — true of a reply main did
+ * not write. Main cannot send one; this is the floor, not a path.
  */
 export function fromCaptureReply(reply: unknown): CaptureResult {
   if (isObject(reply)) {
