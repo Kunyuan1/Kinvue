@@ -5,6 +5,10 @@ updates:
   # not something this file can turn on.
   - package-ecosystem: npm
     directory: /
+    # Explicit rather than `auto`, because the pins below depend on it: `increase`
+    # rewrites an exact requirement to the new exact version. `widen` would write
+    # `44.4.3 || 44.5.0` inside the very PR meant to protect the pin (KV-131).
+    versioning-strategy: increase
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
@@ -22,10 +26,18 @@ updates:
       # green CI run — see README "Conventions & Workflow".
       #
       # Both are pinned exactly in package.json, not with a caret (KV-131), so
-      # this PR-per-release is the only way either version moves: with `^`,
-      # `npm update` could take a new Electron or SDK with no PR, no app run
-      # and no capture checked against the privacy claims. Dependabot rewrites
-      # an exact pin, so nothing is lost. Do not relax it back to a range.
+      # npm will not pick up a new one on its own. With `^`, `npm update` would
+      # move either inside a few hundred lines of package-lock.json churn, in a
+      # PR about something else, with no app run and no capture checked against
+      # the privacy claims — a version change nobody read. Dependabot rewrites
+      # an exact pin (see `versioning-strategy`), so nothing is lost, and
+      # tests/pins.test.ts fails if either is relaxed back to a range.
+      #
+      # Why these two and not every package CI cannot run: CI cannot prove
+      # Electron's Node version, and so the native ABI the SDK's runtime loads
+      # against, nor the SDK's network behaviour. A bundler or plugin minor
+      # changes build output the build and tests do check. That is the line —
+      # do not pin package by package past it, or reach for `save-exact`.
       minor-and-patch:
         update-types: ["minor", "patch"]
         exclude-patterns: ["electron", "@smartspectra/*"]

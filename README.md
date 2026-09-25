@@ -391,8 +391,10 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   PRs skip the template's *Ran the app* box. An Electron bump needs `npm run dev` before
   merging, and an SDK bump needs a real capture too, checked for new network behaviour
   against the privacy claims above. Both are pinned to exact versions in `package.json`
-  so that a Dependabot PR is the only way either moves: a caret would let `npm update`
-  take one with none of those checks (KV-131).
+  so that npm will not pick up a new one on its own: a caret would let `npm update` move
+  one inside lockfile churn, with none of those checks (KV-131). A test fails if either
+  pin is relaxed. They are the only two pinned, because they are the only two whose risk
+  CI cannot see — a native ABI and a network surface.
 
 ---
 
