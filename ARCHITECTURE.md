@@ -286,10 +286,16 @@ which is the wrong tool for the job; showing the answers on the card apart from 
 #110.
 
 What this does not settle: that the camera finds it much harder to raise a flag than the
-questions do. Only an HRV drop of half or more reaches the threshold alone; a pulse four
-standard deviations above usual caps at 0.45. Whether a large vitals deviation should flag
-on its own is the other half of the same balance. #9 answered only the direction — a fall
-now weighs exactly what the same rise does — so the magnitude question belongs with #22.
+questions do. **No single camera rule flags a day except an HRV drop of half or more.** A
+pulse or breathing rule carries half its peak the moment it fires at 2 standard deviations
+— 0.225 for pulse, 0.20 for breathing — and caps at 0.45 and 0.40 at 4, in either direction
+(KV-9). So one rate, however far out, cannot reach 0.6 alone. **Two camera rules together
+can**: pulse and breathing each 3 standard deviations out sum to about 0.64, and a quarter
+drop in HRV beside breathing at 3 to about 0.62. Both just past 2 sum to about 0.44, and do
+not. `tests/scoring.test.ts` pins which camera-only days flag, so this paragraph and the
+weights cannot drift apart silently. Whether one large vitals deviation should flag on its
+own is the other half of the same balance; #9 answered only the direction, so the magnitude
+question belongs with #22.
 
 ---
 

@@ -1150,3 +1150,58 @@ describe('readings below their usual (KV-9)', () => {
     expect(BASELINE_RULE_IDS.has('breathing-low')).toBe(true)
   })
 })
+
+describe('what the camera alone can flag, with every answer benign', () => {
+  // The README and ARCHITECTURE describe this balance in prose, and prose went
+  // stale once: a docs pass wrote "the camera cannot flag a day alone unless
+  // HRV falls by half", which is true of one rule and false of two (review of
+  // #126). The answers side is pinned (KV-10); this pins the camera side, so
+  // a weight or threshold change that moves it fails here, not in a doc.
+  //
+  // A history with a measured spread on both rates: pulse mean 75, sd ≈ 4.74;
+  // breathing mean 15, sd 1. HRV is the helper's flat 34.
+  const past = [
+    [72, 14],
+    [78, 16],
+    [69, 14],
+    [81, 16],
+    [75, 15],
+  ].map(([pulse, breathing], i) =>
+    session({
+      id: `c-${i}`,
+      capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+      vitals: { pulseRateBpm: pulse, breathingRateBrpm: breathing },
+    }),
+  )
+  const sd = Math.sqrt(22.5)
+  const pulseAt = (z: number): number => 75 + z * sd
+  const breathingAt = (z: number): number => 15 + z
+
+  it.each([
+    ['pulse and breathing each 3 sd high', { pulseRateBpm: pulseAt(3), breathingRateBrpm: breathingAt(3) }],
+    ['pulse and breathing each 3 sd low', { pulseRateBpm: pulseAt(-3), breathingRateBrpm: breathingAt(-3) }],
+    ['HRV down about a quarter, breathing 3 sd high', { hrvRmssdMs: 25, breathingRateBrpm: breathingAt(3) }],
+    ['HRV down by half, on its own', { hrvRmssdMs: 17 }],
+  ])('flags %s', (_what, vitals) => {
+    expect(scoreSession(session({ vitals }), past).flag).toBe('elevated')
+  })
+
+  it.each([
+    ['pulse 5 sd high, on its own', { pulseRateBpm: pulseAt(5) }],
+    ['breathing 5 sd low, on its own', { breathingRateBrpm: breathingAt(-5) }],
+    ['pulse and breathing each just past 2 sd', { pulseRateBpm: pulseAt(2.05), breathingRateBrpm: breathingAt(2.05) }],
+  ])('does not flag %s', (_what, vitals) => {
+    expect(scoreSession(session({ vitals }), past).flag).toBe('normal')
+  })
+
+  it('gives a rate rule half its peak the moment it fires', () => {
+    // The floor, not the cap, is what decides whether two camera rules clear
+    // the threshold: 0.225 for pulse and 0.20 for breathing at 2 sd.
+    const fired = scoreSession(
+      session({ vitals: { pulseRateBpm: pulseAt(2.0001), breathingRateBrpm: breathingAt(2.0001) } }),
+      past,
+    ).firedRules
+    expect(fired.find((r) => r.id === 'pulse-elevated')?.severity).toBeCloseTo(0.225, 3)
+    expect(fired.find((r) => r.id === 'breathing-elevated')?.severity).toBeCloseTo(0.2, 3)
+  })
+})
