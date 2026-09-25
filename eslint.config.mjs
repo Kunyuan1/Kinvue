@@ -114,6 +114,42 @@ export default tseslint.config(
           ],
         },
       ],
+      // `no-restricted-imports` sees only static forms — `import`, `export
+      // from`, side-effect imports. `await import('@smartspectra/node-sdk')`,
+      // `require('electron')` and `createRequire(...)('react')` walk past it,
+      // and deferring the SDK's load is exactly what someone reading "loads its
+      // native runtime at import time" might reach for (KV-129 review). So
+      // core/ loads nothing dynamically at all: it has no need to, and a static
+      // import is one the rule above can see. Banning the forms outright, rather
+      // than listing banned packages a second time, also covers a specifier the
+      // rule could never read, like `import(name)`.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ImportExpression',
+          message:
+            'core/ does not use dynamic import(). Import statically, so the core/ import ' +
+            'guard can see what is loaded.',
+        },
+        {
+          selector: "CallExpression[callee.name='require']",
+          message:
+            'core/ does not use require(). Import statically, so the core/ import guard ' +
+            'can see what is loaded.',
+        },
+        {
+          selector: "CallExpression[callee.name='createRequire']",
+          message:
+            'core/ does not use createRequire(). Import statically, so the core/ import ' +
+            'guard can see what is loaded.',
+        },
+        {
+          selector: 'TSImportEqualsDeclaration',
+          message:
+            'core/ does not use `import x = require()`. Import statically, so the core/ ' +
+            'import guard can see what is loaded.',
+        },
+      ],
     },
   },
 )

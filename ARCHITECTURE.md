@@ -381,6 +381,21 @@ nothing else: the capture and its guidance carry on.
 SmartSpectra SDK and **any import from `app/`** inside `core/**`, and `npm run lint` is
 part of the check set the pre-commit hook and CI both run.
 
+**And `core/` loads nothing dynamically** (KV-129). `no-restricted-imports` sees only static
+forms, so `await import('@smartspectra/node-sdk')` or `require('electron')` walked past it:
+lint green, and the suite needing hardware. Deferring the SDK's load is what someone reading
+"it loads its native runtime at import time" might reach for, which is what made it the
+likely accident. So `import()`, `require()`, `createRequire()` and `import x = require()`
+are banned in `core/` outright. That is simpler than listing the banned packages a second
+time, and it covers a specifier no list could read, like `import(name)`. `core/` never
+needed them.
+
+**The guard is itself tested** (`tests/lint-boundary.test.ts`), because a linter bump that
+quietly stopped the rule matching would pass lint with nothing to report. Each banned form is
+linted at a virtual `core/` path; controls prove it is scoped to `core/` and that a file which
+was never linted is not read as clean; and the resolved config is read back, so a group added
+without a probe fails the build.
+
 The last of those is the one that makes it a rule about direction rather than a list of
 today's offenders. Banning the packages alone left the shortest route to them open: a
 relative `../../app/main/metrics` is not any of the restricted names, and that module
