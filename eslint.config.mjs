@@ -1,6 +1,7 @@
-// `@eslint/js` stays on 10.0.x beside a newer `eslint`: since v10 it is
-// released on its own cadence, and 10.0.1 is the latest there is. Asking for
-// `^10.11.0` to match `eslint` fails to install (KV-134).
+// `@eslint/js` is released independently of `eslint` since v10, so their
+// version numbers do not match and should not be made to: asking for
+// `@eslint/js` at `eslint`'s version fails to install when that release does
+// not exist (KV-134).
 import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
 

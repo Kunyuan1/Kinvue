@@ -235,7 +235,7 @@ Checks — these four are exactly what CI runs:
 ```bash
 npm run lint         # eslint
 npm run typecheck    # tsc --noEmit
-npm test             # vitest, node environment, ~1s
+npm test             # vitest, node environment; seconds warm, longer on a cold start
 npm run build        # electron-vite build
 ```
 

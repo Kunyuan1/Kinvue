@@ -17,8 +17,8 @@ import { ESLint } from 'eslint'
  * the list in the same PR — that edit is the record that someone looked.
  */
 
-/** Enabled for every TypeScript file in the repo, as resolved on 2026-09-25. */
-const ENABLED_EVERYWHERE = [
+/** At error for every TypeScript file in the repo, as resolved on 2026-09-25. */
+const ENABLED_FOR_TS = [
   '@typescript-eslint/ban-ts-comment',
   '@typescript-eslint/no-array-constructor',
   '@typescript-eslint/no-duplicate-enum-values',
@@ -90,36 +90,121 @@ const ENABLED_EVERYWHERE = [
   'valid-typeof',
 ]
 
+/**
+ * typescript-eslint turns these off for `.ts`, because tsc already does their
+ * job. For a `.js`/`.mjs` file nothing else checks — no tsc — so these are the
+ * rules that matter most there, and `eslint.config.mjs` is exactly such a file
+ * (KV-134 review: a `@eslint/js` release dropping `no-undef` would leave a
+ * typo in the config lint-clean).
+ */
+const ENABLED_ONLY_FOR_JS = [
+  'constructor-super',
+  'getter-return',
+  'no-class-assign',
+  'no-const-assign',
+  'no-dupe-args',
+  'no-dupe-class-members',
+  'no-dupe-keys',
+  'no-func-assign',
+  'no-import-assign',
+  'no-new-native-nonconstructor',
+  'no-obj-calls',
+  'no-redeclare',
+  'no-setter-return',
+  'no-this-before-super',
+  'no-undef',
+  'no-unreachable',
+  'no-unsafe-negation',
+  'no-with',
+]
+
+/** typescript-eslint's `.ts`-only additions, which a `.mjs` file does not get. */
+const ENABLED_ONLY_FOR_TS = ['no-var', 'prefer-const', 'prefer-rest-params', 'prefer-spread']
+
+const ENABLED_FOR_JS = [
+  ...ENABLED_FOR_TS.filter((id) => !ENABLED_ONLY_FOR_TS.includes(id)),
+  ...ENABLED_ONLY_FOR_JS,
+]
+
 /** The `core/` guard, on top of the above (KV-15, KV-129). */
 const ENABLED_IN_CORE = ['no-restricted-imports', 'no-restricted-syntax']
 
 const eslint = new ESLint()
 
-/** The rule ids switched on for `filePath`, whatever their options. */
+/**
+ * The rule ids set to **error** for `filePath`.
+ *
+ * Not merely "not off" (KV-134 review): a rule a bump downgrades to `warn`
+ * reports and fails nothing, which is the quieter-and-greener regression this
+ * file exists for. `npm run lint` runs with `--max-warnings=0` for the same
+ * reason, so "enabled" here and "fails CI" there are one statement.
+ */
 async function enabled(filePath: string): Promise<Set<string>> {
-  const config = (await eslint.calculateConfigForFile(filePath)) as {
-    rules: Record<string, unknown>
-  }
-  const on = (setting: unknown): boolean => {
+  const config = (await eslint.calculateConfigForFile(filePath)) as
+    | { rules: Record<string, unknown> }
+    | undefined
+  // ESLint answers undefined for a path no config matches; say which.
+  if (config === undefined) throw new Error(`no ESLint config applies to ${filePath}`)
+  const isError = (setting: unknown): boolean => {
     const severity = Array.isArray(setting) ? setting[0] : setting
-    return severity !== 0 && severity !== 'off'
+    return severity === 2 || severity === 'error'
   }
   return new Set(
     Object.entries(config.rules)
-      .filter(([, setting]) => on(setting))
+      .filter(([, setting]) => isError(setting))
       .map(([id]) => id),
   )
 }
 
 describe('the enabled lint rule set (KV-134)', () => {
   it.each([
-    ['core/', 'core/session/__lint_probe__.ts', [...ENABLED_EVERYWHERE, ...ENABLED_IN_CORE]],
-    ['app/main', 'app/main/__lint_probe__.ts', ENABLED_EVERYWHERE],
-    ['app/renderer', 'app/renderer/__lint_probe__.tsx', ENABLED_EVERYWHERE],
-    ['tests/', 'tests/__lint_probe__.test.ts', ENABLED_EVERYWHERE],
+    ['core/', 'core/session/__lint_probe__.ts', [...ENABLED_FOR_TS, ...ENABLED_IN_CORE]],
+    ['app/main', 'app/main/__lint_probe__.ts', ENABLED_FOR_TS],
+    ['app/renderer', 'app/renderer/__lint_probe__.tsx', ENABLED_FOR_TS],
+    ['tests/', 'tests/__lint_probe__.test.ts', ENABLED_FOR_TS],
+    // The one JavaScript file `eslint .` lints, and the one tsc never sees.
+    ['eslint.config.mjs', 'eslint.config.mjs', ENABLED_FOR_JS],
   ])('keeps every rule enabled for %s', async (_where, filePath, expected) => {
     const actual = await enabled(filePath)
     const dropped = expected.filter((id) => !actual.has(id))
     expect(dropped, "enabled before, not now — see this file's docblock").toEqual([])
   }, 30_000)
+})
+
+/**
+ * Rules whose options carry the enforcement (KV-134 review). An id at error
+ * can still enforce nothing if a release flips its default — `ban-ts-comment`
+ * allowing a bare `@ts-ignore`, `no-empty` allowing an empty `catch` — or if
+ * this repo's own `argsIgnorePattern` is widened. So these are checked the way
+ * `lint-boundary.test.ts` checks the import guard: by what they report.
+ */
+describe('what the option-shaped rules still report (KV-134)', () => {
+  /** Rule ids reported at error for `source` in an ordinary app/main file. */
+  async function reported(source: string): Promise<string[]> {
+    const [result] = await eslint.lintText(source, { filePath: 'app/main/__lint_probe__.ts' })
+    if (result === undefined) throw new Error('ESLint returned no result')
+    return result.messages.filter((m) => m.severity === 2).map((m) => m.ruleId ?? '(fatal)')
+  }
+
+  it('reports a bare @ts-ignore', async () => {
+    expect(await reported('// @ts-ignore\nexport const x: number = 1\n')).toContain(
+      '@typescript-eslint/ban-ts-comment',
+    )
+  }, 30_000)
+
+  it('reports an empty catch', async () => {
+    expect(
+      await reported('export function g(f: () => void): void {\n  try {\n    f()\n  } catch {}\n}\n'),
+    ).toContain('no-empty')
+  })
+
+  it('reports an unused variable and argument, and not one named with a leading underscore', async () => {
+    const unused = '@typescript-eslint/no-unused-vars'
+    expect(
+      await reported('export function g(unused: number): void {\n  const x = 1\n}\n'),
+    ).toEqual([unused, unused])
+    expect(
+      await reported('export function g(_unused: number): void {\n  const _x = 1\n}\n'),
+    ).toEqual([])
+  })
 })
