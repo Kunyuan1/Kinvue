@@ -128,6 +128,7 @@ app/
     index.ts             Electron entry: window, IPC handlers, store wiring
     device.ts            what the device can honestly say about its time zone
     frames.ts            camera frames → a small picture a screen can show
+    window-show.ts       gets the window on screen by more than one event (KV-139)
     env.ts               loads .env into process.env before anything reads it
     vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk
   preload/

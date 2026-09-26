@@ -18,6 +18,7 @@ import {
 } from "./capture-length";
 import { loadDotEnv } from "./env";
 import { captureVitals } from "./vitals";
+import { showWhenReady } from "./window-show";
 import { toCaptureReply, type CaptureReply } from "../shared/capture-reply";
 
 /**
@@ -69,7 +70,16 @@ function createWindow(): BrowserWindow {
     },
   });
 
-  window.once("ready-to-show", () => window.show());
+  // Shown on `ready-to-show`, or shortly after the page loads, or after a
+  // bounded wait — never left hidden on one event that can be lost (KV-139).
+  showWhenReady({
+    isDestroyed: () => window.isDestroyed(),
+    isVisible: () => window.isVisible(),
+    show: () => window.show(),
+    onReadyToShow: (listener) => window.once("ready-to-show", listener),
+    onFinishLoad: (listener) =>
+      window.webContents.once("did-finish-load", listener),
+  });
 
   const devUrl = process.env.ELECTRON_RENDERER_URL;
   if (devUrl) {
