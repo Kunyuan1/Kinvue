@@ -216,6 +216,9 @@ tests/                   Vitest. Covers baseline, scoring, validation, check-in,
 
 ## Local Development
 
+Needs Node `^22.13.0 || ^24.0.0 || >=26.0.0` (`engines` in `package.json`) — the range
+vitest, eslint and jsdom all support. Node 20 cannot run the test suite. CI uses 24.
+
 ```bash
 npm install
 
@@ -232,7 +235,7 @@ Checks — these four are exactly what CI runs:
 ```bash
 npm run lint         # eslint
 npm run typecheck    # tsc --noEmit
-npm test             # vitest, node environment, ~1s
+npm test             # vitest, node environment; seconds warm, longer on a cold start
 npm run build        # electron-vite build
 ```
 
