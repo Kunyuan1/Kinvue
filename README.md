@@ -391,13 +391,49 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   branch-naming and PR-title rules: no KV number and no `Closes` line. Major versions,
   Electron and `@smartspectra/*` each arrive in their own PR.
 - **A green Dependabot PR has not been run.** CI never launches Electron, and Dependabot
-  PRs skip the template's *Ran the app* box. An Electron bump needs `npm run dev` before
-  merging, and an SDK bump needs a real capture too, checked for new network behaviour
-  against the privacy claims above. Both are pinned to exact versions in `package.json`
-  so that npm will not pick up a new one on its own: a caret would let `npm update` move
-  one inside lockfile churn, with none of those checks (KV-131). A test fails if either
-  pin is relaxed. They are the only two pinned, because they are the only two whose risk
-  CI cannot see — a native ABI and a network surface.
+  PRs skip the template's *Ran the app* box. **An Electron bump is always launched before
+  merging** (KV-145). How much more it needs depends on whether the Node and Chromium it
+  vendors moved — not on whether Electron changed, which a patch always does. Compare
+  `node_version` and `chromium_version` in Electron's `DEPS` at the old and new tag
+  (`https://github.com/electron/electron/blob/v<version>/DEPS`):
+  - **Both unchanged**: launch the PR **with no API key**, against an empty scratch store.
+    `--user-data-dir` moves only the store: the key comes from `.env`, which is loaded
+    from the working directory, so a launch from your own checkout finds it and *Take a
+    reading* starts a real capture. Run from a separate worktree instead — `.env` is
+    untracked, so a worktree has none:
+
+    ```bash
+    git fetch origin pull/<PR number>/head:check-<PR number>
+    git worktree add ../kinvue-check check-<PR number>
+    cd ../kinvue-check
+    npm ci
+    npx electron --version
+    npm run dev -- -- --user-data-dir="<a scratch folder>"
+    ```
+
+    `npx electron --version` fetches the Electron binary, which this version downloads on
+    first use rather than at install; without it the launch fails with "Electron
+    uninstall". Afterwards, `git worktree remove ../kinvue-check`, `git branch -D
+    check-<PR number>`, and delete the scratch folder.
+
+    Check that the window appears on its own and already drawn; that the SDK's native
+    runtime loaded (the main bundle loads it at startup, so the window appearing is the
+    proof); that *Seed demo history* renders; and that *Take a reading* reaches **"This
+    app is not set up yet"**. Put the two `DEPS` versions in the PR.
+  - **Either changed, or a minor or major release**: all of that, **plus a real capture**
+    with a key. A launch proves the SDK loads; only a capture calls into it and carries
+    frames through to the preview the renderer draws.
+
+  An SDK bump always needs a real capture, checked for new network behaviour against the
+  privacy claims above, whatever the version. Why each level is enough, and what would
+  make the lighter one stop being enough, is in `ARCHITECTURE.md`. KV-127 would automate
+  the `DEPS` comparison.
+
+  Electron and the SDK are pinned to exact versions in `package.json` so that npm will
+  not pick up a new one on its own: a caret would let `npm update` move one inside
+  lockfile churn, with none of those checks (KV-131). A test fails if either pin is
+  relaxed. They are the only two pinned, because they are the only two whose risk CI
+  cannot see — a native ABI and a network surface.
 
 ---
 
