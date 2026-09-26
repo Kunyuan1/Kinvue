@@ -380,9 +380,13 @@ export const painReported: Rule = {
 }
 
 /**
- * Poor sleep on its own, so the caregiver can see how the question was
- * answered (KV-91). Until this existed the answer vanished without pain beside
- * it: no severity and no line on the card.
+ * Poor sleep on its own. It was added so the caregiver could see how the
+ * question was answered (KV-91): until then the answer vanished without pain
+ * beside it, with no severity and no line on the card. Since KV-110 the card
+ * shows every answer whatever rules fired, so visibility is no longer this
+ * rule's job — **what it contributes now is its weight alone**, and the case
+ * for that weight is below. If that case ever stops holding, the rule can go
+ * without hiding anything.
  *
  * **Weighed, but lightly, and it can tip a day.** The scorer sums every fired
  * rule, camera ones included, so a day whose other rules already sum to within

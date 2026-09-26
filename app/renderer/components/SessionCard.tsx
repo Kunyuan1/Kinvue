@@ -1,4 +1,5 @@
 import { seededDisclosureFor, uncomparedDisclosure } from '@core/scoring'
+import { describeAnswers } from '@core/session/answers'
 import type { Flag, SessionRecord } from '@core/session/types'
 
 const FLAG_LABEL: Record<Flag, string> = {
@@ -78,6 +79,18 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
         <Reading label="Breathing" value={vitals.breathingRateBrpm} unit="br/min" />
         <Reading label="HRV" value={vitals.hrvRmssdMs} unit="ms" />
       </dl>
+
+      {/*
+        Every answer, whatever it was (KV-110). Until this a card showed an
+        answer only when a rule fired on it, so no sleep line could mean well,
+        all right, or unknown. A record of the answers, as labels rather than
+        sentences so it neither repeats the rules nor quotes anyone — seeded
+        cards included — and muted so it reads as context, not as the part
+        that counted: the rules below say that.
+      */}
+      <p className="mt-4 text-sm text-(--color-muted)">
+        Answers: {describeAnswers(session.answers).join(' · ')}
+      </p>
 
       {/*
         The person's own words about their own pain, shown to the caregiver

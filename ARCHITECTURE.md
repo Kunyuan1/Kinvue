@@ -279,11 +279,26 @@ It also changes the card's headline on a day where it is the only thing that fir
 normal, with one or two things worth noting" rather than "A normal day for them", as any
 fired rule does.
 
-This makes *one* answer visible, not the question. "Slept well" and "slept ok" still fire
-nothing, so a card with no sleep line cannot tell them apart — or from a record written
+That made *one* answer visible, not the question. "Slept well" and "slept ok" still fired
+nothing, so a card with no sleep line could not tell them apart — or from a record written
 before this rule existed. Making an answer visible by giving it a rule also gives it weight,
-which is the wrong tool for the job; showing the answers on the card apart from the rules is
-#110.
+which is the wrong tool for the job.
+
+**So every card now shows all four answers, apart from the rules** (KV-110): *"Answers:
+mood all right · sleep badly · eaten yes · pain no"*. The answers are shown whatever they
+were; the fired rules below them say what counted. They are labels, not sentences: sentences
+repeated the rule titles word for word on the cards that matter, and "they said" put words in
+the mouth of seeded data nobody spoke. The values are the person's own choices from the
+questions, with no "today" (the card's date says when), and a stored value the tables have no
+words for reads "not recorded" rather than vanishing. `describeAnswers` in
+`core/session/answers.ts` writes them, so the caregiver's client will say the same.
+
+That leaves `poor-sleep` without the job it was added for. **It keeps its 0.05 on the case
+above, not on visibility**: a bad night tips a camera day already within 0.05 of the
+threshold, and cannot add an answers-only flag. `rules.ts` says so beside the weight. If that
+case stops holding, the rule can go without hiding anything. `low-mood` and `not-eaten` never
+had visibility as their reason: they were scoring rules from the start, and KV-10 decided
+which answer combinations they may flag.
 
 What this does not settle: that the camera finds it much harder to raise a flag than the
 questions do. **No single camera rule flags a day except an HRV drop of half or more.** A
