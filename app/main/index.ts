@@ -18,7 +18,7 @@ import {
 } from "./capture-length";
 import { loadDotEnv } from "./env";
 import { captureVitals } from "./vitals";
-import { showWhenReady } from "./window-show";
+import { ERR_ABORTED, loadFailureMessage, showWhenReady } from "./window-show";
 import { toCaptureReply, type CaptureReply } from "../shared/capture-reply";
 
 /**
@@ -79,14 +79,29 @@ function createWindow(): BrowserWindow {
     onReadyToShow: (listener) => window.once("ready-to-show", listener),
     onFinishLoad: (listener) =>
       window.webContents.once("did-finish-load", listener),
+    // Main frame only, and not a navigation that was merely replaced: a
+    // subframe or a superseded load is not the page failing.
+    onFailLoad: (listener) =>
+      window.webContents.on(
+        "did-fail-load",
+        (_event, errorCode, _description, _url, isMainFrame) => {
+          if (isMainFrame && errorCode !== ERR_ABORTED) listener();
+        },
+      ),
   });
 
+  // A page that cannot load says so, rather than leaving an empty window with
+  // no message (KV-139 review) — the way a `.env` that cannot be read does.
   const devUrl = process.env.ELECTRON_RENDERER_URL;
-  if (devUrl) {
-    void window.loadURL(devUrl);
-  } else {
-    void window.loadFile(join(__dirname, "../renderer/index.html"));
-  }
+  const loading = devUrl
+    ? window.loadURL(devUrl)
+    : window.loadFile(join(__dirname, "../renderer/index.html"));
+  loading.catch((err: unknown) => {
+    const message = loadFailureMessage(err);
+    if (message !== null && !window.isDestroyed()) {
+      dialog.showErrorBox("Kinvue could not load", message);
+    }
+  });
 
   return window;
 }

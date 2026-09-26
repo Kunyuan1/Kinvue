@@ -9,18 +9,24 @@
  * exists, `window-all-closed` never fires, so there is no way out but Task
  * Manager. The fix upstream closes the known trigger, not the single road.
  *
- * So there are three, and the first to arrive wins:
+ * So there are four, and the first to arrive wins:
  *
  * 1. `ready-to-show` — the normal path: shown the moment the page has painted.
- * 2. `did-finish-load`, **plus a short grace**. The page has loaded, so it will
- *    paint any moment; waiting a little gives `ready-to-show` its chance first,
- *    so the normal path never flashes an unpainted frame.
- * 3. An absolute fallback, for a page that never finishes loading at all — a
- *    dev server that is not running, say. Better a visible window with nothing
- *    in it than an invisible one.
+ *    This is the road that never shows an unpainted frame.
+ * 2. `did-finish-load`, **plus a short grace**. The page has loaded and should
+ *    paint any moment; waiting gives `ready-to-show` its chance first. A bet
+ *    that React mounts within the grace, not a guarantee — the window's dark
+ *    `backgroundColor` covers a miss.
+ * 3. `did-fail-load` on the main frame — the page could not load at all, say
+ *    a dev server that is not running. Electron says so within milliseconds,
+ *    so there is nothing to wait for; `index.ts` also explains the empty
+ *    window in a dialog (`loadFailureMessage`).
+ * 4. An absolute fallback, for what Electron cannot report: a page that loads
+ *    and never paints, a renderer lost at startup. Better a visible window
+ *    than an invisible one.
  *
- * Imports nothing from Electron, so the decision is tested in the plain suite;
- * `app/main/index.ts` adapts the real window to `Revealable`.
+ * Imports nothing from Electron, so the decisions are tested in the plain
+ * suite; `app/main/index.ts` adapts the real window to `Revealable`.
  */
 
 /** The parts of a window, and its page, that the decision needs. */
@@ -30,10 +36,12 @@ export interface Revealable {
   show(): void
   onReadyToShow(listener: () => void): void
   onFinishLoad(listener: () => void): void
+  /** A load of the main frame that failed — not a navigation merely replaced. */
+  onFailLoad(listener: () => void): void
 }
 
 /** How long after the page loads to wait for `ready-to-show` before showing anyway. */
-export const SHOW_GRACE_AFTER_LOAD_MS = 1000
+export const SHOW_GRACE_AFTER_LOAD_MS = 1_000
 
 /** The longest a window may stay hidden from creation, whatever else happens. */
 export const SHOW_FALLBACK_MS = 10_000
@@ -55,5 +63,36 @@ export function showWhenReady(window: Revealable): void {
   window.onFinishLoad(() => {
     if (!settled) timers.push(setTimeout(reveal, SHOW_GRACE_AFTER_LOAD_MS))
   })
+  window.onFailLoad(reveal)
   timers.push(setTimeout(reveal, SHOW_FALLBACK_MS))
+}
+
+/**
+ * Chromium's code for a navigation that was replaced by another, not one that
+ * failed. `loadURL` rejects with it, and `did-fail-load` reports it, whenever a
+ * load is superseded — so it is never a reason to tell anyone anything.
+ */
+export const ERR_ABORTED = -3
+
+/**
+ * What to tell the person when the window's page could not be loaded, or null
+ * when there is nothing to tell (KV-139 review).
+ *
+ * The window is shown either way, now; without this it is a dark, empty
+ * rectangle with no message and no log anyone will read — closeable, but
+ * nothing to tell whoever looks after the machine. So the load's rejection is
+ * turned into a dialog, the way a `.env` that cannot be read already is.
+ * Written for whoever is in front of it, not for a developer: what happened,
+ * that no check-in is affected, and who can act. The error itself goes last,
+ * for whoever that is.
+ */
+export function loadFailureMessage(err: unknown): string | null {
+  const code = (err as { code?: unknown; errno?: unknown } | null)?.code
+  const errno = (err as { errno?: unknown } | null)?.errno
+  if (code === 'ERR_ABORTED' || errno === ERR_ABORTED) return null
+  return (
+    'Kinvue could not load its screen, so the window will stay empty. No check-in ' +
+    'has been affected. Closing and reopening Kinvue may help; if it does not, ' +
+    `whoever set it up can look into it.\n\n${String(err)}`
+  )
 }
