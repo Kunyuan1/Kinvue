@@ -393,6 +393,40 @@ but it is the widest thing the bridge carries, and #29's Electron security basel
 treat it as such. A pixel format the conversion does not handle costs the preview and
 nothing else: the capture and its guidance carry on.
 
+### How much to check before merging an Electron bump (KV-145)
+
+CI never launches Electron, so a green Electron bump proves nothing about the app. Every
+one is launched before merging, and a real capture is added only when Electron's `DEPS`
+show its vendored Node or Chromium moved, or on a minor or major release. The full check
+is expensive enough that doing it on every patch would get it skipped on the one that
+mattered. Why each level is enough:
+
+- **A launch proves the SDK *loads*.** `app/main/index.ts` statically imports `./vitals`,
+  which statically imports `@smartspectra/node-sdk`, whose import loads the native runtime
+  through koffi — so a window on screen means it loaded. `tests/sdk-load.test.ts` pins
+  both imports. **If either is ever deferred, the launch stops proving the load and the
+  lighter level stops being enough**; that test fails first so the rule is revisited, not
+  silently weakened.
+- **The load does not depend on Node's version, for this stack.** koffi ships one
+  Node-API binary per platform (`build/koffi/win32_x64/koffi.node`), stable across Node
+  versions by design, and the SmartSpectra runtime beneath it is a plain shared library
+  loaded over FFI, bound to no Node ABI. Electron's own module ABI
+  (`process.versions.modules`, 149 on 44.x) is set by Electron and is not in `DEPS`. So
+  `node_version` is not an ABI signal here. **If a non-Node-API native addon ever joins
+  the tree, it becomes one**, and this rule must look at `process.versions.modules` too.
+- **A capture proves what a launch cannot: the calls, and the frame path.** Only a capture
+  calls into the SDK through koffi at run time, converts frames with Electron's
+  `nativeImage`, and draws them in the renderer's preview. A `chromium_version` move puts
+  the renderer end of that in question — the camera itself is opened by the SDK in main,
+  not by Chromium. A `node_version` move puts the calls in question. Neither is likely to
+  break, but a capture is the only thing that would show it.
+- **A launch still catches what `DEPS` cannot see.** 44.4.3 → 44.4.4 changed 239 files
+  with both versions byte-identical, one of them the `ready-to-show` fix behind KV-139.
+  That is why the lighter level is a launch rather than nothing.
+
+SDK bumps are outside this: every one gets a real capture, checked against the privacy
+claims, because a release can change what a capture sends.
+
 ---
 
 ## Why `core/` has no framework imports

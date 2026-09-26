@@ -392,22 +392,29 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   Electron and `@smartspectra/*` each arrive in their own PR.
 - **A green Dependabot PR has not been run.** CI never launches Electron, and Dependabot
   PRs skip the template's *Ran the app* box. **An Electron bump is always launched before
-  merging**; how much more depends on whether Electron's own runtime moved. Compare
+  merging** (KV-145). How much more it needs depends on whether the Node and Chromium it
+  vendors moved — not on whether Electron changed, which a patch always does. Compare
   `node_version` and `chromium_version` in Electron's `DEPS` at the old and new tag
   (`https://github.com/electron/electron/blob/v<version>/DEPS`):
-  - **Both unchanged** (a patch that only fixes Electron itself): `npm run dev` against a
-    scratch store (`--user-data-dir`). The window appears on its own and already drawn, a
-    seeded demo renders, and *Take a reading* answers. Node did not move, so neither did
-    the native ABI the SDK loads against, and a camera session adds nothing. Say so in the
-    PR, with the two versions.
-  - **Either changed, or a minor or major release**: all of that, **plus a real capture**,
-    because the SDK's native runtime is now loading against something new.
+  - **Both unchanged**: launch a copy with **no API key** against an empty scratch store,
+    so nothing touches the real history:
+
+    ```bash
+    npm run dev -- -- --user-data-dir=<a scratch folder>
+    ```
+
+    Check that the window appears on its own and already drawn; that the SDK's native
+    runtime loaded (the main bundle loads it at startup, so the window appearing is the
+    proof); that *Seed demo history* renders; and that *Take a reading* reaches **"This
+    app is not set up yet"**. Put the two `DEPS` versions in the PR.
+  - **Either changed, or a minor or major release**: all of that, **plus a real capture**
+    with a key. A launch proves the SDK loads; only a capture calls into it and carries
+    frames through to the preview the renderer draws.
 
   An SDK bump always needs a real capture, checked for new network behaviour against the
-  privacy claims above, whatever the version. The two levels exist so the full check stays
-  rare enough to be done properly when it matters, not performed on every patch and
-  skipped on the one that counts (review of #133). #127 would automate the `DEPS`
-  comparison.
+  privacy claims above, whatever the version. Why each level is enough, and what would
+  make the lighter one stop being enough, is in `ARCHITECTURE.md`. #127 would automate the
+  `DEPS` comparison.
 
   Electron and the SDK are pinned to exact versions in `package.json` so that npm will
   not pick up a new one on its own: a caret would let `npm update` move one inside
