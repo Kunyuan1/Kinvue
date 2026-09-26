@@ -216,8 +216,9 @@ tests/                   Vitest. Covers baseline, scoring, validation, check-in,
 
 ## Local Development
 
-Needs Node `^22.13.0 || ^24.0.0 || >=26.0.0` (`engines` in `package.json`) — the range
-vitest, eslint and jsdom all support. Node 20 cannot run the test suite. CI uses 24.
+Needs Node `^22.22.2 || ^24.15.0 || >=26.0.0` (`engines` in `package.json`) — the range
+every direct dependency supports, jsdom 30 setting the floor on 22 and 24. Node 20 cannot
+run the test suite. CI runs the checks on 24 and the tests on 22.
 
 ```bash
 npm install
@@ -428,6 +429,11 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   privacy claims above, whatever the version. Why each level is enough, and what would
   make the lighter one stop being enough, is in `ARCHITECTURE.md`. KV-127 would automate
   the `DEPS` comparison.
+
+  A Dependabot bump that raises a dependency's Node floor fails `tests/pins.test.ts`,
+  which holds `engines.node` exactly equal to what the toolchain supports. It cannot be
+  fixed in place: close it and open one PR carrying the bump and the new floor together
+  (#119 → KV-148).
 
   Electron and the SDK are pinned to exact versions in `package.json` so that npm will
   not pick up a new one on its own: a caret would let `npm update` move one inside
