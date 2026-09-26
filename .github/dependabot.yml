@@ -13,6 +13,16 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    ignore:
+      # `@types/node` follows the Node major Electron ships, not the newest
+      # Node. The main process runs on Electron's Node (24 on Electron 44), and
+      # types for a later major would let code compile against Node APIs that
+      # runtime does not have — CI stays green until something uses one. So no
+      # major bumps: move this by hand when an Electron bump moves its Node
+      # major (its `DEPS` `node_version`, see README). Minor and patch updates
+      # within the major still come through. #117 and #143 were 26 and 25.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     labels: ["chore"]
     commit-message:
       prefix: "chore(deps)"
