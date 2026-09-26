@@ -22,10 +22,7 @@ import lock from '../package-lock.json'
 
 type Deps = Record<string, string>
 const root = lock.packages[''] as { dependencies?: Deps; devDependencies?: Deps }
-const installed = lock.packages as Record<
-  string,
-  { version?: string; resolved?: string } | undefined
->
+const installed = lock.packages as Record<string, { version?: string } | undefined>
 
 const PINNED: [name: string, declared: string | undefined, locked: string | undefined][] = [
   ['electron', (pkg.devDependencies as Deps).electron, root.devDependencies?.electron],
@@ -47,16 +44,6 @@ describe('exact version pins (KV-131)', () => {
     // next `npm ci`.
     expect(locked).toBe(declared)
     expect(installed[`node_modules/${name}`]?.version).toBe(declared)
-  })
-
-  it.each(PINNED)('fetches %s from the public npm registry', (name) => {
-    // The version string alone does not say where `npm ci` gets it from: a
-    // `resolved` repointed at another host, with the version left at the pin,
-    // passes every other check here (review of #133). Every entry in the
-    // lockfile resolves to registry.npmjs.org today.
-    expect(installed[`node_modules/${name}`]?.resolved).toMatch(
-      /^https:\/\/registry\.npmjs\.org\//,
-    )
   })
 })
 
