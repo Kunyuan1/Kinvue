@@ -7,7 +7,7 @@ updates:
     directory: /
     # Explicit rather than `auto`, because the pins below depend on it: `increase`
     # rewrites an exact requirement to the new exact version. `widen` would write
-    # `44.4.3 || 44.5.0` inside the very PR meant to protect the pin (KV-131).
+    # the old pin `||` the new one inside the very PR meant to protect it (KV-131).
     versioning-strategy: increase
     schedule:
       interval: weekly
