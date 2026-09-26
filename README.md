@@ -391,13 +391,29 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   branch-naming and PR-title rules: no KV number and no `Closes` line. Major versions,
   Electron and `@smartspectra/*` each arrive in their own PR.
 - **A green Dependabot PR has not been run.** CI never launches Electron, and Dependabot
-  PRs skip the template's *Ran the app* box. An Electron bump needs `npm run dev` before
-  merging, and an SDK bump needs a real capture too, checked for new network behaviour
-  against the privacy claims above. Both are pinned to exact versions in `package.json`
-  so that npm will not pick up a new one on its own: a caret would let `npm update` move
-  one inside lockfile churn, with none of those checks (KV-131). A test fails if either
-  pin is relaxed. They are the only two pinned, because they are the only two whose risk
-  CI cannot see — a native ABI and a network surface.
+  PRs skip the template's *Ran the app* box. **An Electron bump is always launched before
+  merging**; how much more depends on whether Electron's own runtime moved. Compare
+  `node_version` and `chromium_version` in Electron's `DEPS` at the old and new tag
+  (`https://github.com/electron/electron/blob/v<version>/DEPS`):
+  - **Both unchanged** (a patch that only fixes Electron itself): `npm run dev` against a
+    scratch store (`--user-data-dir`). The window appears on its own and already drawn, a
+    seeded demo renders, and *Take a reading* answers. Node did not move, so neither did
+    the native ABI the SDK loads against, and a camera session adds nothing. Say so in the
+    PR, with the two versions.
+  - **Either changed, or a minor or major release**: all of that, **plus a real capture**,
+    because the SDK's native runtime is now loading against something new.
+
+  An SDK bump always needs a real capture, checked for new network behaviour against the
+  privacy claims above, whatever the version. The two levels exist so the full check stays
+  rare enough to be done properly when it matters, not performed on every patch and
+  skipped on the one that counts (review of #133). #127 would automate the `DEPS`
+  comparison.
+
+  Electron and the SDK are pinned to exact versions in `package.json` so that npm will
+  not pick up a new one on its own: a caret would let `npm update` move one inside
+  lockfile churn, with none of those checks (KV-131). A test fails if either pin is
+  relaxed. They are the only two pinned, because they are the only two whose risk CI
+  cannot see — a native ABI and a network surface.
 
 ---
 
