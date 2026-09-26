@@ -122,3 +122,36 @@ describe('the declared Node range (KV-134)', () => {
     expect(readFileSync('README.md', 'utf8')).toContain(`Needs Node \`${declared}\``)
   })
 })
+
+/**
+ * `@types/node` is held to the Node major Electron ships (review of #150).
+ *
+ * The `ignore` rule in `dependabot.yml` is what keeps Dependabot from
+ * proposing a later major, and a comment is all that would keep the rule: it
+ * sits right above the `groups` block, and deleting it while editing that
+ * restores the #117/#143 proposals with nothing failing. So both halves are
+ * checked here, by reading the files as text.
+ *
+ * `TYPES_NODE_MAJOR` is the Node major Electron vendors — 24 on Electron 44,
+ * from its `DEPS` `node_version`. That cannot be read locally
+ * (`node_modules/electron` does not record its Node), so it is stated here and
+ * changed by hand with an Electron bump that moves it; KV-127 would derive it.
+ */
+const TYPES_NODE_MAJOR = 24
+
+describe('@types/node follows Electron’s Node major (review of #150)', () => {
+  it('declares and installs that major', () => {
+    const declared = (pkg.devDependencies as Deps)['@types/node']
+    expect(semver.minVersion(declared ?? '')?.major).toBe(TYPES_NODE_MAJOR)
+    expect(semver.major(installed['node_modules/@types/node']?.version ?? '0.0.0')).toBe(
+      TYPES_NODE_MAJOR,
+    )
+  })
+
+  it('keeps Dependabot from proposing a later major', () => {
+    const config = readFileSync('.github/dependabot.yml', 'utf8')
+    expect(config).toMatch(
+      /- dependency-name: "@types\/node"\s*\n\s*update-types: \["version-update:semver-major"\]/,
+    )
+  })
+})
