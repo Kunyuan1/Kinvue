@@ -4,8 +4,10 @@ import { unusableReason } from '../session/usable'
 /**
  * A baseline is this person's own recent normal — never a population norm.
  * Comparing an 82-year-old's resting pulse to a textbook range is how you get
- * a dashboard that cries wolf every morning; comparing it to their own last
- * fortnight is the thing a caregiver cannot do by eye.
+ * a dashboard that cries wolf every morning; comparing it to their own recent
+ * check-ins is the thing a caregiver cannot do by eye. "Recent" is their last
+ * 14 usable ones — a fortnight for someone who checks in daily, and further
+ * back, with no age bound, for someone who does not (KV-99).
  */
 
 export interface Stat {
@@ -50,9 +52,11 @@ export const MIN_BASELINE_SESSIONS = 3
  * How many *usable* sessions feed the baseline — the trailing 14 of them.
  *
  * Counted in sessions rather than days, so for anyone who does not check in
- * daily it already reaches back further than the fortnight this used to claim.
- * The point is the same either way: a slow seasonal drift should move the
- * baseline with it rather than read as a deviation forever.
+ * daily it reaches back further than the fortnight this used to claim. The
+ * aim of a trailing window is that a slow drift moves the baseline with it
+ * rather than reading as a deviation forever — which holds for someone who
+ * checks in often, and, with no age bound, not for someone who rarely does
+ * (below).
  *
  * Applied *after* the usability filter (KV-72 review). Taking the last 14
  * records and then discarding the unusable ones made a bad run delete an
@@ -61,9 +65,16 @@ export const MIN_BASELINE_SESSIONS = 3
  * Twelve of fourteen was enough to drop under `MIN_BASELINE_SESSIONS` and
  * switch daily comparison off entirely.
  *
- * Bounding this by calendar age as well — so sparse usable captures cannot
- * anchor to something months old — is #99, because it means a new tuned
- * constant rather than a reordering.
+ * **No age bound, on purpose for now** (KV-99). The window reaches back as
+ * far as it must for 14 usable sessions, so for someone who checks in rarely
+ * it can hold readings a year old, and a slow drift can read as a deviation.
+ * Bounding it by calendar age would fix that, at the cost of a new tuned
+ * horizon with no evidence behind it — which is the whole reason it waits on
+ * #22's calibration. (A *short* bound would also let a bad fortnight empty the
+ * baseline, the KV-72 failure again; a long one floored so it never drops the
+ * set below `MIN_BASELINE_SESSIONS` would not. So what is missing is only the
+ * number.) A long, sparse history pins today's behaviour in the meantime, and
+ * KV-154 would show the caregiver how far back a card's usual reaches.
  */
 export const BASELINE_WINDOW_SESSIONS = 14
 
