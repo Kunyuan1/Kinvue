@@ -389,10 +389,10 @@ function composeSummary(
  *
  * **When today's scorer would say something different, one line says so**,
  * rather than silently replacing what was shown: a different verdict, or the
- * same verdict with different rules fired. The second matters as much — the
- * card that raised this read "Looks normal" on a breathing rate of 5 against a
- * usual of 15, and scored now it is still `normal`, because `breathing-low`
- * alone is under the threshold, but the card should no longer be silent. `prior` is the person's
+ * same verdict with different rules fired. The second matters as much: a rule
+ * that fires or stops firing changes what the card says even when the flag
+ * does not — `breathing-low` alone is under the threshold, so a fall it now
+ * catches leaves the verdict `normal` and would otherwise go unmentioned. `prior` is the person's
  * check-ins before this one, so the rescoring compares it against the same
  * history it had. Seeded cards are already scored when shown (KV-103), so they
  * never drift.

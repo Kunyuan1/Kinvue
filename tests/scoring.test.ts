@@ -1310,9 +1310,10 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
     )
   })
 
-  it('says when the verdict stands but the rules would differ — the card that raised this', () => {
-    // A breathing rate of 5 against a usual of 15 read "Looks normal" with
-    // nothing fired; scored now it is still normal, but breathing-low fires.
+  it('says when the verdict stands but the rules would differ', () => {
+    // A fall that breathing-low now catches, stored as "Looks normal" with
+    // nothing fired: still normal (the rule alone is under the threshold),
+    // but the card should no longer be silent about it.
     const past = [14, 16, 14, 16, 15].map((b, i) => at(`b-${i}`, i + 1, { vitals: { breathingRateBrpm: b } }))
     const s = at('now', 10, { vitals: { breathingRateBrpm: 5 } })
     const shown = present({ ...s, assessment: stored({}) }, past)
