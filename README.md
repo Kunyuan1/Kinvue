@@ -396,12 +396,25 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   vendors moved — not on whether Electron changed, which a patch always does. Compare
   `node_version` and `chromium_version` in Electron's `DEPS` at the old and new tag
   (`https://github.com/electron/electron/blob/v<version>/DEPS`):
-  - **Both unchanged**: launch a copy with **no API key** against an empty scratch store,
-    so nothing touches the real history:
+  - **Both unchanged**: launch the PR **with no API key**, against an empty scratch store.
+    `--user-data-dir` moves only the store: the key comes from `.env`, which is loaded
+    from the working directory, so a launch from your own checkout finds it and *Take a
+    reading* starts a real capture. Run from a separate worktree instead — `.env` is
+    untracked, so a worktree has none:
 
     ```bash
-    npm run dev -- -- --user-data-dir=<a scratch folder>
+    git fetch origin pull/<PR number>/head:check-<PR number>
+    git worktree add ../kinvue-check check-<PR number>
+    cd ../kinvue-check
+    npm ci
+    npx electron --version
+    npm run dev -- -- --user-data-dir="<a scratch folder>"
     ```
+
+    `npx electron --version` fetches the Electron binary, which this version downloads on
+    first use rather than at install; without it the launch fails with "Electron
+    uninstall". Afterwards, `git worktree remove ../kinvue-check`, `git branch -D
+    check-<PR number>`, and delete the scratch folder.
 
     Check that the window appears on its own and already drawn; that the SDK's native
     runtime loaded (the main bundle loads it at startup, so the window appearing is the
@@ -413,8 +426,8 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
 
   An SDK bump always needs a real capture, checked for new network behaviour against the
   privacy claims above, whatever the version. Why each level is enough, and what would
-  make the lighter one stop being enough, is in `ARCHITECTURE.md`. #127 would automate the
-  `DEPS` comparison.
+  make the lighter one stop being enough, is in `ARCHITECTURE.md`. KV-127 would automate
+  the `DEPS` comparison.
 
   Electron and the SDK are pinned to exact versions in `package.json` so that npm will
   not pick up a new one on its own: a caret would let `npm update` move one inside

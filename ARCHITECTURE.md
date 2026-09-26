@@ -418,8 +418,18 @@ mattered. Why each level is enough:
   calls into the SDK through koffi at run time, converts frames with Electron's
   `nativeImage`, and draws them in the renderer's preview. A `chromium_version` move puts
   the renderer end of that in question — the camera itself is opened by the SDK in main,
-  not by Chromium. A `node_version` move puts the calls in question. Neither is likely to
-  break, but a capture is the only thing that would show it.
+  not by Chromium.
+- **A `node_version` move is a size signal, not an ABI one.** The point above settles that
+  Node's version does not reach the SDK's load or its calls, which go through the same
+  Node-API binary. But a patch that vendors a new Node is a larger release than one that
+  does not, with more of Electron moved beside it — which is what a capture is for.
+- **The frame path's own code is the gap, and it is accepted.** `nativeImage` is
+  Electron's code, versioned by the tag rather than by `DEPS`, so a patch can change it
+  with both versions identical, and the lighter level never reaches it: with no key there
+  is no capture, and no frame is converted. It is accepted because of what a failure there
+  costs — a frame the conversion cannot handle costs the preview and nothing else, as
+  above, and the reading and its guidance carry on — and because the next real capture
+  shows it. When a release's notes mention `nativeImage`, treat it as the heavier level.
 - **A launch still catches what `DEPS` cannot see.** 44.4.3 → 44.4.4 changed 239 files
   with both versions byte-identical, one of them the `ready-to-show` fix behind KV-139.
   That is why the lighter level is a launch rather than nothing.

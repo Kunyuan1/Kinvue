@@ -15,21 +15,43 @@ import { describe, expect, it } from 'vitest'
  *
  * Read from source rather than the built bundle, so it runs in the plain suite
  * with no build and no runtime. Importing the SDK here would load the runtime,
- * which is exactly what the suite must not need.
+ * which is exactly what the suite must not need. Quote style is not asserted:
+ * `index.ts` is the one file in `app/main` written with double quotes, and
+ * normalising it must not read as a deferral (review of #146).
  */
 
 const source = (path: string): string => readFileSync(path, 'utf8')
 
+/** Escapes `text` for use inside a RegExp. */
+const literal = (text: string): string => text.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')
+
+/** A static `import { …name… } from 'specifier'`, in either quote style. */
+const staticImport = (name: string, specifier: string): RegExp =>
+  new RegExp(
+    `^import \\{[^}]*\\b${literal(name)}\\b[^}]*\\} from ['"]${literal(specifier)}['"];?$`,
+    'm',
+  )
+
 describe('the SDK is loaded when the app starts (KV-145)', () => {
+  // Deferring either load means removing its static import, which these fail
+  // on. A dynamic import elsewhere in the file does not undo a static one, so
+  // it is not asserted against (review of #146).
   it('is imported statically by vitals.ts, from the package root', () => {
-    const vitals = source('app/main/vitals.ts')
-    expect(vitals).toMatch(/^import \{[^}]*SmartSpectraSDK[^}]*\} from '@smartspectra\/node-sdk'$/m)
-    expect(vitals).not.toMatch(/\bimport\(|\brequire\(/)
+    expect(source('app/main/vitals.ts')).toMatch(
+      staticImport('SmartSpectraSDK', '@smartspectra/node-sdk'),
+    )
   })
 
   it('reaches the main entry point statically', () => {
-    const index = source('app/main/index.ts')
-    expect(index).toMatch(/^import \{[^}]*\bcaptureVitals\b[^}]*\} from "\.\/vitals";$/m)
-    expect(index).not.toMatch(/\bimport\(|\brequire\(/)
+    expect(source('app/main/index.ts')).toMatch(staticImport('captureVitals', './vitals'))
+  })
+
+  it('is read from the file the build actually starts from', () => {
+    // Otherwise moving the entry to another file would leave the two tests
+    // above reading a stale one, green, while the launch stopped proving the
+    // load (review of #146). The first `lib.entry` in the config is main's.
+    const config = source('electron.vite.config.ts')
+    const [main] = [...config.matchAll(/lib: \{ entry: resolve\(__dirname, '([^']+)'\) \}/g)]
+    expect(main?.[1]).toBe('app/main/index.ts')
   })
 })
