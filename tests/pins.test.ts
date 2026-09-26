@@ -57,9 +57,21 @@ describe('exact version pins (KV-131)', () => {
  * intersection. When a Dependabot bump raises a floor, this fails and names
  * the Node versions that moved; update `engines.node` and the README with it.
  *
- * Compared on a grid of versions rather than algebraically — every minor of
- * every major from 18 to 30 — which is where the ranges these packages use
- * (`^22.12.0`, `>=24`, and unions of them) can differ.
+ * Compared on a grid of versions rather than algebraically: every minor of
+ * every major from 18 to 30, **plus every boundary any of the ranges names and
+ * its patch neighbours**. The minors alone are blind below a minor — jsdom 30's
+ * `^22.22.2` is the first floor with a patch, and a wrong `^22.22.9` passed a
+ * grid of `.0`s (review of #149). The boundaries come from the ranges
+ * themselves, so a new floor is sampled without anyone adding it here.
+ *
+ * **Equal, not merely inside**, and that is a choice with a price (review of
+ * #149). "No wider" catches the real bug — claiming a Node the toolchain
+ * refuses. "No narrower" also fails a range that is only cautious, which means
+ * every dev-dependency floor bump turns its Dependabot PR red. That PR cannot
+ * be fixed in place — pushing to a Dependabot PR stops it rebasing — so it is
+ * closed and replaced by a hand-written one carrying the bump and the new
+ * floor together (#119 → KV-148). That recurring replacement is accepted as
+ * the price of a declared range that is never stale.
  */
 describe('the declared Node range (KV-134)', () => {
   const declared = (pkg as { engines: { node: string } }).engines.node
@@ -74,9 +86,21 @@ describe('the declared Node range (KV-134)', () => {
     const node = manifest.engines?.node
     return node === undefined ? [] : [{ name, node }]
   })
-  const grid = Array.from({ length: 13 }, (_, i) => i + 18).flatMap((major) =>
+  const minors = Array.from({ length: 13 }, (_, i) => i + 18).flatMap((major) =>
     Array.from({ length: 41 }, (_, minor) => `${major}.${minor}.0`),
   )
+  // Each comparator's version (`>=22.22.2`, `<23.0.0-0`) and the patches either
+  // side of it, from the declared range and every dependency's.
+  const boundaries = [declared, ...toolchain.map((t) => t.node)].flatMap((range) =>
+    new semver.Range(range).set.flat().flatMap(({ semver: edge }) => {
+      if (typeof edge === 'symbol') return []
+      const { major, minor, patch } = edge
+      return [patch, patch + 1, ...(patch > 0 ? [patch - 1] : [])].map(
+        (p) => `${major}.${minor}.${p}`,
+      )
+    }),
+  )
+  const grid = [...new Set([...minors, ...boundaries])]
 
   it('is what the toolchain supports, no wider and no narrower', () => {
     expect(toolchain.length).toBeGreaterThan(0)

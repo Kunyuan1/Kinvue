@@ -37,3 +37,23 @@ jobs:
       # separate bundles with different externals, so an import can typecheck
       # cleanly and still fail to build.
       - run: npm run build
+
+  # The lowest Node line `engines.node` claims (review of #149). The range is
+  # kept exactly equal to what the toolchain supports, but only 24 was ever run,
+  # so a dependency that quietly needed 24 would have left the 22 branch a claim
+  # nobody tested. The suite needs no camera and no key, so this costs an install
+  # and a test run. Its own job, so the check above keeps its name.
+  test-node-22:
+    name: Test on Node 22
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: node --version
+      - run: npm ci
+      - run: npm test
