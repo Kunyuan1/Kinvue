@@ -39,6 +39,37 @@ describe('computeBaseline', () => {
     expect(baseline.hrvRmssdMs?.mean).toBe(50)
   })
 
+  it('reaches back as far as it must for its usable sessions — no age bound yet (KV-99)', () => {
+    // Long and sparse, which the test above is not: one usable check-in a
+    // month for 20 months, then a week of refused captures. The window is the
+    // trailing 14 *usable* sessions however old, so it reaches back more than
+    // a year, and the refused week displaces nothing. An age bound would change
+    // both; that is deferred to #22's calibration rather than a guessed number,
+    // and this pins the behaviour until then.
+    const monthly = Array.from({ length: 20 }, (_, i) =>
+      session({
+        id: `m-${i}`,
+        capturedAt: new Date(Date.UTC(2025, i, 1, 9)).toISOString(),
+        vitals: { pulseRateBpm: 60 + i },
+      }),
+    )
+    const refused = Array.from({ length: 7 }, (_, i) =>
+      session({
+        id: `x-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { confidence: 0.2 },
+      }),
+    )
+    const baseline = computeBaseline([...monthly, ...refused])
+
+    expect(baseline.sessions).toBe(BASELINE_WINDOW_SESSIONS)
+    // Months 6..19, so the oldest reading in it is from July 2025, over a year
+    // before the refused week.
+    const kept = Array.from({ length: BASELINE_WINDOW_SESSIONS }, (_, i) => 66 + i)
+    expect(baseline.pulseRateBpm?.mean).toBeCloseTo(kept.reduce((a, b) => a + b, 0) / kept.length)
+    expect(baseline.pulseRateBpm?.n).toBe(BASELINE_WINDOW_SESSIONS)
+  })
+
   it('counts how many contributing sessions were seeded', () => {
     // KV-53: a verdict has to be able to say what its "usual" was built from.
     const baseline = computeBaseline([...seededHistory(4), ...history(2)])
