@@ -320,3 +320,37 @@ describe('what they said, on every card (KV-110)', () => {
     expect(screen.getByText('Slept poorly')).toBeTruthy()
   })
 })
+
+describe('an old card, shown with today’s words (KV-138)', () => {
+  it('drops "today", keeps the verdict, and says what today’s scorer would add', async () => {
+    const past = [14, 16, 14, 16, 15].map((b, i) =>
+      session({
+        id: `b-${i}`,
+        capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
+        vitals: { breathingRateBrpm: b },
+      }),
+    )
+    for (const p of past) p.assessment = scoreSession(p, past.slice(0, past.indexOf(p)))
+    const old = session({
+      id: 'old',
+      capturedAt: new Date(Date.UTC(2026, 8, 10, 9)).toISOString(),
+      vitals: { breathingRateBrpm: 5 },
+    })
+    // As a scorer before KV-9 and KV-93 stored it.
+    old.assessment = {
+      flag: 'normal',
+      firedRules: [],
+      summary: 'Today looks like a normal day for them.',
+      baselineSessions: 5,
+      baselineSeededSessions: 0,
+    }
+    listSessions.mockResolvedValue([...past, old])
+    render(<App />)
+
+    expect(await screen.findByText(
+      'Scored before a rule change. Scored now, it would also note breathing below usual.',
+    )).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/Today looks/)
+    expect(screen.getAllByText('Looks normal').length).toBeGreaterThan(0)
+  })
+})

@@ -3,6 +3,7 @@ import type {
   Assessment,
   ComparedMetric,
   FiredRule,
+  Flag,
   SessionRecord,
   UncomparedMetric,
 } from '../session/types'
@@ -275,9 +276,7 @@ export function scoreSession(
     return {
       flag: 'insufficient-signal',
       firedRules: fired,
-      summary:
-        `Still learning their normal — ${baseline.sessions} of ` +
-        `${MIN_BASELINE_SESSIONS} check-ins needed before daily comparisons start.`,
+      summary: learningSummary(baseline.sessions),
       baselineSessions: baseline.sessions,
       baselineSeededSessions: baseline.seededSessions,
     }
@@ -302,4 +301,178 @@ export function scoreSession(
     baselineSeededSessions: baseline.seededSessions,
     uncomparedMetrics: uncompared,
   }
+}
+
+/** The still-learning sentence, shared by the scorer and by `present` (KV-138). */
+function learningSummary(sessions: number): string {
+  return (
+    `Still learning their normal — ${sessions} of ` +
+    `${MIN_BASELINE_SESSIONS} check-ins needed before daily comparisons start.`
+  )
+}
+
+/**
+ * What the card's label says for each verdict. Here rather than in the card so
+ * the drift line quotes the label a caregiver actually sees (KV-138).
+ */
+export const FLAG_LABEL: Record<Flag, string> = {
+  normal: 'Looks normal',
+  elevated: 'Looks different',
+  'insufficient-signal': 'Not enough to say',
+}
+
+/** What a card shows for an assessment, composed now rather than read as stored. */
+export interface Presentation {
+  summary: string
+  /** Each fired rule as stored, its words brought up to date where they can be. */
+  firedRules: FiredRule[]
+  /** The #87 note: which measured metrics went uncompared, or null. */
+  uncomparedNote: string | null
+  /** One line when today's scorer would say something different, or null. */
+  drift: string | null
+}
+
+const ANSWER_RULES = ALL_RULES.filter((rule) => rule.compares === undefined)
+const NO_BASELINE = computeBaseline([])
+
+/**
+ * A stored fired rule in today's words (KV-138). An answer rule depends only
+ * on the answers, so it is evaluated again and its current title and
+ * explanation used. A comparison rule quotes a usual that is not stored, so its
+ * text is kept, less the one word KV-93 removed: every stored form was
+ * "<metric> was <value> <unit> today, …", and only that " today," is dropped.
+ * The severity is never touched: it is part of the verdict, which stands.
+ */
+function composeRule(session: SessionRecord, rule: FiredRule): FiredRule {
+  const answer = ANSWER_RULES.find((candidate) => candidate.id === rule.id)
+  if (answer !== undefined) {
+    const now = answer.evaluate({ session, baseline: NO_BASELINE })
+    return now === null ? rule : { ...rule, title: now.title, explanation: now.explanation }
+  }
+  return { ...rule, explanation: rule.explanation.replace(/ today,/g, ',') }
+}
+
+/**
+ * The summary for a stored verdict, composed from what the record keeps: the
+ * flag, its fired rules, its vitals and its baseline count. The same sentences
+ * `scoreSession` writes, so a card scored now composes to exactly what it
+ * stored; one scored before KV-93 loses its "today" (KV-138).
+ */
+function composeSummary(
+  session: SessionRecord,
+  assessment: Assessment,
+  firedRules: FiredRule[],
+): string {
+  if (assessment.flag !== 'insufficient-signal') return summarise(assessment.flag, firedRules, [])
+  const unusable = unusableReason(session.vitals)
+  if (unusable !== null) return UNUSABLE_SUMMARY[unusable]
+  if (assessment.baselineSessions < MIN_BASELINE_SESSIONS) {
+    return learningSummary(assessment.baselineSessions)
+  }
+  const gaps = assessment.uncomparedMetrics ?? []
+  if (gaps.length > 0) return summarise('normal', firedRules, gaps)
+  // A withheld verdict today's rules cannot account for — a threshold that has
+  // since moved. Say only what is certain.
+  return 'This check-in was not compared with their usual.'
+}
+
+/**
+ * What a card shows, composed when it is shown rather than read as it was
+ * stored (KV-138, decided by the owner).
+ *
+ * **The verdict stands.** A card's flag and fired rules are what the app told
+ * the caregiver that day, and history stays a record of that (append-only,
+ * KV-25). **The words are composed now** from facts the record keeps, as the
+ * seeded and uncompared notes already are (KV-53, KV-87), so a card scored
+ * before a wording fix does not keep saying what that fix removed — "today"
+ * under a date, most of all (KV-93).
+ *
+ * **When today's scorer would say something different, one line says so**,
+ * rather than silently replacing what was shown: a different verdict, or the
+ * same verdict with different rules fired. The second matters as much — the
+ * card that raised this read "Looks normal" on a breathing rate of 5 against a
+ * usual of 15, and scored now it is still `normal`, because `breathing-low`
+ * alone is under the threshold, but the card should no longer be silent. `prior` is the person's
+ * check-ins before this one, so the rescoring compares it against the same
+ * history it had. Seeded cards are already scored when shown (KV-103), so they
+ * never drift.
+ *
+ * A record from before KV-87 has no stored `uncomparedMetrics`. Rather than
+ * saying on every such card that it was "not recorded", the gaps are found by
+ * scoring it again against the same history — which is what they would have
+ * been — and the note appears only when there is one.
+ */
+export function present(session: SessionRecord, prior: readonly SessionRecord[]): Presentation | null {
+  const stored = session.assessment
+  if (stored === undefined) return null
+  const firedRules = stored.firedRules.map((rule) => composeRule(session, rule))
+  const rescored = session.seeded === true ? stored : scoreSession(session, prior)
+
+  const gaps = stored.uncomparedMetrics ?? rescored.uncomparedMetrics
+  const uncomparedNote =
+    gaps === undefined ? null : uncomparedDisclosure({ ...stored, uncomparedMetrics: gaps })
+
+  return {
+    summary: composeSummary(session, stored, firedRules),
+    firedRules,
+    uncomparedNote,
+    drift: driftLine(stored, rescored),
+  }
+}
+
+/**
+ * One line saying what today's scorer would say differently, or null when it
+ * would say the same: "Scored before a rule change. Scored now, it would read
+ * “Looks different” — breathing below usual." or "… it would also note
+ * breathing below usual." Rule titles, lowercased, are the words the card
+ * already uses for them.
+ */
+function driftLine(stored: Assessment, rescored: Assessment): string | null {
+  const prefix = 'Scored before a rule change. Scored now, it would'
+  if (rescored.flag !== stored.flag) {
+    return `${prefix} read “${FLAG_LABEL[rescored.flag]}”${driftReason(rescored)}.`
+  }
+  const was = new Set(stored.firedRules.map((rule) => rule.id))
+  const now = new Set(rescored.firedRules.map((rule) => rule.id))
+  const titles = (rules: FiredRule[]): string =>
+    listOf(rules.map((rule) => rule.title.toLowerCase()))
+  const added = rescored.firedRules.filter((rule) => !was.has(rule.id))
+  const dropped = stored.firedRules.filter((rule) => !now.has(rule.id))
+  const parts = [
+    ...(added.length > 0 ? [`also note ${titles(added)}`] : []),
+    ...(dropped.length > 0 ? [`no longer note ${titles(dropped)}`] : []),
+  ]
+  return parts.length === 0 ? null : `${prefix} ${parts.join(', and ')}.`
+}
+
+/**
+ * Why today's verdict would differ, in the words the card already has for it.
+ * An amber card names its top rule. A withheld one names what withheld it: a
+ * metric with no usual is the uncompared note directly below, so it points
+ * there; anything else — a capture a later rule refuses, a baseline a later
+ * rule thins — is its own summary, which already says it in full.
+ */
+function driftReason(rescored: Assessment): string {
+  if (rescored.flag === 'elevated') {
+    const top = rescored.firedRules[0]
+    return top === undefined ? '' : ` — ${top.title.toLowerCase()}`
+  }
+  if (rescored.flag === 'normal') return ''
+  if ((rescored.uncomparedMetrics?.length ?? 0) > 0) return ', because not every reading could be compared (below)'
+  const why = rescored.summary.replace(/\.$/, '')
+  return `: ${why.charAt(0).toLowerCase()}${why.slice(1)}`
+}
+
+/**
+ * `present` for every card on a person's dashboard, each against the
+ * check-ins before it. Keyed by record id.
+ */
+export function presentAll(records: readonly SessionRecord[]): Map<string, Presentation> {
+  const byTime = [...records].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
+  const shown = new Map<string, Presentation>()
+  byTime.forEach((record, i) => {
+    const presentation = present(record, byTime.slice(0, i))
+    if (presentation !== null) shown.set(record.id, presentation)
+  })
+  return shown
 }

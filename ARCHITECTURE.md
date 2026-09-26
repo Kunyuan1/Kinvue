@@ -254,6 +254,40 @@ without-today form, some of them composed in the renderer rather than in `core/`
 date-free form is true on every card, including today's. New card copy follows the same
 rule — #100's "still learning" sentence included.
 
+### What an old card says once the scorer has changed (KV-138)
+
+KV-93 fixed the words for cards scored after it. A card scored before kept saying "Today
+looks like a normal day for them" under its date — and more than wording: on the owner's
+real history a card read "Looks normal" on a breathing rate of 5 against a usual of 15,
+because it was scored before a fall could fire anything (KV-9). A stored assessment was
+shown exactly as stored, forever, so every later fix to what a card *claims* skipped every
+card already there.
+
+Decided by the owner: **the verdict stands, the words are composed now, and drift is
+said.** `present` (in `core/scoring`) builds what a card shows:
+
+- **The flag and the fired rules are kept as scored**, severities included. They are what
+  the app told the caregiver that day, and history stays a record of that.
+- **The summary is composed from facts the record keeps** — flag, fired rules, vitals,
+  baseline count — by the same code `scoreSession` writes it with, so a card scored now
+  composes to exactly what it stored. **Answer rules** are evaluated again, since they
+  depend only on the answers. **Comparison rules** quote a usual that is not stored, so
+  their text is kept, less the one " today," KV-93 removed from them.
+- **When today's scorer would say something different, one line says so**: a different
+  verdict ("Scored now, it would read “Not enough to say”: still learning their normal…"),
+  or the same verdict with different rules ("…it would also note breathing below usual").
+  The second is not optional — the 5-breath card scores `normal` today too, because
+  `breathing-low` alone is under the threshold, and a flag-only check would have left it
+  silent. Rescoring uses the check-ins before the card, so it compares against the same
+  history the card had.
+- **KV-87's "was not recorded" note** no longer sits on every pre-KV-87 card. The gaps are
+  found by scoring the card again against the same history, and the note appears only
+  when there is one.
+
+Not done, deliberately: rescoring on display and showing that instead. A past verdict
+would then change after a caregiver had read and acted on it, and history would stop
+being a record of what was said.
+
 ---
 
 ## Why the answers may raise a flag on their own

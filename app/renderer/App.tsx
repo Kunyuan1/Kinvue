@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME, withSeededVerdicts } from '@core/seed/persona'
-import { hasScorableVitals } from '@core/scoring'
+import { hasScorableVitals, presentAll } from '@core/scoring'
 import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
 import {
   classifyCaptureError,
@@ -241,8 +241,11 @@ export default function App(): React.JSX.Element {
   }
 
   // Seeded days are scored here, as they are shown, so the demo always shows the
-  // current scorer's verdict (KV-103). Real check-ins keep the one they were given.
-  const newest = sessions === null ? [] : withSeededVerdicts(sessions).reverse()
+  // current scorer's verdict (KV-103). Real check-ins keep the one they were
+  // given, and their words are composed now (KV-138): see `present`.
+  const withVerdicts = sessions === null ? [] : withSeededVerdicts(sessions)
+  const shown = presentAll(withVerdicts)
+  const newest = [...withVerdicts].reverse()
 
   /**
    * Started here, on the press, rather than inside the capture screen. Opening
@@ -454,7 +457,11 @@ export default function App(): React.JSX.Element {
 
       <div className="space-y-4">
         {newest.map((session) => (
-          <SessionCard key={session.id} session={session} />
+          <SessionCard
+            key={session.id}
+            session={session}
+            presentation={shown.get(session.id) ?? null}
+          />
         ))}
       </div>
     </main>

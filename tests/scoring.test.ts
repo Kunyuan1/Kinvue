@@ -4,6 +4,8 @@ import {
   ELEVATED_SEVERITY_THRESHOLD,
   hasScorableVitals,
   MIN_CAPTURE_SECONDS,
+  present,
+  presentAll,
   scoreSession,
   seededBaselineDisclosure,
   seededDisclosureFor,
@@ -1203,5 +1205,166 @@ describe('what the camera alone can flag, with every answer benign', () => {
     ).firedRules
     expect(fired.find((r) => r.id === 'pulse-elevated')?.severity).toBeCloseTo(0.225, 3)
     expect(fired.find((r) => r.id === 'breathing-elevated')?.severity).toBeCloseTo(0.2, 3)
+  })
+})
+
+describe('present: what an old card says once the scorer has changed (KV-138)', () => {
+  /** A stored assessment as an older scorer wrote it. */
+  const stored = (over: Partial<Assessment>): Assessment => ({
+    flag: 'normal',
+    firedRules: [],
+    summary: 'Today looks like a normal day for them.',
+    baselineSessions: 5,
+    baselineSeededSessions: 0,
+    ...over,
+  })
+  const at = (id: string, day: number, over: Parameters<typeof session>[0] = {}) =>
+    session({ id, capturedAt: new Date(Date.UTC(2026, 8, day, 9)).toISOString(), ...over })
+
+  it('composes a card scored now to exactly what it stored, with no drift', () => {
+    const past = history(5)
+    const cases = [
+      session(),
+      session({ answers: { mood: 'low' } }),
+      session({ vitals: { hrvRmssdMs: 20 }, answers: { sleep: 'poorly', painReported: true } }),
+      session({ vitals: { confidence: 0.2 } }),
+      session({ vitals: { pulseRateBpm: 40 } }),
+    ]
+    for (const s of cases) {
+      const scored = { ...s, assessment: scoreSession(s, past) }
+      const shown = present(scored, past)
+      expect(shown?.summary).toBe(scored.assessment.summary)
+      expect(shown?.firedRules).toEqual(scored.assessment.firedRules)
+      expect(shown?.drift).toBeNull()
+    }
+    const learning = { ...session(), assessment: scoreSession(session(), history(1)) }
+    expect(present(learning, history(1))?.summary).toBe(learning.assessment.summary)
+  })
+
+  it('drops "today" from a summary scored before KV-93, keeping the verdict', () => {
+    const old = { ...session(), assessment: stored({}) }
+    const shown = present(old, history(5))
+    expect(shown?.summary).toBe('A normal day for them.')
+    expect(shown?.drift).toBeNull()
+    expect(old.assessment.flag).toBe('normal')
+  })
+
+  it('writes an answer rule in its current words, and keeps its severity', () => {
+    const old = {
+      ...session({ answers: { eatenToday: false } }),
+      assessment: stored({
+        firedRules: [
+          { id: 'not-eaten', title: 'Has not eaten today', explanation: 'They have not eaten today.', severity: 0.3 },
+        ],
+        summary: 'Today looks broadly normal, with one or two things worth noting.',
+      }),
+    }
+    const [rule] = present(old, history(5))?.firedRules ?? []
+    expect(rule?.title).toBe('Had not eaten yet')
+    expect(rule?.explanation).not.toMatch(RELATIVE_TIME)
+    expect(rule?.severity).toBe(0.3)
+  })
+
+  it('keeps a comparison rule’s numbers, dropping only the "today" KV-93 removed', () => {
+    const old = {
+      ...session({ vitals: { hrvRmssdMs: 20 } }),
+      assessment: stored({
+        flag: 'normal',
+        firedRules: [
+          {
+            id: 'hrv-drop',
+            title: 'Heart-rate variability below usual',
+            explanation: 'HRV was 20 ms today, about 41% below their usual 34 ms.',
+            severity: 0.49,
+          },
+        ],
+      }),
+    }
+    expect(present(old, history(5))?.firedRules[0]?.explanation).toBe(
+      'HRV was 20 ms, about 41% below their usual 34 ms.',
+    )
+  })
+
+  it('composes an unusable capture’s summary from its vitals', () => {
+    const old = {
+      ...session({ vitals: { confidence: 0.2 } }),
+      assessment: stored({
+        flag: 'insufficient-signal',
+        summary: 'The camera reading was not clear enough to use today.',
+      }),
+    }
+    expect(present(old, history(5))?.summary).toBe(
+      'The camera reading was not clear enough to use, so this check-in is not being compared.',
+    )
+  })
+
+  it('says when today’s scorer would give a different verdict, and why', () => {
+    // Stored normal, with nothing fired: a rule since added would now make it amber.
+    const past = [72, 78, 69, 81, 75].map((pulse, i) => at(`p-${i}`, i + 1, { vitals: { pulseRateBpm: pulse } }))
+    const s = at('now', 10, { vitals: { pulseRateBpm: 40 }, answers: { sleep: 'poorly', painReported: true } })
+    const shown = present({ ...s, assessment: stored({}) }, past)
+    expect(shown?.drift).toBe(
+      // Its top rule by severity; pulse-low at full weight ties with the pair
+      // and comes first in rule order.
+      'Scored before a rule change. Scored now, it would read “Looks different” — pulse below usual.',
+    )
+  })
+
+  it('says when the verdict stands but the rules would differ — the card that raised this', () => {
+    // A breathing rate of 5 against a usual of 15 read "Looks normal" with
+    // nothing fired; scored now it is still normal, but breathing-low fires.
+    const past = [14, 16, 14, 16, 15].map((b, i) => at(`b-${i}`, i + 1, { vitals: { breathingRateBrpm: b } }))
+    const s = at('now', 10, { vitals: { breathingRateBrpm: 5 } })
+    const shown = present({ ...s, assessment: stored({}) }, past)
+    expect(shown?.drift).toBe(
+      'Scored before a rule change. Scored now, it would also note breathing below usual.',
+    )
+  })
+
+  it('says when a rule it fired would no longer fire', () => {
+    const shown = present(
+      {
+        ...session(),
+        assessment: stored({
+          firedRules: [{ id: 'low-mood', title: 'Low mood reported', explanation: 'x', severity: 0.2 }],
+        }),
+      },
+      history(5),
+    )
+    expect(shown?.drift).toBe(
+      'Scored before a rule change. Scored now, it would no longer note low mood reported.',
+    )
+  })
+
+  it('gives a withheld drift its reason', () => {
+    // Stored normal on a thin history that an older scorer compared anyway.
+    const shown = present({ ...session(), assessment: stored({}) }, history(1))
+    expect(shown?.drift).toMatch(/would read “Not enough to say”: still learning their normal/)
+  })
+
+  it('finds a pre-KV-87 card’s gaps by scoring it again, rather than saying "not recorded"', () => {
+    const thin = [...history(2, { pulseRateBpm: 82 }), at('h-2', 3, { vitals: { pulseRateBpm: null } })]
+    const s = session({ vitals: { pulseRateBpm: 101.5 } })
+    const shown = present({ ...s, assessment: stored({}) }, thin)
+    expect(shown?.uncomparedNote).toMatch(/^Pulse was measured at this check-in but not compared/)
+    expect(shown?.drift).toMatch(/because not every reading could be compared \(below\)/)
+    const fine = present({ ...session(), assessment: stored({}) }, history(5))
+    expect(fine?.uncomparedNote).toBeNull()
+  })
+
+  it('never drifts a seeded card, which is already scored when shown', () => {
+    const s = { ...session({ seeded: true, vitals: { breathingRateBrpm: 5 } }), assessment: stored({}) }
+    expect(present(s, history(5))?.drift).toBeNull()
+  })
+
+  it('scores each card in presentAll against only the check-ins before it', () => {
+    const early = at('early', 1)
+    const later = at('later', 2)
+    const shown = presentAll([
+      { ...later, assessment: stored({}) },
+      { ...early, assessment: stored({ flag: 'insufficient-signal', baselineSessions: 0, summary: 'x' }) },
+    ])
+    expect(shown.get('early')?.summary).toMatch(/^Still learning their normal — 0 of/)
+    expect(shown.get('later')?.drift).toMatch(/Not enough to say/)
   })
 })
