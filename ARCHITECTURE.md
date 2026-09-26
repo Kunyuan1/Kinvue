@@ -279,11 +279,19 @@ It also changes the card's headline on a day where it is the only thing that fir
 normal, with one or two things worth noting" rather than "A normal day for them", as any
 fired rule does.
 
-This makes *one* answer visible, not the question. "Slept well" and "slept ok" still fire
-nothing, so a card with no sleep line cannot tell them apart — or from a record written
+That made *one* answer visible, not the question. "Slept well" and "slept ok" still fired
+nothing, so a card with no sleep line could not tell them apart — or from a record written
 before this rule existed. Making an answer visible by giving it a rule also gives it weight,
-which is the wrong tool for the job; showing the answers on the card apart from the rules is
-#110.
+which is the wrong tool for the job.
+
+**So every card now shows all four answers, apart from the rules** (KV-110): *"They said:
+feeling all right · slept badly · had eaten · no pain"*. What was said is shown whatever it
+was; the fired rules below it say what counted. The words are the person's own choices from
+the questions put in the third person, with no "today" (the card's date says when), and they
+report what was said rather than judge it. `describeAnswers` in `core/session/answers.ts`
+writes them, so the caregiver's client will say the same. `poor-sleep` keeps its 0.05: it
+was never there only to make the answer visible, and #91 decided its weight on its own
+terms.
 
 What this does not settle: that the camera finds it much harder to raise a flag than the
 questions do. **No single camera rule flags a day except an HRV drop of half or more.** A

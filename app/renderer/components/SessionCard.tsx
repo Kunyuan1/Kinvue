@@ -1,4 +1,5 @@
 import { seededDisclosureFor, uncomparedDisclosure } from '@core/scoring'
+import { describeAnswers } from '@core/session/answers'
 import type { Flag, SessionRecord } from '@core/session/types'
 
 const FLAG_LABEL: Record<Flag, string> = {
@@ -78,6 +79,17 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
         <Reading label="Breathing" value={vitals.breathingRateBrpm} unit="br/min" />
         <Reading label="HRV" value={vitals.hrvRmssdMs} unit="ms" />
       </dl>
+
+      {/*
+        Every answer, whatever it was (KV-110). Until this a card showed an
+        answer only when a rule fired on it, so no sleep line could mean well,
+        all right, or unknown. What they said is shown here; the rules below
+        say what counted.
+      */}
+      <p className="mt-3 text-sm">
+        <span className="text-(--color-muted)">They said: </span>
+        {describeAnswers(session.answers).join(' · ')}
+      </p>
 
       {/*
         The person's own words about their own pain, shown to the caregiver

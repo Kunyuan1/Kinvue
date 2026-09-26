@@ -292,3 +292,29 @@ describe('a card whose pulse was never compared (KV-87)', () => {
     expect(note.textContent).not.toMatch(/not being called normal/)
   })
 })
+
+describe('what they said, on every card (KV-110)', () => {
+  it('shows an answer whether or not a rule fired on it', async () => {
+    // "Slept well" fires nothing; "slept badly" fires `poor-sleep`. Before
+    // KV-110 only the second was visible, so a card with no sleep line was
+    // ambiguous between well, all right and unknown.
+    const past = history(5)
+    const fine = session({ id: 'fine', capturedAt: '2026-09-20T09:00:00.000Z' })
+    fine.assessment = scoreSession(fine, past)
+    const poorly = session({
+      id: 'poorly',
+      capturedAt: '2026-09-21T09:00:00.000Z',
+      answers: { sleep: 'poorly' },
+    })
+    poorly.assessment = scoreSession(poorly, past)
+    listSessions.mockResolvedValue([fine, poorly])
+    render(<App />)
+
+    const rows = await screen.findAllByText(/^They said:/, { exact: false })
+    const said = rows.map((r) => r.parentElement?.textContent ?? '')
+    expect(said).toContainEqual(expect.stringContaining('slept well'))
+    expect(said).toContainEqual(expect.stringContaining('slept badly'))
+    // The rule still says what counted, separately from what was said.
+    expect(screen.getByText('Slept poorly')).toBeTruthy()
+  })
+})

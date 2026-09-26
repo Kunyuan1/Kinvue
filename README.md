@@ -143,7 +143,7 @@ app/
       CaptureScreen.tsx  the ~30s in front of the camera (settable) — the one screen the
                          cared-for person reads, not the caregiver
       QuestionFlow.tsx   the four questions, also addressed to them
-      SessionCard.tsx    one check-in + the rules that fired
+      SessionCard.tsx    one check-in: readings, every answer, the rules that fired
     styles.css           Tailwind v4 theme tokens
 
 core/                    Plain TypeScript. No Electron, no React — unit-testable.

@@ -48,3 +48,45 @@ export function draftToAnswers(draft: AnswerDraft): CheckInAnswers | null {
   }
   return answers
 }
+
+/**
+ * What they said, one short phrase per question, in the order they were asked
+ * (KV-110).
+ *
+ * Shown on every card, whatever the answers were. Before this a card showed an
+ * answer only when a rule fired on it, so a card with no sleep line could mean
+ * they slept well, slept all right, or — on a record older than `poor-sleep` —
+ * that nobody knows. A rule is the wrong tool for making something visible: it
+ * also makes it weigh. So the answers are shown here, and the fired rules go
+ * back to meaning "this counted".
+ *
+ * The words are the person's own choices from the questions — "all right",
+ * "badly", "not yet" — put in the third person for whoever reads the card, and
+ * with no "today": the card's date says when (KV-93). They report what was
+ * said, not a verdict on it. The pain note, when there is one, is shown on its
+ * own and unedited; this only says whether there was pain.
+ *
+ * In `core/` rather than the card so the caregiver's client (#42) says the
+ * same thing. Each table is keyed by the answer's type, so a new value does
+ * not compile until it has words.
+ */
+const MOOD: Record<MoodAnswer, string> = {
+  good: 'feeling good',
+  ok: 'feeling all right',
+  low: 'feeling low',
+}
+
+const SLEEP: Record<SleepAnswer, string> = {
+  well: 'slept well',
+  ok: 'slept all right',
+  poorly: 'slept badly',
+}
+
+export function describeAnswers(answers: CheckInAnswers): string[] {
+  return [
+    MOOD[answers.mood],
+    SLEEP[answers.sleep],
+    answers.eatenToday ? 'had eaten' : 'had not eaten yet',
+    answers.painReported ? 'in pain' : 'no pain',
+  ]
+}
