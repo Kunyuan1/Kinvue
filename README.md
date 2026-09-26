@@ -173,8 +173,10 @@ tests/                   Vitest. Covers baseline, scoring, validation, check-in,
 
 - **The baseline is the person, never a population.** Comparing an 82-year-old's resting
   pulse to a textbook range produces a dashboard that cries wolf every morning. Comparing
-  it to their own trailing fortnight is the thing a caregiver cannot do by eye, and it is
-  the only comparison this app makes.
+  it to their own last 14 usable check-ins (a fortnight, for someone who checks in daily)
+  is the thing a caregiver cannot do by eye, and it is the only comparison this app makes.
+  Those 14 have no age bound yet, so for someone who rarely checks in they reach further
+  back (KV-99).
 - **The explanation is the product, not a debugging aid.** A flag without the numbers
   behind it is a black box asking a family member to worry. Every rule that fires carries
   a plain-language sentence naming the actual values, and `firedRules` is rendered even
@@ -292,7 +294,7 @@ Tuned constants live in code, not env, because changing one changes what the app
 | `SETTLE_AFTER_COMPLETE_SECONDS` | `core/capture/length.ts` | `5 s` — how long a capture runs on after the last metric arrives, so the slowest one is not reported on its first and noisiest reading |
 | `CAMERA_OPEN_ALLOWANCE_SECONDS` | `core/capture/length.ts` | `10 s` — how much the camera may eat before the first frame. `SHORTEST_USEFUL_SECONDS` is `MIN_CAPTURE_SECONDS` plus this, so no setting can record a duration the scorer rejects |
 | `MIN_BASELINE_SESSIONS` | `core/baseline` | `3` — below this the verdict is withheld |
-| `BASELINE_WINDOW_SESSIONS` | `core/baseline` | `14` — trailing *usable* sessions in the baseline, however old: no age bound yet (KV-99, deferred to KV-22) |
+| `BASELINE_WINDOW_SESSIONS` | `core/baseline` | `14` — trailing *usable* sessions in the baseline, however old: no age bound yet (KV-99; the horizon is KV-22) |
 | `HRV_DROP_FIRES_AT` | `core/scoring/rules.ts` | `0.25` — fractional drop from baseline HRV |
 | `DEMO_DAY_CEILING` | `core/seed/persona.ts` | `0.5` — a seeded demo day whose rules reach this is drawn again (KV-101) |
 | `PENDING_CAPTURE_TTL_MS` | `core/session/checkin.ts` | `15 min` — past this, a reading cannot be submitted with answers given now |

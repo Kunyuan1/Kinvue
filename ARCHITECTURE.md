@@ -65,10 +65,13 @@ the trailing 14 usable check-ins however old. For someone who checks in daily th
 fortnight; for someone who checks in rarely it can reach back a year, and then a slow
 drift — seasonal, or a gradual change in the person — reads as a deviation instead of
 moving the baseline with it. That is a known cost, taken deliberately. Bounding the window
-by age as well needs a horizon nobody has evidence for yet, and a short one would let a
-bad fortnight empty an established baseline, the failure KV-72 removed. So the horizon
-waits on the calibration #22 will do against confirmed outcomes, and a test with a long,
-sparse history pins today's behaviour until then.
+by age as well needs a horizon nobody has evidence for yet, and that alone is why it waits
+on the calibration #22 will do against confirmed outcomes. It is not that a bound is
+dangerous in itself: a *short* one would let a bad fortnight empty an established baseline,
+the failure KV-72 removed, but a long one floored so it never takes the usable set below
+`MIN_BASELINE_SESSIONS` would not. Only the number is missing. A test with a long, sparse
+history pins today's behaviour until then, and KV-154 would disclose the span on the card,
+so the cost is visible to the caregiver and not only written down here.
 
 **Both directions** (KV-9). The question is "does this look like their normal", and a pulse
 or breathing rate that falls well below their usual is as much an answer as one that rises.

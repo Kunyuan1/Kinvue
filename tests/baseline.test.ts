@@ -39,34 +39,50 @@ describe('computeBaseline', () => {
     expect(baseline.hrvRmssdMs?.mean).toBe(50)
   })
 
-  it('reaches back as far as it must for its usable sessions — no age bound yet (KV-99)', () => {
+  it('reaches back as far as it must for its usable sessions, in date order (KV-99)', () => {
     // Long and sparse, which the test above is not: one usable check-in a
-    // month for 20 months, then a week of refused captures. The window is the
-    // trailing 14 *usable* sessions however old, so it reaches back more than
-    // a year, and the refused week displaces nothing. An age bound would change
-    // both; that is deferred to #22's calibration rather than a guessed number,
-    // and this pins the behaviour until then.
-    const monthly = Array.from({ length: 20 }, (_, i) =>
+    // *year*, then a week of refused captures. The window is the trailing
+    // BASELINE_WINDOW_SESSIONS usable sessions however old, so here it reaches
+    // back over a decade, and the refused week displaces nothing. An age bound
+    // is deferred to #22's calibration rather than a guessed number, and this
+    // pins today's behaviour until then.
+    //
+    // What it catches (review of #151): any horizon shorter than the kept
+    // span — every bound under about 13 years fails; a longer one would not.
+    // Yearly rather than monthly so that is a real claim about "no bound".
+    const years = BASELINE_WINDOW_SESSIONS + 6
+    const firstYear = 2026 - years
+    const yearly = Array.from({ length: years }, (_, i) =>
       session({
-        id: `m-${i}`,
-        capturedAt: new Date(Date.UTC(2025, i, 1, 9)).toISOString(),
+        id: `y-${i}`,
+        capturedAt: new Date(Date.UTC(firstYear + i, 6, 1, 9)).toISOString(),
         vitals: { pulseRateBpm: 60 + i },
       }),
     )
+    // Refused, and far off the kept pulses, so letting them in would move the
+    // mean unmistakably rather than by the helper's default 72 (review of #151).
     const refused = Array.from({ length: 7 }, (_, i) =>
       session({
         id: `x-${i}`,
         capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(),
-        vitals: { confidence: 0.2 },
+        vitals: { confidence: 0.2, pulseRateBpm: 200 },
       }),
     )
-    const baseline = computeBaseline([...monthly, ...refused])
+    // Out of date order, so "trailing" has to come from the sort in
+    // computeBaseline, which nothing else in the suite pins (review of #151).
+    const shuffled = [
+      ...refused,
+      ...yearly.filter((_, i) => i % 2 === 1),
+      ...yearly.filter((_, i) => i % 2 === 0).reverse(),
+    ]
+    const baseline = computeBaseline(shuffled)
 
     expect(baseline.sessions).toBe(BASELINE_WINDOW_SESSIONS)
-    // Months 6..19, so the oldest reading in it is from July 2025, over a year
-    // before the refused week.
-    const kept = Array.from({ length: BASELINE_WINDOW_SESSIONS }, (_, i) => 66 + i)
-    expect(baseline.pulseRateBpm?.mean).toBeCloseTo(kept.reduce((a, b) => a + b, 0) / kept.length)
+    const kept = Array.from(
+      { length: BASELINE_WINDOW_SESSIONS },
+      (_, i) => 60 + years - BASELINE_WINDOW_SESSIONS + i,
+    )
+    expect(baseline.pulseRateBpm?.mean).toBe(kept.reduce((a, b) => a + b, 0) / kept.length)
     expect(baseline.pulseRateBpm?.n).toBe(BASELINE_WINDOW_SESSIONS)
   })
 
