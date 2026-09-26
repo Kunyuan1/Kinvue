@@ -60,6 +60,16 @@ person with naturally variable readings is not flagged for ordinary variation.
 `MIN_SD_FRACTION_OF_MEAN` floors the sd so an unusually consistent fortnight cannot make
 every subsequent reading a 6-sigma event.
 
+**The window is counted in usable sessions, not days, and has no age bound** (KV-99). It is
+the trailing 14 usable check-ins however old. For someone who checks in daily that is a
+fortnight; for someone who checks in rarely it can reach back a year, and then a slow
+drift — seasonal, or a gradual change in the person — reads as a deviation instead of
+moving the baseline with it. That is a known cost, taken deliberately. Bounding the window
+by age as well needs a horizon nobody has evidence for yet, and a short one would let a
+bad fortnight empty an established baseline, the failure KV-72 removed. So the horizon
+waits on the calibration #22 will do against confirmed outcomes, and a test with a long,
+sparse history pins today's behaviour until then.
+
 **Both directions** (KV-9). The question is "does this look like their normal", and a pulse
 or breathing rate that falls well below their usual is as much an answer as one that rises.
 Until KV-9 only the rise could fire: a real check-in with a pulse of 80 against a usual of 97

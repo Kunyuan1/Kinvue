@@ -61,9 +61,14 @@ export const MIN_BASELINE_SESSIONS = 3
  * Twelve of fourteen was enough to drop under `MIN_BASELINE_SESSIONS` and
  * switch daily comparison off entirely.
  *
- * Bounding this by calendar age as well — so sparse usable captures cannot
- * anchor to something months old — is #99, because it means a new tuned
- * constant rather than a reordering.
+ * **No age bound, on purpose for now** (KV-99). The window reaches back as
+ * far as it must for 14 usable sessions, so for someone who checks in rarely
+ * it can hold readings a year old, and a slow drift can read as a deviation.
+ * Bounding it by calendar age too would fix that and add a new tuned number
+ * with no evidence behind it, and a bad fortnight could then empty the
+ * baseline — the failure KV-72 just removed, in another shape. So the horizon
+ * waits on #22's calibration, and a long, sparse history pins today's
+ * behaviour in the meantime.
  */
 export const BASELINE_WINDOW_SESSIONS = 14
 
