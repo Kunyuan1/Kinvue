@@ -81,27 +81,44 @@ describe('answeredCount', () => {
 describe('describeAnswers (KV-110)', () => {
   const all: CheckInAnswers = { mood: 'good', sleep: 'well', eatenToday: true, painReported: false }
 
-  it('says every answer, including the ones no rule fires on', () => {
-    expect(describeAnswers(all)).toEqual(['feeling good', 'slept well', 'had eaten', 'no pain'])
+  it('labels every answer, including the ones no rule fires on', () => {
+    expect(describeAnswers(all)).toEqual(['mood good', 'sleep well', 'eaten yes', 'pain no'])
   })
 
-  it("uses the person's own choices, put in the third person", () => {
+  it("uses the person's own choices from the questions", () => {
     expect(
       describeAnswers({ mood: 'ok', sleep: 'poorly', eatenToday: false, painReported: true }),
-    ).toEqual(['feeling all right', 'slept badly', 'had not eaten yet', 'in pain'])
+    ).toEqual(['mood all right', 'sleep badly', 'eaten not yet', 'pain yes'])
     expect(describeAnswers({ ...all, mood: 'low', sleep: 'ok' }).slice(0, 2)).toEqual([
-      'feeling low',
-      'slept all right',
+      'mood low',
+      'sleep all right',
     ])
   })
 
-  it('gives one phrase per question, in the order they are asked', () => {
-    expect(describeAnswers(all)).toHaveLength(ANSWER_STEPS.length)
+  it('gives one label per question, in the order they are asked', () => {
+    // Positional, not just a count (KV-110 review): reorder ANSWER_STEPS and
+    // the row must follow.
+    const topic = { mood: 'mood', sleep: 'sleep', eatenToday: 'eaten', painReported: 'pain' }
+    expect(describeAnswers(all).map((label) => label.split(' ')[0])).toEqual(
+      ANSWER_STEPS.map((step) => topic[step]),
+    )
   })
 
-  it('does not say when, or quote the pain note', () => {
-    // The card's date says when (KV-93); the note is shown on its own, unedited.
+  it('says "not recorded" for a stored value it has no words for, never a blank', () => {
+    // Records read from disk are not validated field by field (KV-110 review).
+    const odd = { mood: 'ecstatic', sleep: undefined, eatenToday: 'yes', painReported: null }
+    expect(describeAnswers(odd as unknown as CheckInAnswers)).toEqual([
+      'mood not recorded',
+      'sleep not recorded',
+      'eaten not recorded',
+      'pain not recorded',
+    ])
+  })
+
+  it('does not say when, quote the pain note, or attribute speech', () => {
+    // The card's date says when (KV-93); the note is shown on its own, unedited;
+    // and a label is not a quotation, so a seeded card is not given words.
     const text = describeAnswers({ ...all, painReported: true, painNote: 'left hip' }).join(' ')
-    expect(text).not.toMatch(/today|yesterday|this morning|left hip/i)
+    expect(text).not.toMatch(/today|yesterday|this morning|left hip|said|reported/i)
   })
 })

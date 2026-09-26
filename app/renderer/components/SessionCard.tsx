@@ -83,12 +83,13 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
       {/*
         Every answer, whatever it was (KV-110). Until this a card showed an
         answer only when a rule fired on it, so no sleep line could mean well,
-        all right, or unknown. What they said is shown here; the rules below
-        say what counted.
+        all right, or unknown. A record of the answers, as labels rather than
+        sentences so it neither repeats the rules nor quotes anyone — seeded
+        cards included — and muted so it reads as context, not as the part
+        that counted: the rules below say that.
       */}
-      <p className="mt-3 text-sm">
-        <span className="text-(--color-muted)">They said: </span>
-        {describeAnswers(session.answers).join(' · ')}
+      <p className="mt-4 text-sm text-(--color-muted)">
+        Answers: {describeAnswers(session.answers).join(' · ')}
       </p>
 
       {/*

@@ -284,14 +284,21 @@ nothing, so a card with no sleep line could not tell them apart — or from a re
 before this rule existed. Making an answer visible by giving it a rule also gives it weight,
 which is the wrong tool for the job.
 
-**So every card now shows all four answers, apart from the rules** (KV-110): *"They said:
-feeling all right · slept badly · had eaten · no pain"*. What was said is shown whatever it
-was; the fired rules below it say what counted. The words are the person's own choices from
-the questions put in the third person, with no "today" (the card's date says when), and they
-report what was said rather than judge it. `describeAnswers` in `core/session/answers.ts`
-writes them, so the caregiver's client will say the same. `poor-sleep` keeps its 0.05: it
-was never there only to make the answer visible, and #91 decided its weight on its own
-terms.
+**So every card now shows all four answers, apart from the rules** (KV-110): *"Answers:
+mood all right · sleep badly · eaten yes · pain no"*. The answers are shown whatever they
+were; the fired rules below them say what counted. They are labels, not sentences: sentences
+repeated the rule titles word for word on the cards that matter, and "they said" put words in
+the mouth of seeded data nobody spoke. The values are the person's own choices from the
+questions, with no "today" (the card's date says when), and a stored value the tables have no
+words for reads "not recorded" rather than vanishing. `describeAnswers` in
+`core/session/answers.ts` writes them, so the caregiver's client will say the same.
+
+That leaves `poor-sleep` without the job it was added for. **It keeps its 0.05 on the case
+above, not on visibility**: a bad night tips a camera day already within 0.05 of the
+threshold, and cannot add an answers-only flag. `rules.ts` says so beside the weight. If that
+case stops holding, the rule can go without hiding anything. `low-mood` and `not-eaten` never
+had visibility as their reason: they were scoring rules from the start, and KV-10 decided
+which answer combinations they may flag.
 
 What this does not settle: that the camera finds it much harder to raise a flag than the
 questions do. **No single camera rule flags a day except an HRV drop of half or more.** A

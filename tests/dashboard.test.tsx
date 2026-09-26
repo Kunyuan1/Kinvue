@@ -295,7 +295,7 @@ describe('a card whose pulse was never compared (KV-87)', () => {
 
 describe('what they said, on every card (KV-110)', () => {
   it('shows an answer whether or not a rule fired on it', async () => {
-    // "Slept well" fires nothing; "slept badly" fires `poor-sleep`. Before
+    // Sleeping well fires nothing; sleeping badly fires `poor-sleep`. Before
     // KV-110 only the second was visible, so a card with no sleep line was
     // ambiguous between well, all right and unknown.
     const past = history(5)
@@ -310,11 +310,13 @@ describe('what they said, on every card (KV-110)', () => {
     listSessions.mockResolvedValue([fine, poorly])
     render(<App />)
 
-    const rows = await screen.findAllByText(/^They said:/, { exact: false })
-    const said = rows.map((r) => r.parentElement?.textContent ?? '')
-    expect(said).toContainEqual(expect.stringContaining('slept well'))
-    expect(said).toContainEqual(expect.stringContaining('slept badly'))
-    // The rule still says what counted, separately from what was said.
+    // The whole row, not one phrase (KV-110 review): a row rendering only the
+    // answer no rule covers, or a blank, must not pass.
+    expect(
+      await screen.findByText('Answers: mood good · sleep well · eaten yes · pain no'),
+    ).toBeTruthy()
+    expect(screen.getByText('Answers: mood good · sleep badly · eaten yes · pain no')).toBeTruthy()
+    // The rule still says what counted, separately from what was answered.
     expect(screen.getByText('Slept poorly')).toBeTruthy()
   })
 })
