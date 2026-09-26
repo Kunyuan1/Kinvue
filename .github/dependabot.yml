@@ -2,7 +2,10 @@ version: 2
 updates:
   # Scheduled version updates only. Responding to a published advisory is
   # Dependabot alerts and security updates, which are repository settings and
-  # not something this file can turn on.
+  # not something this file can turn on. Whether this file's `ignore` rules
+  # also hold back a *security* update is not settled: GitHub's options
+  # reference marks `ignore` version-updates-only, while its security-updates
+  # page configures ignores for them. Assume it might.
   - package-ecosystem: npm
     directory: /
     # Explicit rather than `auto`, because the pins below depend on it: `increase`
@@ -14,13 +17,24 @@ updates:
       interval: weekly
     open-pull-requests-limit: 5
     ignore:
-      # `@types/node` follows the Node major Electron ships, not the newest
-      # Node. The main process runs on Electron's Node (24 on Electron 44), and
-      # types for a later major would let code compile against Node APIs that
-      # runtime does not have — CI stays green until something uses one. So no
-      # major bumps: move this by hand when an Electron bump moves its Node
-      # major (its `DEPS` `node_version`, see README). Minor and patch updates
-      # within the major still come through. #117 and #143 were 26 and 25.
+      # `@types/node` is held to the Node major Electron ships (24 on Electron
+      # 44), not the newest Node. Types a major ahead would let code compile
+      # against APIs that no runtime here has, and CI stays green until
+      # something uses one. So no major bumps: move it by hand when an Electron
+      # bump moves its Node major (its `DEPS` `node_version`, see README), and
+      # with it `TYPES_NODE_MAJOR` in tests/pins.test.ts, which checks both.
+      #
+      # What this does *not* buy (review of #150):
+      # - **Node 22.** `engines.node` also claims 22, and `core/` runs there
+      #   too, so 24's types still let a 24-only API through; only code the
+      #   tests run is checked on 22, by the Node 22 CI job.
+      # - **Minor drift.** A types minor tracks a Node minor, and minors still
+      #   arrive, grouped. Once `@types/node` passes the minor Electron vendors
+      #   (24.21 on 44.4.4), main-process code can typecheck against an API
+      #   Electron's Node lacks. Read that group's `@types/node` line.
+      #
+      # Closing a PR for one major only silences that major, which is why a
+      # rule and not a closed PR: 25 was proposed after 26 was closed.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
     labels: ["chore"]
