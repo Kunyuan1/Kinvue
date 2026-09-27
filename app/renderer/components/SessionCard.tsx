@@ -63,7 +63,9 @@ export default function SessionCard({
     <article className="rounded-xl border border-(--color-line) bg-(--color-raised) p-5">
       <header className="flex items-baseline justify-between gap-4">
         <div>
-          <p className={`font-medium ${FLAG_COLOR[flag]}`}>{presentation?.label ?? FLAG_LABEL[flag]}</p>
+          <p className={`font-medium ${FLAG_COLOR[flag]}`}>
+            {presentation?.label ?? FLAG_LABEL[flag]}
+          </p>
           <p className="text-sm text-(--color-muted)">{presentation?.summary}</p>
           {presentation?.drift != null && (
             <p className="mt-1 text-sm text-(--color-muted) italic">{presentation.drift}</p>

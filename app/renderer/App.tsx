@@ -247,13 +247,10 @@ export default function App(): React.JSX.Element {
   // screen's countdown alone re-renders once a second.
   const shown = useMemo(() => presentAll(sessions ?? []), [sessions])
   const newest = useMemo(() => [...(sessions ?? [])].reverse(), [sessions])
-  // Where the baseline is now, while it is still learning (KV-17). Not on an
-  // empty history, where the seed prompt is the whole page.
+  // Where the baseline is now, while it is still learning (KV-17). Null for a
+  // person with no check-ins, where the seed prompt is the whole page.
   const learning = useMemo(
-    () =>
-      sessions === null || sessions.length === 0
-        ? null
-        : learningStatus(sessions, DEMO_PERSON_ID, DEMO_PERSON_NAME),
+    () => learningStatus(sessions ?? [], DEMO_PERSON_ID, DEMO_PERSON_NAME),
     [sessions],
   )
 

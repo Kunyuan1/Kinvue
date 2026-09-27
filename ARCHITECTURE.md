@@ -285,7 +285,7 @@ said.** `present` (in `core/scoring`) builds what a card shows:
   KV-93 removed from comparison explanations.
 - **When today's scorer would say something different, one line says so**: a different
   verdict ("Scored again now, it would read “Not enough to say”, because there was not yet
-  enough history to compare it (1 of 3 usable check-ins then)"), the same verdict with different rules ("…it would also note slept poorly"),
+  enough history to compare it (1 of 3 usable check-ins before it)"), the same verdict with different rules ("…it would also note slept poorly"),
   or the same withheld verdict for a different reason ("…it would say instead: “…”"). The
   second is not optional: a rule that fires or stops firing changes what a card says even
   when the flag does not, and on the owner's history two cards drift only that way.
@@ -315,7 +315,7 @@ The still-learning sentence was a live status — *"2 of 3 check-ins needed befo
 comparisons start"* — stored in the record and shown under its date forever. Read newest
 first, it sat at the bottom of a dashboard, under every card that had since compared. It
 now says what that check-in had: *"Not yet enough history to compare this check-in (2 of 3
-usable check-ins then)."* Where the person is *now* belongs in one live place, the
+usable check-ins before it)."* Where the person is *now* belongs in one live place, the
 dashboard header (#17). Older cards get the sentence too, composed from their stored count
 by KV-138's display-time composition, and the drift line quotes it.
 
@@ -345,19 +345,33 @@ answering differently.
 
 A real person checking in twice a week waits over a week for three usable check-ins, and
 until then the dashboard said only "Not enough to say" — the same words as a capture the
-camera could not use. Decided by the owner:
+camera could not use. Decided by the owner, and adjusted in review:
 
 - **One live line at the top while the baseline is learning** — *"Still learning
   Margaret's usual — 2 of 3 usable check-ins so far."* — computed from the history as it
-  is now (`learningStatus`), so it is never stale and it goes away once comparisons start.
-  It is the one place that says where the person *is*; every card says only what its own
-  check-in had (KV-100). It also answers the live half of KV-100's question, when some
-  check-ins could not be used: *"4 check-ins could not be used, so they are not counted."*
-- **A card withheld because the baseline was learning is labelled "Still learning"**, not
-  "Not enough to say", which now means only that the check-in itself could not be used.
-  The label comes from the stored reason (KV-138's `withheld`, or an older record's
-  summary); a card whose reason cannot be recovered keeps "Not enough to say". The drift
-  line quotes the same labels.
+  is now (`learningStatus`), so it is never stale. It is the one place that says where the
+  person *is*; every card says only what its own check-in had (KV-100). It also answers the
+  live half of KV-100's question, when some check-ins could not be used: *"4 check-ins
+  could not be used, so they are not counted."*
+- **It stays through 3 of 3.** Comparisons start with the check-in *after* the third
+  usable one, so at 3 of 3 nothing has been compared yet; the line says *"Margaret's usual
+  is ready — 3 of 3 usable check-ins so far. The next check-in will be the first compared
+  with it."* and goes away only once one has been. Nothing for a person with no check-ins,
+  where the seed prompt is the page, and never on seeded data: the demo seeds fourteen
+  days, so a seeded store is always past it.
+- **A card withheld because the baseline was learning is labelled "Too early to
+  compare"**, not "Not enough to say". The owner's ticket said "Still learning"; review
+  moved it, because the label is shown under the card's date for good and "still
+  learning" is a claim about the app *now* — the failure KV-100 removed from the sentence
+  beneath it. "Too early to compare" is a fact about that check-in, as "Looks normal" is.
+  "Not enough to say" now heads two things: a check-in whose capture could not be used,
+  and one only partly compared because a metric had no usual of its own (KV-87), whose
+  summary and note say which. The label comes from the stored reason (KV-138's
+  `withheld`, or an older record's summary); a card whose reason cannot be recovered keeps
+  "Not enough to say". The drift line compares and quotes the labels, not just the flags.
+- **The card counts "before it"**, the header "so far": *"(1 of 3 usable check-ins
+  before it)"* under a header reading *"2 of 3 … so far"* is two counts of different
+  things, said so, rather than resting on the word "then".
 
 ---
 

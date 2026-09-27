@@ -377,19 +377,20 @@ describe('where the baseline is, while it is learning (KV-17)', () => {
         `Still learning ${DEMO_PERSON_NAME}’s usual — 1 of 3 usable check-ins so far. 1 check-in could not be used, so it is not counted.`,
       ),
     ).toBeTruthy()
-    expect(screen.getByText('Still learning')).toBeTruthy()
+    expect(screen.getByText('Too early to compare')).toBeTruthy()
     expect(screen.getByText('Not enough to say')).toBeTruthy()
   })
 
   it('says nothing once comparisons have started', async () => {
-    const past = mine(history(5))
-    const now = mine([session({ id: 'now', capturedAt: '2026-10-01T09:00:00.000Z' })])[0]
-    if (now === undefined) throw new Error('unreachable')
-    now.assessment = scoreSession(now, past)
-    listSessions.mockResolvedValue([...past, now])
+    // Scored as a real store holds them, so the first three cards are labelled
+    // "Too early to compare" — which is right, and not what this is about: it
+    // asserts the header's absence, not the page's (KV-17 review).
+    const records = mine([...history(5), session({ id: 'now', capturedAt: '2026-10-01T09:00:00.000Z' })])
+    records.forEach((r, i) => (r.assessment = scoreSession(r, records.slice(0, i))))
+    listSessions.mockResolvedValue(records)
     render(<App />)
 
-    expect(await screen.findByText('Looks normal')).toBeTruthy()
-    expect(document.body.textContent).not.toMatch(/Still learning/)
+    expect((await screen.findAllByText('Too early to compare')).length).toBe(3)
+    expect(screen.queryByText(/usable check-ins so far/)).toBeNull()
   })
 })
