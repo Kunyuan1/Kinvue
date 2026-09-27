@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
-import { hasScorableVitals, presentAll } from '@core/scoring'
+import { hasScorableVitals, learningStatus, presentAll } from '@core/scoring'
 import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
 import {
   classifyCaptureError,
@@ -247,6 +247,12 @@ export default function App(): React.JSX.Element {
   // screen's countdown alone re-renders once a second.
   const shown = useMemo(() => presentAll(sessions ?? []), [sessions])
   const newest = useMemo(() => [...(sessions ?? [])].reverse(), [sessions])
+  // Where the baseline is now, while it is still learning (KV-17). Null for a
+  // person with no check-ins, where the seed prompt is the whole page.
+  const learning = useMemo(
+    () => learningStatus(sessions ?? [], DEMO_PERSON_ID, DEMO_PERSON_NAME),
+    [sessions],
+  )
 
   /**
    * Started here, on the press, rather than inside the capture screen. Opening
@@ -385,6 +391,7 @@ export default function App(): React.JSX.Element {
           A daily look at whether today is different from {DEMO_PERSON_NAME}&rsquo;s own
           usual. Not a diagnosis, and not an emergency alert.
         </p>
+        {learning !== null && <p className="mt-3 text-sm">{learning}</p>}
       </header>
 
       <div className="mb-8 flex items-center gap-3">

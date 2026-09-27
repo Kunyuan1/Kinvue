@@ -352,7 +352,10 @@ function withSummary(facts: AssessmentFacts): Assessment {
  * under its date forever, and "…needed before daily comparisons start" was a
  * live status: on a dashboard read newest first, it sat under every card that
  * had since compared. Where the person is now belongs in one live place, the
- * dashboard header (#17). "Then" dates the count to the check-in.
+ * dashboard header (#17). "Before it" says what the count is of: the header
+ * counts "so far", which includes the newest check-in, and a card above it
+ * reading one fewer is two counts of different things, not a contradiction
+ * resting on the word "then" (KV-17 review).
  *
  * When check-ins before it were refused, it says so: the count is of *usable*
  * check-ins since KV-72, and a caregiver who has done six and is shown two
@@ -365,14 +368,14 @@ function withSummary(facts: AssessmentFacts): Assessment {
  * carve-out to pass it (KV-100 review).
  */
 function learningSummary(sessions: number, refused: number | undefined): string {
-  const count = `Not yet enough history to compare this check-in (${usableThen(sessions)}).`
+  const count = `Not yet enough history to compare this check-in (${usableBefore(sessions)}).`
   const note = refusalNote(refused)
   if (note === null) return count
   return `${count} ${capitalise(note)}, so ${refused === 1 ? 'it is' : 'they are'} not counted.`
 }
 
-function usableThen(sessions: number): string {
-  return `${sessions} of ${MIN_BASELINE_SESSIONS} usable check-ins then`
+function usableBefore(sessions: number): string {
+  return `${sessions} of ${MIN_BASELINE_SESSIONS} usable check-ins before it`
 }
 
 /** "2 check-ins before this one could not be used", or null when none were, or none are known. */
@@ -385,12 +388,86 @@ function refusalNote(refused: number | undefined): string | null {
 
 /**
  * What the card's label says for each verdict. Here rather than in the card so
- * the drift line quotes the label a caregiver actually sees (KV-138).
+ * the drift line quotes the label a caregiver actually sees (KV-138); a card
+ * shows `Presentation.label`, which differs for a baseline still learning.
  */
 export const FLAG_LABEL: Record<Flag, string> = {
   normal: 'Looks normal',
   elevated: 'Looks different',
   'insufficient-signal': 'Not enough to say',
+}
+
+/**
+ * The label a card shows: its verdict's, except that a verdict withheld while
+ * the baseline was still learning says so (KV-17). "Not enough to say" was
+ * shared with a capture the camera could not use, and the two mean different
+ * things to a caregiver — one is the app still getting to know them, the other
+ * a check-in that did not work. It still heads a check-in only partly compared
+ * (KV-87), whose summary and note say so; the label has two meanings now, not
+ * three. A record whose reason cannot be recovered keeps the flag's own label.
+ *
+ * "Too early to compare", not "Still learning" (KV-17 review): the label is
+ * shown under the card's date for good, and "still learning" is a claim about
+ * the app now — the failure KV-100 removed from the sentence below it. This is
+ * a fact about that check-in, as "Looks normal" is. The live status is the
+ * header's (`learningStatus`), and only while it is true.
+ */
+function labelOf(flag: Flag, withheld: Recovered | undefined): string {
+  return flag === 'insufficient-signal' && withheld === 'still-learning'
+    ? 'Too early to compare'
+    : FLAG_LABEL[flag]
+}
+
+/**
+ * The dashboard's one live line while a person's baseline is still learning,
+ * or null once comparisons have started (KV-17): "Still learning Margaret's
+ * usual — 2 of 3 usable check-ins so far."
+ *
+ * Comparisons start with the check-in *after* the third usable one, so at
+ * 3 of 3 none has been compared yet, and the line stays with its last step —
+ * "the next check-in will be the first compared with it" — rather than
+ * vanishing at the moment a caregiver most wants to know (KV-17 review). Once
+ * there are more usable check-ins than that, one has been compared.
+ *
+ * Computed from the history as it is now, so it is never stale — the card
+ * sentence (`learningSummary`) is frozen with its check-in and says what *it*
+ * had, and this is the one place that says where the person is. It answers the
+ * live question KV-100 left here, too: why the count is lower than the
+ * check-ins done, when some could not be used. `records` is everyone's; only
+ * this person's are counted.
+ *
+ * Null for a person with no check-ins at all: there is nothing yet to be
+ * learning from, and every caller would otherwise have to know to hide
+ * "0 of 3" itself (KV-17 review).
+ *
+ * It says nothing about seeded data, unlike every surface that shows a
+ * comparison (KV-53), because it can never be shown over any: the demo seeds
+ * fourteen usable days (`seedDemoHistory`), so a store holding them is past
+ * this line before anything real is added. A test pins that.
+ */
+export function learningStatus(
+  records: readonly SessionRecord[],
+  personId: string,
+  name: string,
+): string | null {
+  const theirs = records.filter((r) => r.personId === personId)
+  if (theirs.length === 0) return null
+  const baseline = computeBaseline(theirs)
+  if (baseline.sessions > MIN_BASELINE_SESSIONS) return null
+  if (baseline.sessions === MIN_BASELINE_SESSIONS) {
+    return (
+      `${name}’s usual is ready — ${MIN_BASELINE_SESSIONS} of ${MIN_BASELINE_SESSIONS} ` +
+      'usable check-ins so far. The next check-in will be the first compared with it.'
+    )
+  }
+  const line =
+    `Still learning ${name}’s usual — ${baseline.sessions} of ${MIN_BASELINE_SESSIONS} ` +
+    'usable check-ins so far.'
+  const refused = baseline.refusedSessions
+  if (refused === 0) return line
+  return refused === 1
+    ? `${line} 1 check-in could not be used, so it is not counted.`
+    : `${line} ${refused} check-ins could not be used, so they are not counted.`
 }
 
 /** What a card shows for an assessment, composed now rather than read as stored. */
@@ -400,6 +477,8 @@ export interface Presentation {
    * today's rules give it (KV-103).
    */
   flag: Flag
+  /** What the card's label says for it: see `labelOf`. */
+  label: string
   summary: string
   /** Each fired rule as stored, its words brought up to date where they can be. */
   firedRules: FiredRule[]
@@ -609,6 +688,7 @@ export function present(
 
   return {
     flag: stored.flag,
+    label: labelOf(stored.flag, withheld),
     summary,
     firedRules,
     uncomparedNote,
@@ -654,8 +734,11 @@ interface Shown {
  */
 function driftLine(shown: Shown, rescored: Assessment): string | null {
   const prefix = 'Scored again now, it would'
-  if (rescored.flag !== shown.flag) {
-    return `${prefix} read “${FLAG_LABEL[rescored.flag]}”${driftReason(rescored, shown.noteGaps)}.`
+  // The label, not just the flag: since KV-17 it also follows the reason, so
+  // the same flag can head the card differently (KV-17 review).
+  const label = labelOf(rescored.flag, rescored.withheld)
+  if (rescored.flag !== shown.flag || label !== labelOf(shown.flag, shown.withheld)) {
+    return `${prefix} read “${label}”${driftReason(rescored, shown.noteGaps)}.`
   }
   // Same withheld verdict, different reason or count: the card's lead
   // sentence is what would change, and the flag and the rule ids cannot see
@@ -715,7 +798,7 @@ function driftReason(rescored: Assessment, noteGaps: readonly UncomparedMetric[]
     const note = refusalNote(rescored.baselineRefusedSessions)
     return (
       ', because there was not yet enough history to compare it ' +
-      `(${usableThen(rescored.baselineSessions)}${note === null ? '' : `; ${note}`})`
+      `(${usableBefore(rescored.baselineSessions)}${note === null ? '' : `; ${note}`})`
     )
   }
   const why = rescored.summary.replace(/\.$/, '')
