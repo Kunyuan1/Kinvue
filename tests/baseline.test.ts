@@ -171,13 +171,11 @@ describe('a capture the scorer refused to use', () => {
     const kept = history(3)
     const baseline = computeBaseline([refused, ...kept])
     // The refused capture is older, and is not what the usual reaches back to.
-    expect(baseline.oldestAt).toBe(kept[0]?.capturedAt)
-    expect(baseline.newestAt).toBe(kept[2]?.capturedAt)
+    expect(baseline.span).toEqual({ from: kept[0]?.capturedAt, to: kept[2]?.capturedAt })
     // Past the window, the oldest kept session is the window's, not history's.
     const many = history(BASELINE_WINDOW_SESSIONS + 5)
-    expect(computeBaseline(many).oldestAt).toBe(many[5]?.capturedAt)
-    expect(computeBaseline([]).oldestAt).toBeNull()
-    expect(computeBaseline([]).newestAt).toBeNull()
+    expect(computeBaseline(many).span?.from).toBe(many[5]?.capturedAt)
+    expect(computeBaseline([]).span).toBeNull()
   })
 
   it('counts the refusals it left out, across the whole history, so the card can say why (KV-100)', () => {

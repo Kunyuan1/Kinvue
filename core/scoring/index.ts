@@ -137,42 +137,108 @@ export function seededBaselineDisclosure(assessment: Assessment): string | null 
 }
 
 /**
- * Past this many days back from the check-in, a card says how far its usual
- * reaches (KV-154). Four weeks: twice the fortnight the 14-session window
- * stands for when someone checks in daily, so the note appears only where
- * "their usual" has stopped meaning roughly that. A presentation choice, not a
- * tuned number on the scoring — nothing is compared or withheld differently,
- * and moving it changes one line on a card. The age *bound* on the window is
- * #22's, and still deferred (KV-99).
+ * How long a gap has to be before it is worth a line (KV-154): four weeks,
+ * twice the fortnight the 14-session window stands for when someone checks in
+ * daily. A presentation choice, not a tuned number on the scoring — nothing is
+ * compared or withheld differently, and moving it changes whether a line
+ * appears. The age *bound* on the window is #22's, and still deferred (KV-99).
  */
 export const USUAL_SPAN_NOTE_AFTER_DAYS = 28
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
+/** Whole days from one ISO time to another; NaN if either does not parse. */
+function daysBetween(from: string, to: string): number {
+  return Math.floor((Date.parse(to) - Date.parse(from)) / DAY_MS)
+}
+
 /**
- * The sentence saying how far back a card's usual reaches, or null when it is
- * recent enough not to change what "their usual" means (KV-154).
+ * "6 weeks", "8 months", "over a year", "over 2 years": how long from one time
+ * to another, never more than it was. Weeks under two calendar months, whole
+ * calendar months under a year — so 364 days is "11 months" only when it
+ * really is short of a year on the calendar, and a year and more says so
+ * outright, the case the line exists to warn about (KV-154 review).
+ */
+function howLong(from: string, to: string): string {
+  const a = new Date(from)
+  const b = new Date(to)
+  const months =
+    (b.getUTCFullYear() - a.getUTCFullYear()) * 12 +
+    (b.getUTCMonth() - a.getUTCMonth()) -
+    (b.getUTCDate() < a.getUTCDate() ? 1 : 0)
+  if (months < 2) return `${Math.floor(daysBetween(from, to) / 7)} weeks`
+  if (months < 12) return `${months} months`
+  const years = Math.floor(months / 12)
+  return years === 1 ? 'over a year' : `over ${years} years`
+}
+
+/**
+ * The sentence saying a card's usual had gone stale, or null (KV-154).
  *
- * "Their usual here is 14 check-ins reaching back 14 months." The count is in
- * it because the span alone does not say which is thin: fourteen check-ins
- * over fourteen months is a different usual from a fortnight's, and the
- * caregiver cannot see the window any other way. Measured from the check-in
- * back to the oldest session in the window, so it holds under the card's date
- * for good. Weeks below two months, whole months from there, rounded down so
- * it never overstates.
+ * "Their usual here is 14 check-ins, the most recent of them 8 months before
+ * this one." Only when the gap before this check-in is past four weeks *and*
+ * longer than the stretch the usual itself covers: a usual that ended long
+ * before the reading it was compared with. A regular cadence never meets that
+ * — monthly check-ins leave a month's gap after a year-long usual — so this is
+ * the exception it is meant to be, not a line on every card; how far back the
+ * usual reaches is said once, live, by `usualReachStatus` (review of #158).
+ * Fourteen daily check-ins in January and one in September read differently
+ * from fourteen spread over those months, which a single "reaches back" could
+ * not tell apart.
  *
  * Only where something on the card leans on the baseline, like the seeded
- * disclosure; absent span, nothing — unknown, not "recent".
+ * disclosure, and not when every check-in behind it was seeded: that note
+ * already says the usual was invented, and this one would count invented
+ * check-ins as check-ins in the next line. Absent span, or a date that does
+ * not parse: nothing, since it cannot be known — never "recent".
  */
-export function usualSpanDisclosure(assessment: Assessment, capturedAt: string): string | null {
+export function staleUsualDisclosure(assessment: Assessment, capturedAt: string): string | null {
   const span = assessment.baselineSpan
   if (span === undefined || !restsOnBaseline(assessment)) return null
-  const days = Math.floor((Date.parse(capturedAt) - Date.parse(span.from)) / DAY_MS)
-  if (!(days > USUAL_SPAN_NOTE_AFTER_DAYS)) return null
-  const months = Math.floor(days / (365.25 / 12))
-  const reach = months >= 2 ? `${months} months` : `${Math.floor(days / 7)} weeks`
   const n = assessment.baselineSessions
-  return `Their usual here is ${n} check-in${n === 1 ? '' : 's'} reaching back ${reach}.`
+  if (assessment.baselineSeededSessions === n) return null
+  const gap = daysBetween(span.to, capturedAt)
+  const covered = daysBetween(span.from, span.to)
+  // Unknown, not recent: a hand-edited or imported date says nothing either way.
+  if (Number.isNaN(gap) || Number.isNaN(covered)) return null
+  if (gap <= USUAL_SPAN_NOTE_AFTER_DAYS || gap <= covered) return null
+  const before = `${howLong(span.to, capturedAt)} before this one`
+  return n === 1
+    ? `Their usual here is 1 check-in, ${before}.`
+    : `Their usual here is ${n} check-ins, the most recent of them ${before}.`
+}
+
+/**
+ * The dashboard's one live line about how far back a person's usual reaches,
+ * or null when that is within four weeks (KV-154, review of #158):
+ * "Margaret's usual is the last 14 usable check-ins, reaching back 6 weeks."
+ *
+ * Said once rather than on every card, because at a regular cadence it is the
+ * same on every card: twice a week puts the fourteen over six weeks, for good.
+ * Measured to `now`, so it is live — and when the most recent of them is
+ * itself long gone, it says that too, the way a card's stale note does.
+ *
+ * Only once comparisons have started; before that, `learningStatus` has the
+ * line. Seeded check-ins are named when they are in it; a usual that is all
+ * seeded is the demo's own, and says nothing.
+ */
+export function usualReachStatus(
+  records: readonly SessionRecord[],
+  personId: string,
+  name: string,
+  now: Date,
+): string | null {
+  const baseline = computeBaseline(records.filter((r) => r.personId === personId))
+  const { span, sessions: n, seededSessions: seeded } = baseline
+  if (span === null || n <= MIN_BASELINE_SESSIONS || seeded === n) return null
+  const today = now.toISOString()
+  const reach = daysBetween(span.from, today)
+  const gap = daysBetween(span.to, today)
+  if (Number.isNaN(reach) || Number.isNaN(gap) || reach <= USUAL_SPAN_NOTE_AFTER_DAYS) return null
+  const which = seeded === 0 ? '' : `, ${seeded} of them seeded demo data,`
+  const line = `${name}’s usual is the last ${n} usable check-ins${which} reaching back ${howLong(span.from, today)}`
+  const stale = gap > USUAL_SPAN_NOTE_AFTER_DAYS && gap > daysBetween(span.from, span.to)
+  return stale ? `${line}; the most recent was ${howLong(span.to, today)} ago.` : `${line}.`
 }
 
 const METRIC_NAME: Record<ComparedMetric, string> = {
@@ -348,14 +414,11 @@ function baselineFacts(
   Assessment,
   'baselineSessions' | 'baselineSeededSessions' | 'baselineRefusedSessions' | 'baselineSpan'
 > {
-  const { oldestAt, newestAt } = baseline
   return {
     baselineSessions: baseline.sessions,
     baselineSeededSessions: baseline.seededSessions,
     baselineRefusedSessions: baseline.refusedSessions,
-    ...(oldestAt !== null && newestAt !== null
-      ? { baselineSpan: { from: oldestAt, to: newestAt } }
-      : {}),
+    ...(baseline.span === null ? {} : { baselineSpan: baseline.span }),
   }
 }
 
@@ -493,7 +556,7 @@ function labelOf(flag: Flag, withheld: Recovered | undefined): string {
  *
  * It says nothing about seeded data, unlike every surface that shows a
  * comparison (KV-53), because it can never be shown over any: the demo seeds
- * fourteen usable days (`seedDemoHistory`), so a store holding them is past
+ * twelve usable days (`seedDemoHistory`), so a store holding them is past
  * this line before anything real is added. A test pins that.
  */
 export function learningStatus(
@@ -535,7 +598,7 @@ export interface Presentation {
   firedRules: FiredRule[]
   /** The #87 note: which measured metrics went uncompared, or null. */
   uncomparedNote: string | null
-  /** How far back the usual reaches, when that is far (KV-154), or null. */
+  /** That the usual had gone stale by this check-in (KV-154), or null. */
   spanNote: string | null
   /** One line when today's scorer would say something different, or null. */
   drift: string | null
@@ -739,13 +802,18 @@ export function present(
   const uncomparedNote =
     gaps === undefined ? null : uncomparedDisclosure({ ...stored, uncomparedMetrics: gaps })
   // A record from before KV-154 has no span: found by scoring it again against
-  // the same history, as its gaps are. A seeded card's usual is the demo's own
-  // fortnight, and it carries no notes of this kind (KV-103).
-  const baselineSpan = stored.baselineSpan ?? rescored.baselineSpan
+  // the same history, as its gaps are — but only when that rescore counts the
+  // same sessions the card did. Otherwise the history has changed under it (a
+  // restored backup, say), and a stored count beside a rescored span would be
+  // a pair that never held (review of #158); unknown, so nothing is said. A
+  // seeded card carries no notes of this kind (KV-103).
+  const baselineSpan =
+    stored.baselineSpan ??
+    (rescored.baselineSessions === stored.baselineSessions ? rescored.baselineSpan : undefined)
   const spanNote =
     seeded || baselineSpan === undefined
       ? null
-      : usualSpanDisclosure({ ...stored, baselineSpan }, session.capturedAt)
+      : staleUsualDisclosure({ ...stored, baselineSpan }, session.capturedAt)
 
   return {
     flag: stored.flag,

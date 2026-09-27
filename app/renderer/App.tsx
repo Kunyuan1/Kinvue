@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
-import { hasScorableVitals, learningStatus, presentAll } from '@core/scoring'
+import { hasScorableVitals, learningStatus, presentAll, usualReachStatus } from '@core/scoring'
 import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
 import {
   classifyCaptureError,
@@ -253,6 +253,13 @@ export default function App(): React.JSX.Element {
     () => learningStatus(sessions ?? [], DEMO_PERSON_ID, DEMO_PERSON_NAME),
     [sessions],
   )
+  // Once comparisons have started: how far back the usual reaches, when that
+  // is far (KV-154) — said here once, not on every card. Measured to when the
+  // check-ins last changed, which is when this page last had anything new.
+  const reach = useMemo(
+    () => usualReachStatus(sessions ?? [], DEMO_PERSON_ID, DEMO_PERSON_NAME, new Date()),
+    [sessions],
+  )
 
   /**
    * Started here, on the press, rather than inside the capture screen. Opening
@@ -392,6 +399,7 @@ export default function App(): React.JSX.Element {
           usual. Not a diagnosis, and not an emergency alert.
         </p>
         {learning !== null && <p className="mt-3 text-sm">{learning}</p>}
+        {reach !== null && <p className="mt-3 text-sm">{reach}</p>}
       </header>
 
       <div className="mb-8 flex items-center gap-3">

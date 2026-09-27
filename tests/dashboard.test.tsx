@@ -396,18 +396,58 @@ describe('where the baseline is, while it is learning (KV-17)', () => {
 })
 
 describe('how far back a card’s usual reaches (KV-154)', () => {
-  it('says so on a card whose usual is months old', async () => {
-    const monthly = Array.from({ length: 5 }, (_, i) =>
-      session({ id: `m-${i}`, capturedAt: new Date(Date.UTC(2026, 3 + i, 1, 9)).toISOString() }),
+  // The header line is live, measured to now; pin it. Only `Date` is faked, so
+  // the async queries below still wait on real timers.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-10-01T09:00:00.000Z'))
+  })
+  afterEach(() => vi.useRealTimers())
+
+  /** Five check-ins in January, then one on Sep 30: a usual gone stale. */
+  const staleHistory = (extra: SessionRecord[] = []): SessionRecord[] => {
+    const january = Array.from({ length: 5 }, (_, i) =>
+      session({ id: `jan-${i}`, capturedAt: new Date(Date.UTC(2026, 0, i + 1, 9)).toISOString() }),
     )
     const now = session({ id: 'now', capturedAt: '2026-09-30T09:00:00.000Z' })
-    const records = [...monthly, now]
-    records.forEach((r, i) => (r.assessment = scoreSession(r, records.slice(0, i))))
-    listSessions.mockResolvedValue(records)
+    const records = [...extra, ...january, now].map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+    records.forEach((r, i) => {
+      if (r.seeded !== true) r.assessment = scoreSession(r, records.slice(0, i))
+    })
+    return records
+  }
+
+  it('notes a stale usual on the card, and says once in the header how far back it reaches', async () => {
+    listSessions.mockResolvedValue(staleHistory())
     render(<App />)
 
     expect(
-      await screen.findByText('Their usual here is 5 check-ins reaching back 5 months.'),
+      await screen.findByText(
+        'Their usual here is 5 check-ins, the most recent of them 8 months before this one.',
+      ),
     ).toBeTruthy()
+    expect(
+      screen.getByText(`${DEMO_PERSON_NAME}’s usual is the last 6 usable check-ins reaching back 9 months.`),
+    ).toBeTruthy()
+    // Only the card whose usual had gone stale says so.
+    expect(screen.getAllByText(/the most recent of them/).length).toBe(1)
+  })
+
+  it('puts the stale note after the seeded one, as the second half of it (review of #158)', async () => {
+    const seeded = Array.from({ length: 3 }, (_, i) =>
+      session({
+        id: `seed-${i}`,
+        capturedAt: new Date(Date.UTC(2025, 11, 20 + i, 9)).toISOString(),
+        seeded: true,
+      }),
+    )
+    listSessions.mockResolvedValue(staleHistory(seeded))
+    render(<App />)
+
+    const stale = await screen.findByText(
+      'Their usual here is 8 check-ins, the most recent of them 8 months before this one.',
+    )
+    const seededNote = screen.getByText(/^Their usual here is partly seeded demo data — 3 of the 8/)
+    expect(seededNote.compareDocumentPosition(stale) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })

@@ -70,7 +70,8 @@ on the calibration #22 will do against confirmed outcomes. It is not that a boun
 dangerous in itself: a *short* one would let a bad fortnight empty an established baseline,
 the failure KV-72 removed, but a long one floored so it never takes the usable set below
 `MIN_BASELINE_SESSIONS` would not. Only the number is missing. A test with a long, sparse
-history pins today's behaviour until then, and the card discloses the span (KV-154, below),
+history pins today's behaviour until then, and the dashboard says how far back the usual
+reaches — a card, when its own had gone stale (KV-154, below) —
 so the cost is visible to the caregiver and not only written down here.
 
 **Both directions** (KV-9). The question is "does this look like their normal", and a pulse
@@ -341,28 +342,44 @@ Its drift line treats the count as unknown too — it compares against today's s
 without the refusal clause — so a record's missing field is never reported as the scorer
 answering differently.
 
-### How far back a card's usual reaches (KV-154)
+### How far back the usual reaches, and when a card's had gone stale (KV-154)
 
-The window is the trailing 14 usable check-ins however old (KV-99), so for someone who
-checks in rarely "their usual" can mean the past year rather than the past fortnight — and
-nothing on the card said which. Bounding the window by age waits on #22; *showing* the span
-needs no tuned number, since it is the `capturedAt` range of the window the code already
-has. So the baseline records its oldest and newest session, the assessment stores them
-(`baselineSpan`; absent on an older record, which gets it by scoring again against the
-same history, as its gaps do), and a card that made a comparison says, once the usual
-reaches more than four weeks back from the check-in: *"Their usual here is 14 check-ins
-reaching back 12 months."*
+The window is the trailing 14 usable check-ins however old (KV-99), so "their usual" can
+mean the past fortnight, the past year, or a fortnight that ended months ago — and nothing
+on screen said which. Bounding the window by age waits on #22; *showing* it needs no tuned
+number, since it is the `capturedAt` range of the window the code already has. The
+baseline records it (`span`), and each assessment stores it (`baselineSpan`).
 
-- **The count is in it** because the span alone does not say whether the usual is thin:
-  fourteen check-ins over a year is a different usual from fourteen over a fortnight.
+Two facts, said in two places — decided by the owner in review of #158, after the first
+version put one sentence on every card:
+
+- **How far back the usual reaches is said once, live, in the dashboard header** — *"Margaret's
+  usual is the last 14 usable check-ins reaching back 6 weeks."* (`usualReachStatus`),
+  once comparisons have started and it reaches past four weeks. At a regular cadence it is
+  the same on every card — twice a week puts the fourteen over six weeks for good — so a
+  line on each card would be sixteen copies of one fact, and stop being read.
+- **A card says so only when its own usual had gone stale** — *"Their usual here is 14
+  check-ins, the most recent of them 8 months before this one."* (`staleUsualDisclosure`) —
+  when the gap before that check-in is past four weeks *and* longer than the stretch the
+  usual itself covers. That separates the case the ticket exists for, fourteen daily
+  check-ins in January compared with one in September, from fourteen spread over the same
+  months, which one "reaches back" distance could not. A regular cadence never meets it:
+  monthly check-ins leave a month's gap after a year-long usual.
+
 - **Four weeks** (`USUAL_SPAN_NOTE_AFTER_DAYS`) is twice the fortnight the window stands for
-  when someone checks in daily. It decides only whether a line appears; nothing is scored
-  or withheld differently, so it is a presentation choice rather than the tuned horizon
-  #22 is for.
-- **Rounded down**, in weeks below two months and whole months from there, so it never
-  overstates. Measured from the check-in, not from now, so it holds under the card's date.
-- Not on a seeded card (KV-103), and not where nothing leaned on the baseline — an
-  unusable capture, or one too early to compare.
+  with daily check-ins. It decides only whether a line appears; nothing is scored or
+  withheld differently, so it is a presentation choice rather than #22's horizon.
+- **Worded never to overstate, and to say a year as a year**: weeks under two calendar
+  months, whole calendar months under a year, then "over a year". A card's note is measured
+  from its check-in, so it holds under the card's date; the header's to now.
+- **An older card** gets its span by scoring again against the same history, as its gaps do
+  — only when that rescore counts the sessions the card did. Otherwise the history has
+  changed under it, and a stored count beside a rescored span would be a pair that never
+  held; nothing is said.
+- **Not on a seeded card** (KV-103), not where nothing leaned on the baseline, and not when
+  every check-in behind the card was seeded — the seeded note already says so, and the
+  stale note would count invented check-ins as check-ins. Where both appear, the stale note
+  comes second, as the *when* to the seeded note's *what*.
 
 ### Where the baseline is now: one live line, and a label of its own (KV-17)
 
@@ -380,7 +397,7 @@ camera could not use. Decided by the owner, and adjusted in review:
   usable one, so at 3 of 3 nothing has been compared yet; the line says *"Margaret's usual
   is ready — 3 of 3 usable check-ins so far. The next check-in will be the first compared
   with it."* and goes away only once one has been. Nothing for a person with no check-ins,
-  where the seed prompt is the page, and never on seeded data: the demo seeds fourteen
+  where the seed prompt is the page, and never on seeded data: the demo seeds twelve
   days, so a seeded store is always past it.
 - **A card withheld because the baseline was learning is labelled "Too early to
   compare"**, not "Not enough to say". The owner's ticket said "Still learning"; review

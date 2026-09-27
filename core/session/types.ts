@@ -133,6 +133,17 @@ export interface UncomparedMetric {
   mean?: number
 }
 
+/** The stretch a baseline's window covered (KV-154). */
+export interface BaselineSpan {
+  /** When the oldest usable session in the window was captured. */
+  from: string
+  /**
+   * When the newest one was — how fresh "their usual" is. Usable sessions in
+   * the window only: not a refused capture, and not the session being scored.
+   */
+  to: string
+}
+
 export interface Assessment {
   flag: Flag
   /** Every rule that fired, highest severity first. Never summarised away. */
@@ -163,11 +174,17 @@ export interface Assessment {
   baselineRefusedSessions?: number
   /**
    * When the oldest and newest check-ins the baseline was built from were
-   * captured (KV-154), so a card can say how far back "their usual" reaches.
-   * Absent with no baseline sessions, and on a verdict scored before it
-   * existed, where it reads as unknown.
+   * captured (KV-154), so a card can say when its usual had gone stale.
+   *
+   * **Absent for two different reasons**, like `uncomparedMetrics`: with no
+   * baseline sessions, where there is nothing to span and absence is correct,
+   * and on a verdict scored before KV-154, where it means unknown. The first
+   * only happens on a verdict that leans on no baseline — unusable, or too
+   * early to compare — so read it as unknown only where the card compared
+   * something. `present` relies on that when it recovers a missing span; a
+   * test pins it.
    */
-  baselineSpan?: { from: string; to: string }
+  baselineSpan?: BaselineSpan
   /**
    * Metrics measured at this check-in that could not be compared, because
    * their own history was too short (KV-87). Empty when every measured metric
