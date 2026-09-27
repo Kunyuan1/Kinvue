@@ -153,8 +153,9 @@ export interface Assessment {
    */
   baselineSeededSessions?: number
   /**
-   * Earlier check-ins the scorer refused as unusable, and so left out of
-   * `baselineSessions` (KV-100). A card still learning says so, so a count
+   * Earlier check-ins the scorer refused as unusable: the refusals
+   * `baselineSessions` excluded, not everything it leaves out, since it is
+   * also capped at the window (KV-100). A card still learning says so, so a count
    * lower than the check-ins done is not left to inference. Absent on a
    * verdict scored before it existed, which reads as unknown: that card says
    * nothing about refusals rather than "none".

@@ -284,8 +284,8 @@ said.** `present` (in `core/scoring`) builds what a card shows:
   text, run through a frozen table of exactly what KV-93 changed, and the one " today,"
   KV-93 removed from comparison explanations.
 - **When today's scorer would say something different, one line says so**: a different
-  verdict ("Scored again now, it would read “Not enough to say”: still learning their
-  normal…"), the same verdict with different rules ("…it would also note slept poorly"),
+  verdict ("Scored again now, it would read “Not enough to say”, because there was not yet
+  enough history to compare it (1 of 3 usable check-ins then)"), the same verdict with different rules ("…it would also note slept poorly"),
   or the same withheld verdict for a different reason ("…it would say instead: “…”"). The
   second is not optional: a rule that fires or stops firing changes what a card says even
   when the flag does not, and on the owner's history two cards drift only that way.
@@ -322,8 +322,24 @@ by KV-138's display-time composition, and the drift line quotes it.
 The count is of **usable** check-ins since KV-72, which was right for the mean and hid the
 refusals: someone who had done six check-ins was told two. So the refusals the baseline
 left out are counted (across the whole history, not the window) and stored beside it, and
-the card says so — *"4 earlier camera readings could not be used, so they are not counted."*
+the card says so — *"4 check-ins before this one could not be used, so they are not
+counted."* Check-ins rather than "camera readings", since a capture that measured nothing had
+none; "before this one" rather than "earlier", which KV-93's guard bans.
+
+**Why on the card, when the live count moves to the header.** The clause explains the
+card's *own* number, which is frozen with it: "2 of 3 then" is a fact about that check-in,
+and so is how many refusals sat behind it. The live question — why the count *today* is
+lower than the check-ins done — is #17's header's to answer, from the same stored fact.
+
+**One number for four reasons**, where `UNUSABLE_SUMMARY` insists on telling them apart.
+That rule is for the refused card itself, which says which failure happened; the count sits
+on a *different* card and only has to say that some check-ins did not count. Each of them
+still says why on its own card, further down.
+
 A card scored before the count existed says nothing about refusals: unknown, not "none".
+Its drift line treats the count as unknown too — it compares against today's sentence
+without the refusal clause — so a record's missing field is never reported as the scorer
+answering differently.
 
 ---
 
@@ -919,7 +935,8 @@ removing it from that role would leave the dashboard with nothing scored to deve
 verdicts of their own, so excluding them from a real capture's baseline would no longer
 leave the dashboard empty — twelve scored demo cards would remain. What it would still lose
 is a real capture on the demo persona being compared at all: that capture's baseline would
-be empty, so it would read "still learning their normal" for its first three check-ins, and
+be empty, so it would read "not yet enough history to compare this check-in" for its first
+three check-ins, and
 the one verdict built on live readings would stop being demonstrable. That is the cost the
 disclosure exists to make acceptable.
 

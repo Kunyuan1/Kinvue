@@ -30,9 +30,11 @@ export interface Baseline {
   sessions: number
   /**
    * Earlier sessions the scorer refused, across the whole history rather than
-   * the window: the ones `sessions` leaves out. Carried so a card still
-   * learning can say why its count is lower than the check-ins done (KV-100)
-   * — excluding them was right for the mean, but the count alone hides them.
+   * the window: the refusals `sessions` excluded. Not everything it leaves out
+   * — past the window, older usable sessions are left out too. Carried so a
+   * card still learning can say why its count is lower than the check-ins done
+   * (KV-100) — excluding them was right for the mean, but the count alone
+   * hides them.
    */
   refusedSessions: number
   /**
@@ -101,7 +103,7 @@ function stat(values: number[]): Stat | null {
  * a baseline it is part of pulls the baseline toward itself and understates
  * every deviation.
  */
-export function computeBaseline(history: SessionRecord[]): Baseline {
+export function computeBaseline(history: readonly SessionRecord[]): Baseline {
   // The same question the scorer asks before it will score a capture at all.
   // A capture stored as `insufficient-signal` because the SDK rated it 0.46
   // used to land in here anyway, so the app declined to show a number on one
@@ -112,10 +114,10 @@ export function computeBaseline(history: SessionRecord[]): Baseline {
   // Filtered before the window is taken, not after: see
   // `BASELINE_WINDOW_SESSIONS`. The order only became load-bearing once the
   // predicate could fire on ordinary bad lighting.
-  const usableAll = history.filter((s) => unusableReason(s.vitals) === null)
-  const usable = [...usableAll]
+  const usableAll = history
+    .filter((s) => unusableReason(s.vitals) === null)
     .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
-    .slice(-BASELINE_WINDOW_SESSIONS)
+  const usable = usableAll.slice(-BASELINE_WINDOW_SESSIONS)
 
   const pick = (get: (s: SessionRecord) => number | null): number[] =>
     usable.map(get).filter((v): v is number => v !== null)
