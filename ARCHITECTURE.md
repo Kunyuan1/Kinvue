@@ -267,17 +267,31 @@ said.** `present` (in `core/scoring`) builds what a card shows:
 
 - **The flag and the fired rules are kept as scored**, severities included. They are what
   the app told the caregiver that day, and history stays a record of that.
-- **The summary is composed from facts the record keeps** — flag, fired rules, vitals,
-  baseline count — by the same code `scoreSession` writes it with, so a card scored now
-  composes to exactly what it stored. **Answer rules** are evaluated again, since they
-  depend only on the answers. **Comparison rules** quote a usual that is not stored, so
-  their text is kept, less the one " today," KV-93 removed from them.
+- **The summary is composed from facts the record keeps** — flag, fired rules, baseline
+  count and, for a withheld verdict, *why* it was withheld — by the one function
+  `scoreSession` writes it with, so a card scored now composes to exactly what it stored by
+  construction, not by a mirror kept in step by hand. The reason is stored
+  (`Assessment.withheld`) rather than asked of today's predicates, which can give a
+  different reason under the same flag: a card stored as "still learning" must not start
+  saying the camera gave an unrated reading. A record from before the reason was stored is
+  read from what it kept — its gap list, or its summary, one of a closed set of sentences
+  kept verbatim for this. The scaffold's one catch-all sentence names no single reason, so
+  it is kept as written, less its "today", and drift asks only whether today's scorer would
+  still call the capture unusable.
+- **Rules are reworded, never re-decided.** An answer rule that still fires on those
+  answers is evaluated again for its words. Anything else — a comparison rule, whose usual
+  is not stored, or a rule today's engine no longer fires or no longer has — keeps its own
+  text, run through a frozen table of exactly what KV-93 changed, and the one " today,"
+  KV-93 removed from comparison explanations.
 - **When today's scorer would say something different, one line says so**: a different
-  verdict ("Scored now, it would read “Not enough to say”: still learning their normal…"),
-  or the same verdict with different rules ("…it would also note slept poorly"). The second
-  is not optional: a rule that fires or stops firing changes what a card says even when
-  the flag does not, and on the owner's history two cards drift only that way. Rescoring
-  uses the check-ins before the card, so it compares against the same history it had.
+  verdict ("Scored again now, it would read “Not enough to say”: still learning their
+  normal…"), the same verdict with different rules ("…it would also note slept poorly"),
+  or the same withheld verdict for a different reason ("…it would say instead: “…”"). The
+  second is not optional: a rule that fires or stops firing changes what a card says even
+  when the flag does not, and on the owner's history two cards drift only that way.
+  Rescoring uses the same person's check-ins before the card, so it compares against the
+  same history it had. The line states that observation and no cause: today only a rule
+  change produces it, since history is append-only, but a restored backup would too.
 
   **A card with no drift line is not stale, and that is checked, not assumed.** The card
   that raised this read "Looks normal" on a breathing rate of 5.4, and the ticket assumed
@@ -288,6 +302,8 @@ said.** `present` (in `core/scoring`) builds what a card shows:
 - **KV-87's "was not recorded" note** no longer sits on every pre-KV-87 card. The gaps are
   found by scoring the card again against the same history, and the note appears only
   when there is one.
+- **Seeded cards are scored as they are shown** (KV-103) inside `present` itself, so no
+  caller has to have done it first and a seeded card never drifts.
 
 Not done, deliberately: rescoring on display and showing that instead. A past verdict
 would then change after a caregiver had read and acted on it, and history would stop

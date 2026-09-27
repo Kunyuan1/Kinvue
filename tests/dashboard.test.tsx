@@ -348,7 +348,7 @@ describe('an old card, shown with today’s words (KV-138)', () => {
     render(<App />)
 
     expect(await screen.findByText(
-      'Scored before a rule change. Scored now, it would also note breathing below usual.',
+      'Scored again now, it would also note breathing below usual.',
     )).toBeTruthy()
     expect(document.body.textContent).not.toMatch(/Today looks/)
     expect(screen.getAllByText('Looks normal').length).toBeGreaterThan(0)

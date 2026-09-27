@@ -20,13 +20,14 @@ export default function SessionCard({
   session: SessionRecord
   /**
    * What the card says, composed now from the stored facts (KV-138): the
-   * verdict as scored, its words in today's wording, and a drift line when
-   * today's scorer would say something different. Null with no assessment.
+   * verdict as scored (a seeded day's by today's rules, KV-103), its words in
+   * today's wording, and a drift line when today's scorer would say something
+   * different. Null for a real check-in with no assessment.
    */
   presentation: Presentation | null
 }): React.JSX.Element {
-  const { assessment, vitals, capturedAt, seeded } = session
-  const flag = assessment?.flag ?? 'insufficient-signal'
+  const { vitals, capturedAt, seeded } = session
+  const flag = presentation?.flag ?? 'insufficient-signal'
   // Composed from the stored counts, not read out of the summary: it appears
   // only where something on this card actually leans on the baseline (KV-53),
   // and not on a seeded card, whose own label already says so (KV-103).

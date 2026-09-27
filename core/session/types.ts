@@ -4,6 +4,8 @@
  * TypeScript so the rules can be unit-tested without a window or a camera.
  */
 
+import type { UnusableReason } from './usable'
+
 /**
  * Vitals from a single SmartSpectra measurement, flattened from the SDK's
  * time-series into the summary values a check-in actually stores.
@@ -161,7 +163,22 @@ export interface Assessment {
    * scored before KV-87, and that reads as unknown, not as "none".
    */
   uncomparedMetrics?: UncomparedMetric[]
+  /**
+   * Why an `insufficient-signal` verdict was withheld (KV-138 review): the
+   * capture could not be used, the baseline was still learning, or a measured
+   * metric had no usual. Stored so the card's sentence is composed from a fact
+   * rather than re-decided by today's predicates — which, asked again, can give
+   * a different reason under the same flag, and a card would state a reason it
+   * was never given.
+   *
+   * Absent on any other verdict, and on one scored before this existed; for
+   * those the reason is recovered from the stored summary where it can be.
+   */
+  withheld?: WithheldReason
 }
+
+/** What withheld a verdict: see `Assessment.withheld`. */
+export type WithheldReason = UnusableReason | 'still-learning' | 'uncompared'
 
 export interface SessionRecord {
   id: string

@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
-import { DEMO_PERSON_ID, DEMO_PERSON_NAME, withSeededVerdicts } from '@core/seed/persona'
+import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
 import { hasScorableVitals, presentAll } from '@core/scoring'
 import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
 import {
@@ -240,12 +240,13 @@ export default function App(): React.JSX.Element {
     )
   }
 
-  // Seeded days are scored here, as they are shown, so the demo always shows the
-  // current scorer's verdict (KV-103). Real check-ins keep the one they were
-  // given, and their words are composed now (KV-138): see `present`.
-  const withVerdicts = sessions === null ? [] : withSeededVerdicts(sessions)
-  const shown = presentAll(withVerdicts)
-  const newest = [...withVerdicts].reverse()
+  // What each card says, composed as it is shown (KV-138): a real check-in
+  // keeps its verdict in today's words, and a seeded day is scored by today's
+  // rules (KV-103) — both inside `presentAll`. It rescores the whole history,
+  // so it runs when the check-ins change, not on every render: the capture
+  // screen's countdown alone re-renders once a second.
+  const shown = useMemo(() => presentAll(sessions ?? []), [sessions])
+  const newest = useMemo(() => [...(sessions ?? [])].reverse(), [sessions])
 
   /**
    * Started here, on the press, rather than inside the capture screen. Opening

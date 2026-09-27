@@ -46,7 +46,7 @@ function rng(seed: number): () => number {
  * does is drawn again.
  *
  * Below `ELEVATED_SEVERITY_THRESHOLD` (0.6) by a deliberate margin rather than
- * at it. Verdicts are computed when shown (`withSeededVerdicts`), but the redraw
+ * at it. Verdicts are computed when shown (`present`, KV-103), but the redraw
  * happens when the fortnight is seeded — so a demo seeded under today's scorer
  * is judged by every later one. At 0.6 the default fortnight kept a 0.03 margin
  * and a later weight change could turn a stored demo amber; at 0.5 every seeded
@@ -181,6 +181,10 @@ export function seedDemoHistory(
  *
  * Each seeded record is scored the way `submit` scores a real one — against the
  * records before it in time, never itself. Input order is kept.
+ *
+ * The dashboard gets the same verdicts from `presentAll`, which scores a seeded
+ * card itself so no caller has to run this first (KV-138 review);
+ * `tests/seed.test.ts` pins that the two agree.
  */
 export function withSeededVerdicts(records: readonly SessionRecord[]): SessionRecord[] {
   const byTime = [...records].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
