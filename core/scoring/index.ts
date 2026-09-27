@@ -243,7 +243,7 @@ export function scoreSession(
   session: SessionRecord,
   history: readonly SessionRecord[],
 ): Assessment {
-  const baseline = computeBaseline([...history])
+  const baseline = computeBaseline(history)
 
   // An unusable capture is reported as such rather than scored on the answers
   // alone — a flag that silently means "we only asked three questions" would
@@ -259,6 +259,7 @@ export function scoreSession(
       firedRules: [],
       baselineSessions: baseline.sessions,
       baselineSeededSessions: baseline.seededSessions,
+      baselineRefusedSessions: baseline.refusedSessions,
     })
   }
 
@@ -280,6 +281,7 @@ export function scoreSession(
       firedRules: fired,
       baselineSessions: baseline.sessions,
       baselineSeededSessions: baseline.seededSessions,
+      baselineRefusedSessions: baseline.refusedSessions,
     })
   }
 
@@ -296,6 +298,7 @@ export function scoreSession(
     firedRules: fired,
     baselineSessions: baseline.sessions,
     baselineSeededSessions: baseline.seededSessions,
+    baselineRefusedSessions: baseline.refusedSessions,
     uncomparedMetrics: uncompared,
   }
   return withSummary(
@@ -328,7 +331,9 @@ type AssessmentFacts = Omit<Assessment, 'summary' | 'flag' | 'withheld'> &
 function summaryOf(facts: AssessmentFacts): string {
   if (facts.flag !== 'insufficient-signal') return summarise(facts.flag, facts.firedRules, [])
   const { withheld } = facts
-  if (withheld === 'still-learning') return learningSummary(facts.baselineSessions)
+  if (withheld === 'still-learning') {
+    return learningSummary(facts.baselineSessions, facts.baselineRefusedSessions)
+  }
   if (withheld === 'uncompared') {
     return summarise('normal', facts.firedRules, facts.uncomparedMetrics ?? [])
   }
@@ -339,12 +344,43 @@ function withSummary(facts: AssessmentFacts): Assessment {
   return { ...facts, summary: summaryOf(facts) }
 }
 
-/** The still-learning sentence (KV-138). */
-function learningSummary(sessions: number): string {
-  return (
-    `Still learning their normal — ${sessions} of ` +
-    `${MIN_BASELINE_SESSIONS} check-ins needed before daily comparisons start.`
-  )
+/**
+ * The sentence for a check-in scored before there was enough history to
+ * compare it (KV-100).
+ *
+ * About that check-in, not about the person's progress. It is stored and shown
+ * under its date forever, and "…needed before daily comparisons start" was a
+ * live status: on a dashboard read newest first, it sat under every card that
+ * had since compared. Where the person is now belongs in one live place, the
+ * dashboard header (#17). "Then" dates the count to the check-in.
+ *
+ * When check-ins before it were refused, it says so: the count is of *usable*
+ * check-ins since KV-72, and a caregiver who has done six and is shown two
+ * should not have to connect that to four cards further down. Absent, the
+ * count of refusals is unknown, and nothing is said about it.
+ *
+ * Counted as check-ins, not "camera readings": a capture refused as
+ * `nothing-measured` had no reading at all. And "before this one", not
+ * "earlier" — the KV-93 guard bans the word, and the clause should not need a
+ * carve-out to pass it (KV-100 review).
+ */
+function learningSummary(sessions: number, refused: number | undefined): string {
+  const count = `Not yet enough history to compare this check-in (${usableThen(sessions)}).`
+  const note = refusalNote(refused)
+  if (note === null) return count
+  return `${count} ${capitalise(note)}, so ${refused === 1 ? 'it is' : 'they are'} not counted.`
+}
+
+function usableThen(sessions: number): string {
+  return `${sessions} of ${MIN_BASELINE_SESSIONS} usable check-ins then`
+}
+
+/** "2 check-ins before this one could not be used", or null when none were, or none are known. */
+function refusalNote(refused: number | undefined): string | null {
+  if (refused === undefined || refused === 0) return null
+  return refused === 1
+    ? '1 check-in before this one could not be used'
+    : `${refused} check-ins before this one could not be used`
 }
 
 /**
@@ -499,6 +535,8 @@ function withheldOf(stored: Assessment): Recovered | undefined {
   if (stored.withheld === 'uncompared') return gaps > 0 ? 'uncompared' : undefined
   if (stored.withheld !== undefined) return stored.withheld
   if (gaps > 0) return 'uncompared'
+  // Written from the scaffold until KV-138, which began storing `withheld`;
+  // only records from before KV-138 reach this line.
   if (stored.summary.startsWith('Still learning their normal — ')) return 'still-learning'
   if (stored.summary === SCAFFOLD_UNUSABLE) return 'unusable'
   return UNUSABLE_BEFORE_WITHHELD.get(stored.summary)
@@ -575,7 +613,14 @@ export function present(
     firedRules,
     uncomparedNote,
     drift: driftLine(
-      { flag: stored.flag, withheld, firedRules, summary, noteGaps: gaps ?? [] },
+      {
+        flag: stored.flag,
+        withheld,
+        firedRules,
+        summary,
+        noteGaps: gaps ?? [],
+        refusalsKnown: stored.baselineRefusedSessions !== undefined,
+      },
       rescored,
     ),
   }
@@ -590,6 +635,8 @@ interface Shown {
   summary: string
   /** The gaps the uncompared note under it names. */
   noteGaps: readonly UncomparedMetric[]
+  /** Whether the record stored its refusal count (KV-100); older ones did not. */
+  refusalsKnown: boolean
 }
 
 /**
@@ -614,10 +661,18 @@ function driftLine(shown: Shown, rescored: Assessment): string | null {
   // sentence is what would change, and the flag and the rule ids cannot see
   // it. A record that says only "unusable" differs only if today's reason is
   // not one — its sentence was never more specific than that.
+  //
+  // A record that did not store its refusal count composes without the
+  // clause, and the rescore always has it. So the unknown goes on both sides:
+  // compare against today's sentence without the clause too, or every such
+  // card with a refusal behind it drifts on the record's completeness rather
+  // than on the answer (KV-100 review). The line still quotes it in full.
+  const today =
+    shown.refusalsKnown || rescored.withheld !== 'still-learning'
+      ? rescored.summary
+      : learningSummary(rescored.baselineSessions, undefined)
   const reasonChanged =
-    shown.withheld === 'unusable'
-      ? !isUnusable(rescored.withheld)
-      : rescored.summary !== shown.summary
+    shown.withheld === 'unusable' ? !isUnusable(rescored.withheld) : today !== shown.summary
   if (shown.flag === 'insufficient-signal' && reasonChanged) {
     return `${prefix} say instead: “${rescored.summary}”`
   }
@@ -653,6 +708,15 @@ function driftReason(rescored: Assessment, noteGaps: readonly UncomparedMetric[]
     const below = metrics(gaps) === metrics(noteGaps) ? ' (below)' : ''
     const names = listOf(gaps.map((g) => METRIC_NAME[g.metric]))
     return `, because ${names} could not be compared with their usual${below}`
+  }
+  if (rescored.withheld === 'still-learning') {
+    // Its own clause, like the one above: the summary is two sentences when
+    // check-ins were refused, and would not splice in after a colon.
+    const note = refusalNote(rescored.baselineRefusedSessions)
+    return (
+      ', because there was not yet enough history to compare it ' +
+      `(${usableThen(rescored.baselineSessions)}${note === null ? '' : `; ${note}`})`
+    )
   }
   const why = rescored.summary.replace(/\.$/, '')
   return `: ${why.charAt(0).toLowerCase()}${why.slice(1)}`
