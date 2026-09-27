@@ -399,42 +399,52 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   bump catches up (see the comment in `dependabot.yml`).
 - **A green Dependabot PR has not been run.** CI never launches Electron, and Dependabot
   PRs skip the template's *Ran the app* box. **An Electron bump is always launched before
-  merging** (KV-145). How much more it needs depends on whether the Node and Chromium it
-  vendors moved — not on whether Electron changed, which a patch always does. Compare
-  `node_version` and `chromium_version` in Electron's `DEPS` at the old and new tag
-  (`https://github.com/electron/electron/blob/v<version>/DEPS`):
-  - **Both unchanged**: launch the PR **with no API key**, against an empty scratch store.
-    `--user-data-dir` moves only the store: the key comes from `.env`, which is loaded
-    from the working directory, so a launch from your own checkout finds it and *Take a
-    reading* starts a real capture. Run from a separate worktree instead — `.env` is
-    untracked, so a worktree has none:
+  merging** (KV-145). Launch it from a separate worktree: the key comes from `.env`, which
+  is loaded from the working directory and is untracked, so a worktree has none, and
+  `--user-data-dir` moves only the store — a launch from your own checkout would find the
+  key, and *Take a reading* would start a real capture.
 
-    ```bash
-    git fetch origin pull/<PR number>/head:check-<PR number>
-    git worktree add ../kinvue-check check-<PR number>
-    cd ../kinvue-check
-    npm ci
-    npx electron --version
-    npm run dev -- -- --user-data-dir="<a scratch folder>"
-    ```
+  ```bash
+  git fetch origin pull/<PR number>/head:check-<PR number>
+  git worktree add ../kinvue-check check-<PR number>
+  cd ../kinvue-check
+  npm ci
+  npx electron --version
+  ELECTRON_RUN_AS_NODE=1 npx electron -p "[process.versions.node, process.versions.chrome].join(' ')"
+  npm run dev -- -- --user-data-dir="<a scratch folder>"
+  ```
 
-    `npx electron --version` fetches the Electron binary, which this version downloads on
-    first use rather than at install; without it the launch fails with "Electron
-    uninstall". Afterwards, `git worktree remove ../kinvue-check`, `git branch -D
-    check-<PR number>`, and delete the scratch folder.
+  `npx electron --version` fetches the Electron binary, which this version downloads on
+  first use rather than at install; without it the launch fails with "Electron
+  uninstall". The next line prints the Node and Chromium that binary vendors — read from
+  the artifact that ships, not from the build recipe (review of #153). Run it in your own
+  checkout too, for the version being replaced. Electron's `DEPS` at the two tags
+  (`https://github.com/electron/electron/blob/v<version>/DEPS`, `node_version` and
+  `chromium_version`) should agree, and is a cross-check before installing anything.
 
-    Check that the window appears on its own and already drawn; that the SDK's native
-    runtime loaded (the main bundle loads it at startup, so the window appearing is the
-    proof); that *Seed demo history* renders; and that *Take a reading* reaches **"This
-    app is not set up yet"**. Put the two `DEPS` versions in the PR.
+  **If the Node is not `TYPES_NODE_MAJOR`.`TYPES_NODE_MINOR` in `tests/pins.test.ts`, close
+  the PR** and replace it with a hand-written one carrying the bump and the new constants
+  together (KV-159): nothing may be pushed to a Dependabot PR, and merged as it is the
+  constants go stale with nothing failing.
+
+  How much more the launch needs depends on whether that Node and Chromium moved — not on
+  whether Electron changed, which a patch always does:
+  - **Both unchanged**: the launch above, **with no API key**, against an empty scratch
+    store. Check that the window appears on its own and already drawn; that the SDK's
+    native runtime loaded (the main bundle loads it at startup, so the window appearing
+    is the proof); that *Seed demo history* renders; and that *Take a reading* reaches
+    **"This app is not set up yet"**. Put both versions, old and new, in the PR.
   - **Either changed, or a minor or major release**: all of that, **plus a real capture**
     with a key. A launch proves the SDK loads; only a capture calls into it and carries
     frames through to the preview the renderer draws.
 
+  Afterwards, `git worktree remove ../kinvue-check`, `git branch -D check-<PR number>`,
+  and delete the scratch folder.
+
   An SDK bump always needs a real capture, checked for new network behaviour against the
   privacy claims above, whatever the version. Why each level is enough, and what would
   make the lighter one stop being enough, is in `ARCHITECTURE.md`. KV-127 would automate
-  the `DEPS` comparison.
+  the comparison.
 
   A Dependabot bump that raises a dependency's Node floor fails `tests/pins.test.ts`,
   which holds `engines.node` exactly equal to what the toolchain supports. It cannot be

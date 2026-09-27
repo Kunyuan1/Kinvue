@@ -132,11 +132,22 @@ describe('the declared Node range (KV-134)', () => {
  * restores the #117/#143 proposals with nothing failing. So both halves are
  * checked here, by reading the files as text.
  *
- * `TYPES_NODE_MAJOR` and `TYPES_NODE_MINOR` are the Node Electron vendors —
- * 24.21 on Electron 44.4.5, from its `DEPS` `node_version`. That cannot be read
- * locally (`node_modules/electron` does not record its Node), so it is stated
- * here and changed by hand with the Electron bump that moves it; KV-127 would
- * derive it.
+ * `TYPES_NODE_MAJOR` and `TYPES_NODE_MINOR` are the Node the pinned Electron
+ * vendors, and this is the one place it is written down: prose elsewhere points
+ * here rather than naming an Electron version it cannot keep current (review
+ * of #153). Package metadata does not record it — `node_modules/electron` has
+ * no Node version, and no binary until first use — so a unit test cannot read
+ * it, and CI would have to fetch the binary (KV-127). The binary can, though,
+ * and README's Electron-bump launch reads it there and compares it with these.
+ *
+ * **When an Electron bump moves that Node, the Dependabot PR carrying it cannot
+ * update these** — nothing may be pushed to one (CLAUDE.md). Close it and open
+ * a hand-written PR with the bump and the new constants together, as #119 was
+ * replaced by KV-148 for `engines.node`. Merging it as it is leaves the ceiling
+ * too low (types held back for nothing) and this comment wrong. The same goes
+ * when an Electron release raises the floor of its own `@types/node` range
+ * past the ceiling: the hoisted copy this reads then fails the test below, and
+ * that PR is red and cannot be fixed in place.
  *
  * The minor is the ceiling with a runtime failure behind it (KV-159, review of
  * #152): types a minor ahead of Electron's Node let main-process code compile
