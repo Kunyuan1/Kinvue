@@ -395,8 +395,11 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   Electron, `@smartspectra/*` and `@types/node` each arrive in their own PR — except
   `@types/node` majors, which never arrive: it is held to the Node major Electron ships and
   moved by hand, and a minor past the one Electron vendors fails `tests/pins.test.ts`
-  (KV-159). Close that PR with `@dependabot ignore this minor version` until an Electron
-  bump catches up (see the comment in `dependabot.yml`).
+  (KV-159). Close the minor PR with `@dependabot ignore this minor version` until an
+  Electron bump catches up. That ignore is permanent, so when `TYPES_NODE_MINOR` moves,
+  comment `@dependabot unignore @types/node`; `@dependabot show @types/node ignore
+  conditions` lists what is held back, when a bump never arrives (see the comment in
+  `dependabot.yml`).
 - **A green Dependabot PR has not been run.** CI never launches Electron, and Dependabot
   PRs skip the template's *Ran the app* box. **An Electron bump is always launched before
   merging** (KV-145). Launch it from a separate worktree: the key comes from `.env`, which
@@ -414,6 +417,12 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   npm run dev -- -- --user-data-dir="<a scratch folder>"
   ```
 
+  The block is bash. In PowerShell, the version line is:
+
+  ```powershell
+  $env:ELECTRON_RUN_AS_NODE = '1'; npx electron -p "[process.versions.node, process.versions.chrome].join(' ')"; Remove-Item Env:ELECTRON_RUN_AS_NODE
+  ```
+
   `npx electron --version` fetches the Electron binary, which this version downloads on
   first use rather than at install; without it the launch fails with "Electron
   uninstall". The next line prints the Node and Chromium that binary vendors — read from
@@ -424,8 +433,10 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
 
   **If the Node is not `TYPES_NODE_MAJOR`.`TYPES_NODE_MINOR` in `tests/pins.test.ts`, close
   the PR** and replace it with a hand-written one carrying the bump and the new constants
-  together (KV-159): nothing may be pushed to a Dependabot PR, and merged as it is the
-  constants go stale with nothing failing.
+  together, `TYPES_NODE_READ_FROM` included (KV-159): nothing may be pushed to a Dependabot
+  PR, and merged as it is the constants go stale with nothing failing. A test fails on its
+  own when Electron's declared `@types/node` floor passes the ceiling; a Node that moved
+  under it is caught only here.
 
   How much more the launch needs depends on whether that Node and Chromium moved — not on
   whether Electron changed, which a patch always does:
