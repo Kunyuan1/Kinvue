@@ -15,23 +15,38 @@ updates:
     versioning-strategy: increase
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    # Four kinds of PR stand open on their own — the group, Electron, the SDK and
+    # `@types/node` — before any major. Past the limit Dependabot opens nothing
+    # more and says nothing, and the one dropped could be the Electron patch
+    # README says to launch (review of #160).
+    open-pull-requests-limit: 8
     ignore:
       # `@types/node` is held to the Node major Electron ships (24 on Electron
       # 44), not the newest Node. Types a major ahead would let code compile
       # against APIs that no runtime here has, and CI stays green until
       # something uses one. So no major bumps: move it by hand when an Electron
-      # bump moves its Node major (its `DEPS` `node_version`, see README), and
-      # with it `TYPES_NODE_MAJOR` in tests/pins.test.ts, which checks both.
+      # bump moves its Node major (read from its binary, see README), and with
+      # it `TYPES_NODE_MAJOR` in tests/pins.test.ts, which checks both.
       #
       # What this does *not* buy (review of #150):
       # - **Node 22.** `engines.node` also claims 22, and `core/` runs there
       #   too, so 24's types still let a 24-only API through; only code the
       #   tests run is checked on 22, by the Node 22 CI job.
       # - **Minor drift.** A types minor tracks a Node minor, and minors still
-      #   arrive, grouped. Once `@types/node` passes the minor Electron vendors
-      #   (24.21 on 44.4.4), main-process code can typecheck against an API
-      #   Electron's Node lacks. Read that group's `@types/node` line.
+      #   arrive. Once `@types/node` passes the minor Electron vendors,
+      #   main-process code can typecheck against an API Electron's Node lacks,
+      #   and the packaged app throws. `TYPES_NODE_MINOR` in tests/pins.test.ts
+      #   — the one place that Node version is written down — fails that PR
+      #   (KV-159); it arrives alone, outside the group below, so close it with
+      #   `@dependabot ignore this minor version` until an Electron bump
+      #   catches up.
+      #
+      #   That ignore is permanent (review of #160): once the ceiling rises to
+      #   that minor, it is the one version Dependabot will never propose. When
+      #   `TYPES_NODE_MINOR` moves, comment `@dependabot unignore @types/node`
+      #   on any Dependabot PR. `@dependabot show @types/node ignore
+      #   conditions` lists what is held back — the place to look when a bump
+      #   never arrives.
       #
       # Closing a PR for one major only silences that major, which is why a
       # rule and not a closed PR: 25 was proposed after 26 was closed.
@@ -63,9 +78,15 @@ updates:
       # against, nor the SDK's network behaviour. A bundler or plugin minor
       # changes build output the build and tests do check. That is the line —
       # do not pin package by package past it, or reach for `save-exact`.
+      #
+      # `@types/node` is on the same side of it, and is left out too (KV-159,
+      # review of #152): its ceiling *is* Electron's Node version. It stays a
+      # caret range — the test holds it under that minor — but it arrives alone,
+      # so a bump past the ceiling turns only its own PR red and never holds up
+      # the rest of the group.
       minor-and-patch:
         update-types: ["minor", "patch"]
-        exclude-patterns: ["electron", "@smartspectra/*"]
+        exclude-patterns: ["electron", "@smartspectra/*", "@types/node"]
 
   - package-ecosystem: github-actions
     directory: /

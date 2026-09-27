@@ -132,25 +132,98 @@ describe('the declared Node range (KV-134)', () => {
  * restores the #117/#143 proposals with nothing failing. So both halves are
  * checked here, by reading the files as text.
  *
- * `TYPES_NODE_MAJOR` is the Node major Electron vendors — 24 on Electron 44,
- * from its `DEPS` `node_version`. That cannot be read locally
- * (`node_modules/electron` does not record its Node), so it is stated here and
- * changed by hand with an Electron bump that moves it; KV-127 would derive it.
+ * `TYPES_NODE_MAJOR` and `TYPES_NODE_MINOR` are the Node the pinned Electron
+ * vendors, and `TYPES_NODE_READ_FROM` is the Electron whose binary they were
+ * read from — the one place either is written down, so prose elsewhere points
+ * here (review of #153), and a reader can always tell which Electron the
+ * ceiling describes (review of #160). Package metadata does not record the
+ * Node — `node_modules/electron` has no Node version, and no binary until
+ * first use — so a unit test cannot read it, and CI would have to fetch the
+ * binary (KV-127). The binary can, and README's Electron-bump launch reads it
+ * there and compares it with these.
+ *
+ * `TYPES_NODE_READ_FROM` is recorded, not asserted equal to the pin. It stays
+ * true when a later Electron leaves the Node where it was — these were read
+ * from that binary — and changes only with them, in the hand-written PR that
+ * replaces a bump that moved it. Asserting
+ * it would turn every Electron Dependabot PR red, security patches included,
+ * each to be closed and replaced by hand — the delay `dependabot.yml` keeps
+ * Electron out of the group to avoid. Decided by the owner in review of #160:
+ * the record, and the derived check below, which does fail in CI.
+ *
+ * **When an Electron bump moves that Node, the Dependabot PR carrying it cannot
+ * update these** — nothing may be pushed to one (CLAUDE.md). Close it and open
+ * a hand-written PR with the bump and the new constants together, as #119 was
+ * replaced by KV-148 for `engines.node`. Merging it as it is leaves the ceiling
+ * too low (types held back for nothing) and this comment wrong. The same goes
+ * when an Electron release raises the floor of its own `@types/node` range
+ * past the ceiling, which the test below reports directly.
+ *
+ * **The minor is a proxy for the risk, not a bound on it** (review of #160).
+ * The risk is main-process code compiling against a Node API the packaged app
+ * lacks, while CI passes on Node 22 and 24 alike (KV-159, review of #152).
+ * `@types/node`'s minor is DefinitelyTyped's release number, not Node's: it
+ * skips minors (24.13 was followed by 24.19), and a type for an API from a
+ * later Node could land in a patch under the ceiling and pass. It holds back
+ * the common case cheaply, and that is all it claims. The floor of the safe
+ * band — the types' minor under `engines.node`'s Node 24 floor — is not
+ * asserted: it fails closed, since an API the types lack fails `npm run
+ * typecheck`.
  */
 const TYPES_NODE_MAJOR = 24
+const TYPES_NODE_MINOR = 21
+const TYPES_NODE_READ_FROM = '44.4.5'
 
-describe('@types/node follows Electron’s Node major (review of #150)', () => {
+/** A version the lockfile or manifest must hold; failing loudly, never defaulting to one that passes. */
+function required(value: string | undefined, what: string): string {
+  expect(value, `${what} is missing`).toBeTypeOf('string')
+  return value ?? ''
+}
+
+describe('@types/node follows Electron’s Node (review of #150, KV-159)', () => {
+  const ceiling = `<=${TYPES_NODE_MAJOR}.${TYPES_NODE_MINOR}.x`
+  const dependabot = (): string => readFileSync('.github/dependabot.yml', 'utf8')
+
   it('declares and installs that major', () => {
-    const declared = (pkg.devDependencies as Deps)['@types/node']
-    expect(semver.minVersion(declared ?? '')?.major).toBe(TYPES_NODE_MAJOR)
-    expect(semver.major(installed['node_modules/@types/node']?.version ?? '0.0.0')).toBe(
-      TYPES_NODE_MAJOR,
-    )
+    const declared = required((pkg.devDependencies as Deps)['@types/node'], 'declared @types/node')
+    const version = required(installed['node_modules/@types/node']?.version, 'installed @types/node')
+    expect(semver.minVersion(declared)?.major).toBe(TYPES_NODE_MAJOR)
+    expect(semver.major(version)).toBe(TYPES_NODE_MAJOR)
+  })
+
+  it('declares and installs no later minor than Electron’s Node (KV-159)', () => {
+    const declared = required((pkg.devDependencies as Deps)['@types/node'], 'declared @types/node')
+    const floor = required(semver.minVersion(declared)?.version, `the floor of ${declared}`)
+    const version = required(installed['node_modules/@types/node']?.version, 'installed @types/node')
+    // `x.y.*` rather than `<=x.y.0`: a types patch within the vendored minor is fine.
+    expect(semver.satisfies(floor, ceiling), `declared ${declared}`).toBe(true)
+    expect(semver.satisfies(version, ceiling), `installed ${version}`).toBe(true)
+  })
+
+  it('sits over the @types/node floor Electron itself declares (review of #160)', () => {
+    // Electron's own `@types/node` range is a lower bound on the Node it
+    // vendors, and unlike the binary it is in the lockfile, so CI can read it.
+    // A ceiling under it means these constants are stale: an Electron bump
+    // raised its Node, and the PR that carried it should have been replaced.
+    const electron = lock.packages['node_modules/electron'] as { dependencies?: Deps }
+    const range = required(electron.dependencies?.['@types/node'], 'electron’s @types/node')
+    const floor = required(semver.minVersion(range)?.version, `the floor of ${range}`)
+    expect(semver.satisfies(floor, ceiling), `electron needs ${range}`).toBe(true)
+  })
+
+  it('records the Electron it was read from as a version, never a range', () => {
+    expect(semver.valid(TYPES_NODE_READ_FROM)).toBe(TYPES_NODE_READ_FROM)
+  })
+
+  it('arrives alone, so a bump past the ceiling holds up nothing else (KV-159)', () => {
+    // Anchored to the group it must be excluded from: the first
+    // `exclude-patterns` in the file could belong to another group (review of #160).
+    const excluded = /minor-and-patch:[\s\S]*?exclude-patterns: \[([^\]]*)\]/.exec(dependabot())
+    expect(required(excluded?.[1], 'minor-and-patch exclude-patterns')).toContain('"@types/node"')
   })
 
   it('keeps Dependabot from proposing a later major', () => {
-    const config = readFileSync('.github/dependabot.yml', 'utf8')
-    expect(config).toMatch(
+    expect(dependabot()).toMatch(
       /- dependency-name: "@types\/node"\s*\n\s*update-types: \["version-update:semver-major"\]/,
     )
   })

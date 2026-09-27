@@ -568,10 +568,11 @@ nothing else: the capture and its guidance carry on.
 ### How much to check before merging an Electron bump (KV-145)
 
 CI never launches Electron, so a green Electron bump proves nothing about the app. Every
-one is launched before merging, and a real capture is added only when Electron's `DEPS`
-show its vendored Node or Chromium moved, or on a minor or major release. The full check
-is expensive enough that doing it on every patch would get it skipped on the one that
-mattered. Why each level is enough:
+one is launched before merging, and a real capture is added only when its vendored Node
+or Chromium moved — read from the installed binary, the artifact that ships, with `DEPS`
+at the two tags as a cross-check (review of #153) — or on a minor or major release. The
+full check is expensive enough that doing it on every patch would get it skipped on the
+one that mattered. Why each level is enough:
 
 - **A launch proves the SDK *loads*.** `app/main/index.ts` statically imports `./vitals`,
   which statically imports `@smartspectra/node-sdk`, whose import loads the native runtime
