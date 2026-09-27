@@ -29,9 +29,12 @@ updates:
       #   too, so 24's types still let a 24-only API through; only code the
       #   tests run is checked on 22, by the Node 22 CI job.
       # - **Minor drift.** A types minor tracks a Node minor, and minors still
-      #   arrive, grouped. Once `@types/node` passes the minor Electron vendors
-      #   (24.21 on 44.4.4), main-process code can typecheck against an API
-      #   Electron's Node lacks. Read that group's `@types/node` line.
+      #   arrive. Once `@types/node` passes the minor Electron vendors (24.21 on
+      #   44.4.5), main-process code can typecheck against an API Electron's
+      #   Node lacks, and the packaged app throws. `TYPES_NODE_MINOR` in
+      #   tests/pins.test.ts fails that PR (KV-159); it arrives alone, outside
+      #   the group below, so close it with `@dependabot ignore this minor
+      #   version` until an Electron bump catches up.
       #
       # Closing a PR for one major only silences that major, which is why a
       # rule and not a closed PR: 25 was proposed after 26 was closed.
@@ -63,9 +66,15 @@ updates:
       # against, nor the SDK's network behaviour. A bundler or plugin minor
       # changes build output the build and tests do check. That is the line —
       # do not pin package by package past it, or reach for `save-exact`.
+      #
+      # `@types/node` is on the same side of it, and is left out too (KV-159,
+      # review of #152): its ceiling *is* Electron's Node version. It stays a
+      # caret range — the test holds it under that minor — but it arrives alone,
+      # so a bump past the ceiling turns only its own PR red and never holds up
+      # the rest of the group.
       minor-and-patch:
         update-types: ["minor", "patch"]
-        exclude-patterns: ["electron", "@smartspectra/*"]
+        exclude-patterns: ["electron", "@smartspectra/*", "@types/node"]
 
   - package-ecosystem: github-actions
     directory: /

@@ -392,9 +392,11 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
 - **Dependabot** (`.github/dependabot.yml`) opens dependency PRs — weekly for npm, with
   minor and patch bumps grouped into one. They are the one exception to the ticket,
   branch-naming and PR-title rules: no KV number and no `Closes` line. Major versions,
-  Electron and `@smartspectra/*` each arrive in their own PR — except `@types/node`
-  majors, which never arrive: it is held to the Node major Electron ships and moved by
-  hand (see the comment in `dependabot.yml`).
+  Electron, `@smartspectra/*` and `@types/node` each arrive in their own PR — except
+  `@types/node` majors, which never arrive: it is held to the Node major Electron ships and
+  moved by hand, and a minor past the one Electron vendors fails `tests/pins.test.ts`
+  (KV-159). Close that PR with `@dependabot ignore this minor version` until an Electron
+  bump catches up (see the comment in `dependabot.yml`).
 - **A green Dependabot PR has not been run.** CI never launches Electron, and Dependabot
   PRs skip the template's *Ran the app* box. **An Electron bump is always launched before
   merging** (KV-145). How much more it needs depends on whether the Node and Chromium it

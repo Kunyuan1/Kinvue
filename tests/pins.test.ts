@@ -132,12 +132,21 @@ describe('the declared Node range (KV-134)', () => {
  * restores the #117/#143 proposals with nothing failing. So both halves are
  * checked here, by reading the files as text.
  *
- * `TYPES_NODE_MAJOR` is the Node major Electron vendors — 24 on Electron 44,
- * from its `DEPS` `node_version`. That cannot be read locally
- * (`node_modules/electron` does not record its Node), so it is stated here and
- * changed by hand with an Electron bump that moves it; KV-127 would derive it.
+ * `TYPES_NODE_MAJOR` and `TYPES_NODE_MINOR` are the Node Electron vendors —
+ * 24.21 on Electron 44.4.5, from its `DEPS` `node_version`. That cannot be read
+ * locally (`node_modules/electron` does not record its Node), so it is stated
+ * here and changed by hand with the Electron bump that moves it; KV-127 would
+ * derive it.
+ *
+ * The minor is the ceiling with a runtime failure behind it (KV-159, review of
+ * #152): types a minor ahead of Electron's Node let main-process code compile
+ * against an API the packaged app does not have, and CI passes on Node 22 and
+ * 24 alike. The floor of the safe band — the types' minor under `engines.node`'s
+ * Node 24 floor — is not asserted: it fails closed, since an API the types lack
+ * fails `npm run typecheck`.
  */
 const TYPES_NODE_MAJOR = 24
+const TYPES_NODE_MINOR = 21
 
 describe('@types/node follows Electron’s Node major (review of #150)', () => {
   it('declares and installs that major', () => {
@@ -146,6 +155,22 @@ describe('@types/node follows Electron’s Node major (review of #150)', () => {
     expect(semver.major(installed['node_modules/@types/node']?.version ?? '0.0.0')).toBe(
       TYPES_NODE_MAJOR,
     )
+  })
+
+  it('declares and installs no later minor than Electron’s Node (KV-159)', () => {
+    const ceiling = `${TYPES_NODE_MAJOR}.${TYPES_NODE_MINOR}`
+    const declared = (pkg.devDependencies as Deps)['@types/node'] ?? ''
+    const floor = semver.minVersion(declared)?.version ?? '0.0.0'
+    const version = installed['node_modules/@types/node']?.version ?? '0.0.0'
+    // `x.y.*` rather than `<=x.y.0`: a types patch within the vendored minor is fine.
+    expect(semver.satisfies(floor, `<=${ceiling}.x`), `declared ${declared}`).toBe(true)
+    expect(semver.satisfies(version, `<=${ceiling}.x`), `installed ${version}`).toBe(true)
+  })
+
+  it('arrives alone, so a bump past the ceiling holds up nothing else (KV-159)', () => {
+    const config = readFileSync('.github/dependabot.yml', 'utf8')
+    const excluded = /exclude-patterns: \[([^\]]*)\]/.exec(config)?.[1] ?? ''
+    expect(excluded).toContain('"@types/node"')
   })
 
   it('keeps Dependabot from proposing a later major', () => {
