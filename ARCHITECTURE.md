@@ -341,6 +341,24 @@ Its drift line treats the count as unknown too — it compares against today's s
 without the refusal clause — so a record's missing field is never reported as the scorer
 answering differently.
 
+### Where the baseline is now: one live line, and a label of its own (KV-17)
+
+A real person checking in twice a week waits over a week for three usable check-ins, and
+until then the dashboard said only "Not enough to say" — the same words as a capture the
+camera could not use. Decided by the owner:
+
+- **One live line at the top while the baseline is learning** — *"Still learning
+  Margaret's usual — 2 of 3 usable check-ins so far."* — computed from the history as it
+  is now (`learningStatus`), so it is never stale and it goes away once comparisons start.
+  It is the one place that says where the person *is*; every card says only what its own
+  check-in had (KV-100). It also answers the live half of KV-100's question, when some
+  check-ins could not be used: *"4 check-ins could not be used, so they are not counted."*
+- **A card withheld because the baseline was learning is labelled "Still learning"**, not
+  "Not enough to say", which now means only that the check-in itself could not be used.
+  The label comes from the stored reason (KV-138's `withheld`, or an older record's
+  summary); a card whose reason cannot be recovered keeps "Not enough to say". The drift
+  line quotes the same labels.
+
 ---
 
 ## Why the answers may raise a flag on their own

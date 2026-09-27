@@ -4,6 +4,7 @@ import {
   ELEVATED_SEVERITY_THRESHOLD,
   hasScorableVitals,
   MIN_CAPTURE_SECONDS,
+  learningStatus,
   present,
   presentAll,
   scoreSession,
@@ -1553,13 +1554,13 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
     // Stored normal on a thin history that an older scorer compared anyway.
     const shown = present({ ...session(), assessment: stored({}) }, history(1))
     expect(shown?.drift).toBe(
-      'Scored again now, it would read “Not enough to say”, because there was not yet enough ' +
+      'Scored again now, it would read “Still learning”, because there was not yet enough ' +
         'history to compare it (1 of 3 usable check-ins then).',
     )
     // With refusals behind it, still one sentence (KV-100 review, finding 2).
     const refused = present({ ...session(), assessment: stored({}) }, [...refusedCaptures(2), ...history(1)])
     expect(refused?.drift).toBe(
-      'Scored again now, it would read “Not enough to say”, because there was not yet enough ' +
+      'Scored again now, it would read “Still learning”, because there was not yet enough ' +
         'history to compare it (1 of 3 usable check-ins then; 2 check-ins before this one could ' +
         'not be used).',
     )
@@ -1612,7 +1613,30 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
     ])
     // Scored against the later card too, it would say 1 of 3, and drift.
     expect(shown.get('early')?.drift).toBeNull()
-    expect(shown.get('later')?.drift).toMatch(/Not enough to say/)
+    expect(shown.get('later')?.drift).toMatch(/would read “Still learning”/)
+  })
+
+  it('labels a card withheld while learning "Still learning", apart from an unusable one (KV-17)', () => {
+    const learning = { ...session(), assessment: scoreSession(session(), history(1)) }
+    expect(present(learning, history(1))?.label).toBe('Still learning')
+    const unusable = { ...session({ vitals: { confidence: 0.2 } }), assessment: scoreSession(session({ vitals: { confidence: 0.2 } }), history(5)) }
+    expect(present(unusable, history(5))?.label).toBe('Not enough to say')
+    // Recovered from an older record's summary, too.
+    const old = {
+      ...session(),
+      assessment: stored({
+        flag: 'insufficient-signal',
+        baselineSessions: 1,
+        summary: 'Still learning their normal — 1 of 3 check-ins needed before daily comparisons start.',
+      }),
+    }
+    expect(present(old, history(1))?.label).toBe('Still learning')
+    // A reason that cannot be recovered keeps the flag's own label.
+    const unknown = { ...session(), assessment: stored({ flag: 'insufficient-signal', summary: 'x' }) }
+    expect(present(unknown, history(5))?.label).toBe('Not enough to say')
+    expect(present({ ...session(), assessment: scoreSession(session(), history(5)) }, history(5))?.label).toBe(
+      'Looks normal',
+    )
   })
 
   it('scores each card in presentAll against its own person’s check-ins only', () => {
@@ -1633,5 +1657,39 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
     expect(card?.summary).toBe('A normal day for them.')
     // A real check-in with no verdict is still nothing to show.
     expect(presentAll([{ ...at('real', 20), assessment: undefined }]).get('real')).toBeUndefined()
+  })
+})
+
+describe('learningStatus: where the baseline is now (KV-17)', () => {
+  it('says how far the baseline has to go, counting the history as it is now', () => {
+    expect(learningStatus(history(2), 'test-person', 'Margaret')).toBe(
+      'Still learning Margaret’s usual — 2 of 3 usable check-ins so far.',
+    )
+    expect(learningStatus([], 'test-person', 'Margaret')).toBe(
+      'Still learning Margaret’s usual — 0 of 3 usable check-ins so far.',
+    )
+  })
+
+  it('says why the count is lower than the check-ins done', () => {
+    expect(learningStatus([...refusedCaptures(4), ...history(2)], 'test-person', 'Margaret')).toBe(
+      'Still learning Margaret’s usual — 2 of 3 usable check-ins so far. 4 check-ins could not ' +
+        'be used, so they are not counted.',
+    )
+    expect(learningStatus([...refusedCaptures(1), ...history(1)], 'test-person', 'Margaret')).toBe(
+      'Still learning Margaret’s usual — 1 of 3 usable check-ins so far. 1 check-in could not ' +
+        'be used, so it is not counted.',
+    )
+  })
+
+  it('goes away once comparisons start, and counts only this person', () => {
+    expect(learningStatus(history(MIN_BASELINE_SESSIONS), 'test-person', 'Margaret')).toBeNull()
+    const others = history(5).map((r) => ({ ...r, personId: 'someone-else' }))
+    expect(learningStatus([...others, ...history(1)], 'test-person', 'Margaret')).toMatch(/1 of 3/)
+  })
+
+  it('says nothing relative to now', () => {
+    for (const records of [history(1), [...refusedCaptures(3), ...history(2)]]) {
+      expect(learningStatus(records, 'test-person', 'Margaret')).not.toMatch(RELATIVE_TIME)
+    }
   })
 })

@@ -385,12 +385,56 @@ function refusalNote(refused: number | undefined): string | null {
 
 /**
  * What the card's label says for each verdict. Here rather than in the card so
- * the drift line quotes the label a caregiver actually sees (KV-138).
+ * the drift line quotes the label a caregiver actually sees (KV-138); a card
+ * shows `Presentation.label`, which differs for a baseline still learning.
  */
 export const FLAG_LABEL: Record<Flag, string> = {
   normal: 'Looks normal',
   elevated: 'Looks different',
   'insufficient-signal': 'Not enough to say',
+}
+
+/**
+ * The label a card shows: its verdict's, except that a verdict withheld while
+ * the baseline was still learning says so (KV-17). "Not enough to say" was
+ * shared with a capture the camera could not use, and the two mean different
+ * things to a caregiver — one is the app still getting to know them, the other
+ * a check-in that did not work. A record whose reason cannot be recovered keeps
+ * the flag's own label.
+ */
+function labelOf(flag: Flag, withheld: Recovered | undefined): string {
+  return flag === 'insufficient-signal' && withheld === 'still-learning'
+    ? 'Still learning'
+    : FLAG_LABEL[flag]
+}
+
+/**
+ * The dashboard's one live line while a person's baseline is still learning,
+ * or null once comparisons have started (KV-17): "Still learning Margaret's
+ * usual — 2 of 3 usable check-ins so far."
+ *
+ * Computed from the history as it is now, so it is never stale — the card
+ * sentence (`learningSummary`) is frozen with its check-in and says what *it*
+ * had, and this is the one place that says where the person is. It answers the
+ * live question KV-100 left here, too: why the count is lower than the
+ * check-ins done, when some could not be used. `records` is everyone's; only
+ * this person's are counted.
+ */
+export function learningStatus(
+  records: readonly SessionRecord[],
+  personId: string,
+  name: string,
+): string | null {
+  const baseline = computeBaseline(records.filter((r) => r.personId === personId))
+  if (baseline.sessions >= MIN_BASELINE_SESSIONS) return null
+  const line =
+    `Still learning ${name}’s usual — ${baseline.sessions} of ${MIN_BASELINE_SESSIONS} ` +
+    'usable check-ins so far.'
+  const refused = baseline.refusedSessions
+  if (refused === 0) return line
+  return refused === 1
+    ? `${line} 1 check-in could not be used, so it is not counted.`
+    : `${line} ${refused} check-ins could not be used, so they are not counted.`
 }
 
 /** What a card shows for an assessment, composed now rather than read as stored. */
@@ -400,6 +444,8 @@ export interface Presentation {
    * today's rules give it (KV-103).
    */
   flag: Flag
+  /** What the card's label says for it: see `labelOf`. */
+  label: string
   summary: string
   /** Each fired rule as stored, its words brought up to date where they can be. */
   firedRules: FiredRule[]
@@ -609,6 +655,7 @@ export function present(
 
   return {
     flag: stored.flag,
+    label: labelOf(stored.flag, withheld),
     summary,
     firedRules,
     uncomparedNote,
@@ -655,7 +702,8 @@ interface Shown {
 function driftLine(shown: Shown, rescored: Assessment): string | null {
   const prefix = 'Scored again now, it would'
   if (rescored.flag !== shown.flag) {
-    return `${prefix} read “${FLAG_LABEL[rescored.flag]}”${driftReason(rescored, shown.noteGaps)}.`
+    const label = labelOf(rescored.flag, rescored.withheld)
+    return `${prefix} read “${label}”${driftReason(rescored, shown.noteGaps)}.`
   }
   // Same withheld verdict, different reason or count: the card's lead
   // sentence is what would change, and the flag and the rule ids cannot see

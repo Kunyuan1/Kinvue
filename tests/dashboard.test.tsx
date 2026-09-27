@@ -10,6 +10,7 @@ import {
 import type { SessionRecord } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
 import { history, session } from './helpers'
+import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
 
 /**
  * What the dashboard's error box says, from the call sites that decide it
@@ -352,5 +353,43 @@ describe('an old card, shown with today’s words (KV-138)', () => {
     )).toBeTruthy()
     expect(document.body.textContent).not.toMatch(/Today looks/)
     expect(screen.getAllByText('Looks normal').length).toBeGreaterThan(0)
+  })
+})
+
+describe('where the baseline is, while it is learning (KV-17)', () => {
+  const mine = (records: SessionRecord[]): SessionRecord[] =>
+    records.map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+
+  it('shows one live line and a "Still learning" label, apart from an unusable card', async () => {
+    const good = mine(history(1))
+    const refused = mine([
+      session({ id: 'refused', capturedAt: '2026-08-01T09:00:00.000Z', vitals: { confidence: 0.2 } }),
+    ])
+    for (const r of [...refused, ...good]) {
+      const prior = [...refused, ...good].filter((p) => p.capturedAt < r.capturedAt)
+      r.assessment = scoreSession(r, prior)
+    }
+    listSessions.mockResolvedValue([...refused, ...good])
+    render(<App />)
+
+    expect(
+      await screen.findByText(
+        `Still learning ${DEMO_PERSON_NAME}’s usual — 1 of 3 usable check-ins so far. 1 check-in could not be used, so it is not counted.`,
+      ),
+    ).toBeTruthy()
+    expect(screen.getByText('Still learning')).toBeTruthy()
+    expect(screen.getByText('Not enough to say')).toBeTruthy()
+  })
+
+  it('says nothing once comparisons have started', async () => {
+    const past = mine(history(5))
+    const now = mine([session({ id: 'now', capturedAt: '2026-10-01T09:00:00.000Z' })])[0]
+    if (now === undefined) throw new Error('unreachable')
+    now.assessment = scoreSession(now, past)
+    listSessions.mockResolvedValue([...past, now])
+    render(<App />)
+
+    expect(await screen.findByText('Looks normal')).toBeTruthy()
+    expect(document.body.textContent).not.toMatch(/Still learning/)
   })
 })
