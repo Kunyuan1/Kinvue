@@ -76,6 +76,15 @@ export default function SessionCard({
           {seededNote !== null && (
             <p className="mt-1 text-sm text-(--color-muted)">{seededNote}</p>
           )}
+          {/*
+            That this card's usual had gone stale (KV-154). Below the seeded
+            note, which says what the usual was made of; this says when, so it
+            reads as the second half of that (review of #158). It is never
+            shown when every check-in behind the card was seeded.
+          */}
+          {presentation?.spanNote != null && (
+            <p className="mt-1 text-sm text-(--color-muted)">{presentation.spanNote}</p>
+          )}
         </div>
         <div className="shrink-0 text-right text-sm text-(--color-muted)">
           <p>{when}</p>

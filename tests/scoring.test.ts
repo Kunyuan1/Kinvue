@@ -5,6 +5,9 @@ import {
   hasScorableVitals,
   MIN_CAPTURE_SECONDS,
   learningStatus,
+  staleUsualDisclosure,
+  usualReachStatus,
+  USUAL_SPAN_NOTE_AFTER_DAYS,
   present,
   presentAll,
   scoreSession,
@@ -1741,5 +1744,166 @@ describe('learningStatus: where the baseline is now (KV-17)', () => {
     for (const records of [history(1), [...refusedCaptures(3), ...history(2)]]) {
       expect(learningStatus(records, 'test-person', 'Margaret')).not.toMatch(RELATIVE_TIME)
     }
+  })
+})
+
+describe('how far back a card’s usual reaches (KV-154)', () => {
+  const SEP_30 = '2026-09-30T09:00:00.000Z'
+  const DAY = 86_400_000
+  const daysBefore = (iso: string, days: number) =>
+    new Date(Date.parse(iso) - days * DAY).toISOString()
+  /** `n` usable check-ins, `everyDays` apart, the newest `lastGap` days before `SEP_30`. */
+  const spread = (n: number, everyDays: number, lastGap = 1): SessionRecord[] =>
+    Array.from({ length: n }, (_, i) =>
+      session({ id: `s-${i}`, capturedAt: daysBefore(SEP_30, lastGap + (n - 1 - i) * everyDays) }),
+    )
+  const scoredAt = (prior: SessionRecord[]) => {
+    const s = session({ id: 'now', capturedAt: SEP_30 })
+    return { ...s, assessment: scoreSession(s, prior) }
+  }
+  const note = (prior: SessionRecord[]) =>
+    staleUsualDisclosure(scoredAt(prior).assessment, SEP_30)
+
+  it('stores the window’s oldest and newest check-in', () => {
+    const prior = spread(5, 3)
+    expect(scoredAt(prior).assessment.baselineSpan).toEqual({
+      from: prior[0]?.capturedAt,
+      to: prior[4]?.capturedAt,
+    })
+    expect(scoredAt([]).assessment.baselineSpan).toBeUndefined()
+  })
+
+  it('tells a stale usual from a spread one, which one distance could not (review of #158)', () => {
+    // Fourteen daily check-ins in January, then this one in September.
+    expect(note(spread(14, 1, 250))).toBe(
+      'Their usual here is 14 check-ins, the most recent of them 8 months before this one.',
+    )
+    // Fourteen spread over the same months, at a steady cadence: not stale.
+    expect(note(spread(14, 20))).toBeNull()
+    // Monthly for a year: a month's gap after a year-long usual is its rhythm.
+    expect(note(spread(14, 30, 30))).toBeNull()
+  })
+
+  it('stays off every card at a regular cadence', () => {
+    for (const every of [1, 3.5, 7]) expect(note(spread(14, every))).toBeNull()
+  })
+
+  it('needs the gap past four weeks, as well as past the stretch the usual covers', () => {
+    // A three-day usual, then a gap of exactly four weeks: under the line.
+    expect(note(spread(4, 1, USUAL_SPAN_NOTE_AFTER_DAYS))).toBeNull()
+    expect(note(spread(4, 1, USUAL_SPAN_NOTE_AFTER_DAYS + 1))).toBe(
+      'Their usual here is 4 check-ins, the most recent of them 4 weeks before this one.',
+    )
+  })
+
+  it('says a year as a year, in calendar months below it, and never more than it was', () => {
+    expect(note(spread(4, 1, 365))).toBe(
+      'Their usual here is 4 check-ins, the most recent of them over a year before this one.',
+    )
+    // 364 days back from Sep 30 is Oct 1 the year before: eleven calendar months.
+    expect(note(spread(4, 1, 364))).toMatch(/11 months before this one/)
+    expect(note(spread(4, 1, 800))).toMatch(/over 2 years before this one/)
+    expect(note(spread(4, 1, 58))).toMatch(/8 weeks before this one/)
+  })
+
+  it('appears only where the card leans on the baseline', () => {
+    const s = session({ id: 'now', capturedAt: SEP_30, vitals: { confidence: 0.2 } })
+    expect(staleUsualDisclosure(scoreSession(s, spread(5, 1, 200)), SEP_30)).toBeNull()
+    expect(note(spread(2, 1, 200))).toBeNull()
+  })
+
+  it('says nothing on a date it cannot read, rather than calling the usual recent', () => {
+    const card = scoredAt(spread(5, 1, 200)).assessment
+    expect(staleUsualDisclosure(card, 'not a date')).toBeNull()
+    expect(staleUsualDisclosure({ ...card, baselineSpan: { from: 'x', to: 'y' } }, SEP_30)).toBeNull()
+  })
+
+  it('says nothing when every check-in behind it was seeded, which the seeded note already says', () => {
+    const seeded = spread(14, 1, 90).map((r) => ({ ...r, seeded: true }))
+    expect(note(seeded)).toBeNull()
+    // Partly seeded: still said, beside the seeded note.
+    const mixed = [
+      ...seeded.slice(0, 10),
+      ...spread(4, 1, 90).map((r, i) => ({ ...r, id: `real-${i}` })),
+    ]
+    expect(note(mixed)).toMatch(/^Their usual here is 14 check-ins, the most recent of them 2 months/)
+  })
+
+  it('finds an older card’s span by scoring it again, only when the rescore counts what the card did', () => {
+    const prior = spread(6, 1, 120)
+    const { baselineSpan: _dropped, ...old } = scoredAt(prior).assessment
+    const card = { ...session({ id: 'now', capturedAt: SEP_30 }), assessment: old }
+    expect(present(card, prior)?.spanNote).toBe(
+      'Their usual here is 6 check-ins, the most recent of them 3 months before this one.',
+    )
+    // Two of its sessions since lost (a restored backup): the stored count and
+    // a rescored span would never have held together, so nothing is said.
+    expect(present(card, prior.slice(2))?.spanNote).toBeNull()
+    const seeded = present({ ...session({ id: 'now', capturedAt: SEP_30, seeded: true }) }, prior)
+    expect(seeded?.spanNote).toBeNull()
+  })
+
+  it('records a span only with baseline sessions, so an absent one on a compared card is an older record', () => {
+    // The invariant `present` relies on when it recovers a missing span: a
+    // verdict with no baseline sessions never leans on the baseline.
+    const none = [
+      scoredAt([]).assessment,
+      scoreSession(session({ vitals: { confidence: 0.2 } }), []),
+    ]
+    for (const a of none) {
+      expect(a.baselineSpan).toBeUndefined()
+      expect(a.flag).toBe('insufficient-signal')
+    }
+  })
+
+  it('says nothing relative to now on a card', () => {
+    for (const gap of [40, 200, 400, 900]) {
+      const line = note(spread(4, 1, gap))
+      expect(line).not.toBeNull()
+      expect(line).not.toMatch(RELATIVE_TIME)
+    }
+  })
+})
+
+describe('usualReachStatus: how far back the usual reaches, said once (KV-154)', () => {
+  const NOW = new Date('2026-09-30T09:00:00.000Z')
+  const spreadTo = (n: number, everyDays: number, lastGap = 1) =>
+    Array.from({ length: n }, (_, i) =>
+      session({
+        id: `r-${i}`,
+        capturedAt: new Date(
+          NOW.getTime() - (lastGap + (n - 1 - i) * everyDays) * 86_400_000,
+        ).toISOString(),
+      }),
+    )
+
+  it('says it once, at a cadence that would put it on every card', () => {
+    expect(usualReachStatus(spreadTo(20, 3.5), 'test-person', 'Margaret', NOW)).toBe(
+      'Margaret’s usual is the last 14 usable check-ins reaching back 6 weeks.',
+    )
+  })
+
+  it('says when the most recent of them is long gone', () => {
+    expect(usualReachStatus(spreadTo(14, 1, 250), 'test-person', 'Margaret', NOW)).toBe(
+      'Margaret’s usual is the last 14 usable check-ins reaching back 8 months; the most recent ' +
+        'was 8 months ago.',
+    )
+  })
+
+  it('says nothing within four weeks, while learning, or over the demo alone', () => {
+    expect(usualReachStatus(spreadTo(14, 1), 'test-person', 'Margaret', NOW)).toBeNull()
+    expect(usualReachStatus(spreadTo(3, 30), 'test-person', 'Margaret', NOW)).toBeNull()
+    const demo = spreadTo(14, 1, 90).map((r) => ({ ...r, seeded: true }))
+    expect(usualReachStatus(demo, 'test-person', 'Margaret', NOW)).toBeNull()
+    const mixed = [...demo.slice(4), ...spreadTo(4, 1, 40).map((r, i) => ({ ...r, id: `x-${i}` }))]
+    expect(usualReachStatus(mixed, 'test-person', 'Margaret', NOW)).toBe(
+      'Margaret’s usual is the last 14 usable check-ins, 10 of them seeded demo data, reaching ' +
+        'back 3 months.',
+    )
+  })
+
+  it('counts only this person', () => {
+    const others = spreadTo(20, 3.5).map((r) => ({ ...r, personId: 'someone-else' }))
+    expect(usualReachStatus(others, 'test-person', 'Margaret', NOW)).toBeNull()
   })
 })

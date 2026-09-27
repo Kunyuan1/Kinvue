@@ -1,4 +1,4 @@
-import type { SessionRecord } from '../session/types'
+import type { BaselineSpan, SessionRecord } from '../session/types'
 import { unusableReason } from '../session/usable'
 
 /**
@@ -37,6 +37,14 @@ export interface Baseline {
    * hides them.
    */
   refusedSessions: number
+  /**
+   * The stretch the window covers, or null with no sessions in it (KV-154).
+   * The window is the trailing 14 usable sessions however old
+   * (`BASELINE_WINDOW_SESSIONS`), so it can reach back over a year, or be a
+   * fortnight that ended months ago; "their usual" means something different
+   * in each, and the caregiver cannot see the window any other way.
+   */
+  span: BaselineSpan | null
   /**
    * How many of those were seeded demo history (KV-8) rather than measured.
    * Carried so a verdict can say what it was compared against: a real reading
@@ -83,9 +91,18 @@ export const MIN_BASELINE_SESSIONS = 3
  * baseline, the KV-72 failure again; a long one floored so it never drops the
  * set below `MIN_BASELINE_SESSIONS` would not. So what is missing is only the
  * number.) A long, sparse history pins today's behaviour in the meantime, and
- * KV-154 would show the caregiver how far back a card's usual reaches.
+ * the dashboard says how far back the usual reaches, and a card when its own
+ * had gone stale (KV-154, `span` below).
  */
 export const BASELINE_WINDOW_SESSIONS = 14
+
+function spanOf(usable: readonly SessionRecord[]): BaselineSpan | null {
+  const oldest = usable[0]
+  const newest = usable[usable.length - 1]
+  return oldest === undefined || newest === undefined
+    ? null
+    : { from: oldest.capturedAt, to: newest.capturedAt }
+}
 
 function stat(values: number[]): Stat | null {
   if (values.length === 0) return null
@@ -125,6 +142,7 @@ export function computeBaseline(history: readonly SessionRecord[]): Baseline {
   return {
     sessions: usable.length,
     refusedSessions: history.length - usableAll.length,
+    span: spanOf(usable),
     seededSessions: usable.filter((s) => s.seeded === true).length,
     pulseRateBpm: stat(pick((s) => s.vitals.pulseRateBpm)),
     breathingRateBrpm: stat(pick((s) => s.vitals.breathingRateBrpm)),

@@ -13,6 +13,7 @@ import {
   seedDemoHistory,
   withSeededVerdicts,
 } from '@core/seed/persona'
+import type { Assessment } from '@core/session/types'
 import { session } from './helpers'
 
 /**
@@ -285,17 +286,34 @@ describe('the seeded demo history', () => {
     // Only the dates move with `endingAt`; the readings and answers are drawn
     // from the seed, and the zone is the host's. A demo shown in January must
     // be the same person as one shown in September.
-    const january = seedDemoHistory(undefined, new Date('2027-01-05T09:00:00.000Z'))
+    const JAN = new Date('2027-01-05T09:00:00.000Z')
+    const january = seedDemoHistory(undefined, JAN)
 
     expect(january.map((s) => s.vitals)).toEqual(seeded.map((s) => s.vitals))
     expect(january.map((s) => s.answers)).toEqual(seeded.map((s) => s.answers))
     expect(january.map((s) => s.timeZone)).toEqual(seeded.map((s) => s.timeZone))
     expect(january.map((s) => s.capturedAt)).not.toEqual(seeded.map((s) => s.capturedAt))
     // The verdict is the one thing computed rather than drawn. A rule that ever
-    // reads the date would make January's Margaret a different person.
-    expect(withSeededVerdicts(january).map((s) => s.assessment)).toEqual(
-      shown.map((s) => s.assessment),
-    )
+    // reads the date would make January's Margaret a different person. Its
+    // `baselineSpan` (KV-154) records dates, so it is compared as whole days
+    // from each run's own seeding day: the dates move, which day of the
+    // fortnight they fall on must not (review of #158). Days, not milliseconds:
+    // the seed lays days out at 09:15 host-local, so a run either side of a
+    // daylight-saving change is an hour apart in UTC and the same day.
+    const verdict = (endingAt: Date) => (s: { assessment?: Assessment }) => {
+      if (s.assessment === undefined) return undefined
+      const { baselineSpan: span, ...rest } = s.assessment
+      const offset = (iso: string) =>
+        Math.round((Date.parse(iso) - endingAt.getTime()) / 86_400_000)
+      return { ...rest, span: span && { from: offset(span.from), to: offset(span.to) } }
+    }
+    expect(withSeededVerdicts(january).map(verdict(JAN))).toEqual(shown.map(verdict(AT)))
+    // Two runs share any off-by-one in the window, so pin where the last day's
+    // usual falls outright. The twelve days run from 12 days before the
+    // seeding day to the day before it; the last one's usual is the eleven
+    // before it, 12 days back to 2.
+    expect(shown.length).toBe(12)
+    expect(verdict(AT)(shown[shown.length - 1] ?? {})?.span).toEqual({ from: -12, to: -2 })
   })
 
   it('draws exactly this fortnight', () => {
