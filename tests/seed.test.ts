@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { MIN_BASELINE_SESSIONS, computeBaseline } from '@core/baseline'
 import {
   ELEVATED_SEVERITY_THRESHOLD,
+  presentAll,
   scoreSession,
   totalSeverity,
   unusableReason,
@@ -74,7 +75,11 @@ const INSTALLED = {
  */
 const seeded = seedDemoHistory(undefined, AT)
 
-/** Each seeded day with the verdict the dashboard renders for it. */
+/**
+ * Each seeded day with the verdict the dashboard renders for it. The dashboard
+ * gets it through `presentAll` (KV-138 review); the first test below pins that
+ * the two agree, so these read what it renders.
+ */
 const shown = withSeededVerdicts(seeded)
 
 // A plain map: a day with no verdict fails the first test below, by name,
@@ -88,6 +93,19 @@ type ScoredDay = (typeof scored)[number]
 
 const ruleIds = (d: ScoredDay): string =>
   d.assessment?.firedRules.map((r) => r.id).join(', ') ?? '(no verdict)'
+
+describe('the seeded verdicts the dashboard renders', () => {
+  it('are the ones presentAll gives each card, with no drift', () => {
+    const cards = presentAll(seeded)
+    for (const day of shown) {
+      const card = cards.get(day.id)
+      expect(card?.flag).toBe(day.assessment?.flag)
+      expect(card?.summary).toBe(day.assessment?.summary)
+      expect(card?.firedRules).toEqual(day.assessment?.firedRules)
+      expect(card?.drift).toBeNull()
+    }
+  })
+})
 
 /**
  * The worst day among those whose flag the severity sum actually decides. A

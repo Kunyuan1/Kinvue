@@ -1,12 +1,6 @@
-import { seededDisclosureFor, uncomparedDisclosure } from '@core/scoring'
+import { FLAG_LABEL, seededDisclosureFor, type Presentation } from '@core/scoring'
 import { describeAnswers } from '@core/session/answers'
 import type { Flag, SessionRecord } from '@core/session/types'
-
-const FLAG_LABEL: Record<Flag, string> = {
-  normal: 'Looks normal',
-  elevated: 'Looks different',
-  'insufficient-signal': 'Not enough to say',
-}
 
 const FLAG_COLOR: Record<Flag, string> = {
   normal: 'text-(--color-normal)',
@@ -19,16 +13,28 @@ const FLAG_COLOR: Record<Flag, string> = {
  * including on a normal day — the explanation is the product, so it does not
  * collapse behind a disclosure triangle.
  */
-export default function SessionCard({ session }: { session: SessionRecord }): React.JSX.Element {
-  const { assessment, vitals, capturedAt, seeded } = session
-  const flag = assessment?.flag ?? 'insufficient-signal'
+export default function SessionCard({
+  session,
+  presentation,
+}: {
+  session: SessionRecord
+  /**
+   * What the card says, composed now from the stored facts (KV-138): the
+   * verdict as scored (a seeded day's by today's rules, KV-103), its words in
+   * today's wording, and a drift line when today's scorer would say something
+   * different. Null for a real check-in with no assessment.
+   */
+  presentation: Presentation | null
+}): React.JSX.Element {
+  const { vitals, capturedAt, seeded } = session
+  const flag = presentation?.flag ?? 'insufficient-signal'
   // Composed from the stored counts, not read out of the summary: it appears
   // only where something on this card actually leans on the baseline (KV-53),
   // and not on a seeded card, whose own label already says so (KV-103).
   const seededNote = seededDisclosureFor(session)
   // A metric measured at this check-in and never compared (KV-87). Above the
   // seeded note: on a withheld card it is the reason for the verdict.
-  const uncomparedNote = assessment === undefined ? null : uncomparedDisclosure(assessment)
+  const uncomparedNote = presentation?.uncomparedNote ?? null
   // The day and time where the person was, not where whoever is reading this
   // happens to be (KV-28). Formatted in the recorded zone directly — turning it
   // into a date string and parsing that back would depend on the locale's
@@ -58,7 +64,10 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
       <header className="flex items-baseline justify-between gap-4">
         <div>
           <p className={`font-medium ${FLAG_COLOR[flag]}`}>{FLAG_LABEL[flag]}</p>
-          <p className="text-sm text-(--color-muted)">{assessment?.summary}</p>
+          <p className="text-sm text-(--color-muted)">{presentation?.summary}</p>
+          {presentation?.drift != null && (
+            <p className="mt-1 text-sm text-(--color-muted) italic">{presentation.drift}</p>
+          )}
           {uncomparedNote !== null && (
             <p className="mt-1 text-sm text-(--color-muted)">{uncomparedNote}</p>
           )}
@@ -109,9 +118,9 @@ export default function SessionCard({ session }: { session: SessionRecord }): Re
         </p>
       )}
 
-      {assessment !== undefined && assessment.firedRules.length > 0 && (
+      {presentation !== null && presentation.firedRules.length > 0 && (
         <ul className="mt-4 space-y-2 border-t border-(--color-line) pt-4">
-          {assessment.firedRules.map((rule) => (
+          {presentation.firedRules.map((rule) => (
             <li key={rule.id} className="text-sm">
               <span className="font-medium">{rule.title}</span>
               <span className="text-(--color-muted)"> — {rule.explanation}</span>

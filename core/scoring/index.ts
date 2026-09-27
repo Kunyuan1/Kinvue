@@ -3,8 +3,10 @@ import type {
   Assessment,
   ComparedMetric,
   FiredRule,
+  Flag,
   SessionRecord,
   UncomparedMetric,
+  WithheldReason,
 } from '../session/types'
 import { unusableReason, type UnusableReason } from '../session/usable'
 import { ALL_RULES, BASELINE_RULE_IDS, uncomparedMetrics, type Rule } from './rules'
@@ -248,16 +250,16 @@ export function scoreSession(
   // misrepresent what the app actually measured.
   const unusable = unusableReason(session.vitals)
   if (unusable !== null) {
-    return {
+    // Four different things, said differently: nothing measured, a capture cut
+    // short, a reading the camera judged and found poor, and one it never
+    // judged at all. Collapsing any of them hides which one happened.
+    return withSummary({
       flag: 'insufficient-signal',
+      withheld: unusable,
       firedRules: [],
-      // Four different things, said differently: nothing measured, a capture cut
-      // short, a reading the camera judged and found poor, and one it never
-      // judged at all. Collapsing any of them hides which one happened.
-      summary: UNUSABLE_SUMMARY[unusable],
       baselineSessions: baseline.sessions,
       baselineSeededSessions: baseline.seededSessions,
-    }
+    })
   }
 
   // Every rule runs. A rule that quotes "their usual" decides for itself
@@ -272,15 +274,13 @@ export function scoreSession(
   const fired = fire(ALL_RULES, session, baseline)
 
   if (baseline.sessions < MIN_BASELINE_SESSIONS) {
-    return {
+    return withSummary({
       flag: 'insufficient-signal',
+      withheld: 'still-learning',
       firedRules: fired,
-      summary:
-        `Still learning their normal — ${baseline.sessions} of ` +
-        `${MIN_BASELINE_SESSIONS} check-ins needed before daily comparisons start.`,
       baselineSessions: baseline.sessions,
       baselineSeededSessions: baseline.seededSessions,
-    }
+    })
   }
 
   const total = fired.reduce((sum, r) => sum + r.severity, 0)
@@ -291,15 +291,387 @@ export function scoreSession(
   // on what was compared, and withholding it would hide a real signal to cover
   // a missing one. Either way `uncomparedDisclosure` names the gap.
   const scored = total >= ELEVATED_SEVERITY_THRESHOLD ? 'elevated' : 'normal'
-  const flag: Assessment['flag'] =
-    scored === 'normal' && uncompared.length > 0 ? 'insufficient-signal' : scored
-
-  return {
-    flag,
+  const withheld = scored === 'normal' && uncompared.length > 0
+  const facts = {
     firedRules: fired,
-    summary: summarise(scored, fired, uncompared),
     baselineSessions: baseline.sessions,
     baselineSeededSessions: baseline.seededSessions,
     uncomparedMetrics: uncompared,
   }
+  return withSummary(
+    withheld
+      ? { flag: 'insufficient-signal', withheld: 'uncompared', ...facts }
+      : { flag: scored, ...facts },
+  )
+}
+
+/**
+ * The facts an assessment keeps, less its summary: what `summaryOf` reads. An
+ * `insufficient-signal` verdict always says what withheld it, so the sentence
+ * is never re-decided from anything that could have changed since.
+ */
+type AssessmentFacts = Omit<Assessment, 'summary' | 'flag' | 'withheld'> &
+  (
+    | { flag: 'normal' | 'elevated'; withheld?: undefined }
+    | { flag: 'insufficient-signal'; withheld: WithheldReason }
+  )
+
+/**
+ * The sentence at the top of a card, from the facts its assessment keeps.
+ *
+ * The one place the summary is decided. `scoreSession` writes a new card's
+ * through it and `present` composes an old card's through it, so "a card
+ * scored now composes to exactly what it stored" holds by construction rather
+ * than by a mirror kept in step by hand (KV-138 review) — the objection
+ * `BASELINE_RULE_IDS` makes to two encodings of one concept.
+ */
+function summaryOf(facts: AssessmentFacts): string {
+  if (facts.flag !== 'insufficient-signal') return summarise(facts.flag, facts.firedRules, [])
+  const { withheld } = facts
+  if (withheld === 'still-learning') return learningSummary(facts.baselineSessions)
+  if (withheld === 'uncompared') {
+    return summarise('normal', facts.firedRules, facts.uncomparedMetrics ?? [])
+  }
+  return UNUSABLE_SUMMARY[withheld]
+}
+
+function withSummary(facts: AssessmentFacts): Assessment {
+  return { ...facts, summary: summaryOf(facts) }
+}
+
+/** The still-learning sentence (KV-138). */
+function learningSummary(sessions: number): string {
+  return (
+    `Still learning their normal — ${sessions} of ` +
+    `${MIN_BASELINE_SESSIONS} check-ins needed before daily comparisons start.`
+  )
+}
+
+/**
+ * What the card's label says for each verdict. Here rather than in the card so
+ * the drift line quotes the label a caregiver actually sees (KV-138).
+ */
+export const FLAG_LABEL: Record<Flag, string> = {
+  normal: 'Looks normal',
+  elevated: 'Looks different',
+  'insufficient-signal': 'Not enough to say',
+}
+
+/** What a card shows for an assessment, composed now rather than read as stored. */
+export interface Presentation {
+  /**
+   * The verdict the card shows: the one stored, or for a seeded card the one
+   * today's rules give it (KV-103).
+   */
+  flag: Flag
+  summary: string
+  /** Each fired rule as stored, its words brought up to date where they can be. */
+  firedRules: FiredRule[]
+  /** The #87 note: which measured metrics went uncompared, or null. */
+  uncomparedNote: string | null
+  /** One line when today's scorer would say something different, or null. */
+  drift: string | null
+}
+
+const ANSWER_RULES = ALL_RULES.filter((rule) => rule.compares === undefined)
+const NO_BASELINE = computeBaseline([])
+
+/**
+ * Every fixed string KV-93 reworded, old to new, exactly as `0f92c51` changed
+ * them — and the one withheld summary the scaffold wrote before KV-12 gave
+ * each unusable capture its own (`e8e87a2`), less its "today". Frozen: it
+ * describes records already written, and nothing written now needs it.
+ */
+const REWORDED: ReadonlyMap<string, string> = new Map([
+  ['Has not eaten today', 'Had not eaten yet'],
+  [
+    'They reported sleeping poorly and being in pain today.',
+    'At the check-in they reported being in pain, and sleeping poorly the night before.',
+  ],
+  ['They reported being in pain today.', 'At the check-in they reported being in pain.'],
+  [
+    'They reported sleeping poorly last night.',
+    'At the check-in they reported sleeping poorly the night before.',
+  ],
+  ['They described their mood as low today.', 'At the check-in they described their mood as low.'],
+  [
+    'The camera reading was not clear enough to use today.',
+    'The camera reading was not clear enough to use.',
+  ],
+])
+
+/**
+ * A stored string in today's words, where the words it had are known to have
+ * changed. A comparison rule's explanation was built from numbers, so it is
+ * not in the table: every stored form was "<metric> was <value> <unit> today,
+ * …", and that one " today," is dropped.
+ */
+function inTodaysWords(text: string): string {
+  return REWORDED.get(text) ?? text.replace(' today,', ',')
+}
+
+/**
+ * A stored fired rule in today's words (KV-138). An answer rule that still
+ * fires on these answers is evaluated again, and its current title and
+ * explanation used. Anything else keeps its own text, brought up to date by
+ * `inTodaysWords`: a comparison rule, whose usual is not stored, and an answer
+ * rule today's engine no longer fires here or no longer has. Which it is does
+ * not matter — the text it carries is what gets reworded, whatever its kind.
+ * The severity is never touched: it is part of the verdict, which stands.
+ */
+function composeRule(session: SessionRecord, rule: FiredRule): FiredRule {
+  const answer = ANSWER_RULES.find((candidate) => candidate.id === rule.id)
+  const now = answer?.evaluate({ session, baseline: NO_BASELINE }) ?? null
+  return now === null
+    ? { ...rule, title: inTodaysWords(rule.title), explanation: inTodaysWords(rule.explanation) }
+    : { ...rule, title: now.title, explanation: now.explanation }
+}
+
+/**
+ * The withheld summaries written before `Assessment.withheld` existed, as
+ * written, and the capture each describes. Frozen like `REWORDED`. The
+ * scaffold's one sentence covered three reasons, so it is not here: see
+ * `SCAFFOLD_UNUSABLE`.
+ */
+const UNUSABLE_BEFORE_WITHHELD: ReadonlyMap<string, UnusableReason> = new Map([
+  // KV-12 to KV-93 (`8987dcc`).
+  [
+    'The camera ran but no reading came out of it, so today is not being compared.',
+    'nothing-measured',
+  ],
+  [
+    'The camera did not run for long enough to use, so today is not being compared.',
+    'too-short',
+  ],
+  [
+    'The camera did not say how reliable this reading was, so today is not being compared.',
+    'unrated',
+  ],
+  [
+    'The camera reading was not clear enough to use, so today is not being compared.',
+    'low-confidence',
+  ],
+  // KV-93 to the KV-138 review (`0f92c51`).
+  [
+    'The camera ran but no reading came out of it, so this check-in is not being compared.',
+    'nothing-measured',
+  ],
+  [
+    'The camera did not run for long enough to use, so this check-in is not being compared.',
+    'too-short',
+  ],
+  [
+    'The camera did not say how reliable this reading was, so this check-in is not being compared.',
+    'unrated',
+  ],
+  [
+    'The camera reading was not clear enough to use, so this check-in is not being compared.',
+    'low-confidence',
+  ],
+])
+
+/**
+ * The scaffold's withheld summary (`e8e87a2`), which said the capture was
+ * unusable but not in which of three ways. It is kept as written, less its
+ * "today", and only whether a capture was unusable at all is compared.
+ */
+const SCAFFOLD_UNUSABLE = 'The camera reading was not clear enough to use today.'
+
+/** An unusable capture that the record does not say more about. */
+type Recovered = WithheldReason | 'unusable'
+
+const isUnusable = (why: Recovered | undefined): boolean =>
+  why !== undefined && why !== 'still-learning' && why !== 'uncompared'
+
+/**
+ * Why a stored `insufficient-signal` verdict was withheld, as far as the
+ * record says, or undefined when it cannot be recovered at all.
+ *
+ * Never asked of today's predicates: asked again, they can give a different
+ * reason under the same flag, and the card would state a reason it was never
+ * given (KV-138 review). A record scored before `withheld` was stored is read
+ * from what it kept — a gap list means a metric went uncompared (KV-87), and
+ * otherwise its summary is one of a closed set of sentences, the only trace of
+ * which branch wrote it.
+ */
+function withheldOf(stored: Assessment): Recovered | undefined {
+  const gaps = stored.uncomparedMetrics?.length ?? 0
+  if (stored.withheld === 'uncompared') return gaps > 0 ? 'uncompared' : undefined
+  if (stored.withheld !== undefined) return stored.withheld
+  if (gaps > 0) return 'uncompared'
+  if (stored.summary.startsWith('Still learning their normal — ')) return 'still-learning'
+  if (stored.summary === SCAFFOLD_UNUSABLE) return 'unusable'
+  return UNUSABLE_BEFORE_WITHHELD.get(stored.summary)
+}
+
+/**
+ * The summary for a stored verdict, through the same `summaryOf` that wrote
+ * it, so a card scored now composes to exactly what it stored and one scored
+ * before KV-93 loses its "today". A withheld card whose reason the record does
+ * not give keeps its own sentence, reworded where the words are known to have
+ * changed — never a reason it was not given.
+ */
+function composeSummary(
+  stored: Assessment,
+  withheld: Recovered | undefined,
+  firedRules: FiredRule[],
+): string {
+  if (stored.flag !== 'insufficient-signal') {
+    return summaryOf({ ...stored, flag: stored.flag, withheld: undefined, firedRules })
+  }
+  return withheld === undefined || withheld === 'unusable'
+    ? inTodaysWords(stored.summary)
+    : summaryOf({ ...stored, flag: 'insufficient-signal', withheld, firedRules })
+}
+
+/**
+ * What a card shows, composed when it is shown rather than read as it was
+ * stored (KV-138, decided by the owner).
+ *
+ * **The verdict stands.** A card's flag and fired rules are what the app told
+ * the caregiver that day, and history stays a record of that (append-only,
+ * KV-25). **The words are composed now** from facts the record keeps, as the
+ * seeded and uncompared notes already are (KV-53, KV-87), so a card scored
+ * before a wording fix does not keep saying what that fix removed — "today"
+ * under a date, most of all (KV-93).
+ *
+ * **When today's scorer would say something different, one line says so**,
+ * rather than silently replacing what was shown: a different verdict, the
+ * same verdict with different rules fired, or the same withheld verdict for a
+ * different reason. The second matters as much: a rule that fires or stops
+ * firing changes what the card says even when the flag does not —
+ * `breathing-low` alone is under the threshold, so a fall it now catches
+ * leaves the verdict `normal` and would otherwise go unmentioned.
+ *
+ * `prior` is this person's check-ins before this one, so the rescoring
+ * compares it against the same history it had. A seeded card is scored here,
+ * as it is shown (KV-103), so no caller has to have done that first; its
+ * verdict is today's, so it never drifts.
+ *
+ * A record from before KV-87 has no stored `uncomparedMetrics`. Rather than
+ * saying on every such card that it was "not recorded", the gaps are found by
+ * scoring it again against the same history — which is what they would have
+ * been — and the note appears only when there is one.
+ */
+export function present(
+  session: SessionRecord,
+  prior: readonly SessionRecord[],
+): Presentation | null {
+  const seeded = session.seeded === true
+  const stored = seeded ? scoreSession(session, prior) : session.assessment
+  if (stored === undefined) return null
+  const rescored = seeded ? stored : scoreSession(session, prior)
+
+  const firedRules = stored.firedRules.map((rule) => composeRule(session, rule))
+  const withheld = stored.flag === 'insufficient-signal' ? withheldOf(stored) : undefined
+  const summary = composeSummary(stored, withheld, firedRules)
+  const gaps = stored.uncomparedMetrics ?? rescored.uncomparedMetrics
+  const uncomparedNote =
+    gaps === undefined ? null : uncomparedDisclosure({ ...stored, uncomparedMetrics: gaps })
+
+  return {
+    flag: stored.flag,
+    summary,
+    firedRules,
+    uncomparedNote,
+    drift: driftLine(
+      { flag: stored.flag, withheld, firedRules, summary, noteGaps: gaps ?? [] },
+      rescored,
+    ),
+  }
+}
+
+/** What the card shows, as `driftLine` compares it: the composed words, not the stored ones. */
+interface Shown {
+  flag: Flag
+  /** Why a withheld card was withheld, as far as its record says. */
+  withheld: Recovered | undefined
+  firedRules: readonly FiredRule[]
+  summary: string
+  /** The gaps the uncompared note under it names. */
+  noteGaps: readonly UncomparedMetric[]
+}
+
+/**
+ * One line saying what today's scorer would say differently, or null when it
+ * would say the same: "Scored again now, it would read “Looks different” —
+ * breathing below usual." or "… it would also note breathing below usual."
+ * Rule titles, lowercased, are the words the card already uses for them.
+ *
+ * It states an observation, not a cause. All it measures is that scoring this
+ * check-in again, against the check-ins recorded before it, gives a different
+ * answer. Today only a rule change does that — history is append-only and
+ * `demo:seed` refuses a store that is not empty (`app/main/index.ts`) — but a
+ * restored backup or a deleted record would too, and the line must stay true
+ * then (KV-138 review).
+ */
+function driftLine(shown: Shown, rescored: Assessment): string | null {
+  const prefix = 'Scored again now, it would'
+  if (rescored.flag !== shown.flag) {
+    return `${prefix} read “${FLAG_LABEL[rescored.flag]}”${driftReason(rescored, shown.noteGaps)}.`
+  }
+  // Same withheld verdict, different reason or count: the card's lead
+  // sentence is what would change, and the flag and the rule ids cannot see
+  // it. A record that says only "unusable" differs only if today's reason is
+  // not one — its sentence was never more specific than that.
+  const reasonChanged =
+    shown.withheld === 'unusable'
+      ? !isUnusable(rescored.withheld)
+      : rescored.summary !== shown.summary
+  if (shown.flag === 'insufficient-signal' && reasonChanged) {
+    return `${prefix} say instead: “${rescored.summary}”`
+  }
+  const was = new Set(shown.firedRules.map((rule) => rule.id))
+  const now = new Set(rescored.firedRules.map((rule) => rule.id))
+  const titles = (rules: readonly FiredRule[]): string =>
+    listOf(rules.map((rule) => rule.title.toLowerCase()))
+  const added = rescored.firedRules.filter((rule) => !was.has(rule.id))
+  const dropped = shown.firedRules.filter((rule) => !now.has(rule.id))
+  const parts = [
+    ...(added.length > 0 ? [`also note ${titles(added)}`] : []),
+    ...(dropped.length > 0 ? [`no longer note ${titles(dropped)}`] : []),
+  ]
+  return parts.length === 0 ? null : `${prefix} ${parts.join(', and ')}.`
+}
+
+/**
+ * Why today's verdict would differ, in the words the card already has for it.
+ * An amber card names its top rule. A withheld one names what withheld it: the
+ * metrics that had no usual, pointing at the note below only when that note
+ * names the same ones; otherwise its own summary, which says it in full.
+ */
+function driftReason(rescored: Assessment, noteGaps: readonly UncomparedMetric[]): string {
+  if (rescored.flag === 'elevated') {
+    const top = rescored.firedRules[0]
+    return top === undefined ? '' : ` — ${top.title.toLowerCase()}`
+  }
+  if (rescored.flag === 'normal') return ''
+  if (rescored.withheld === 'uncompared') {
+    const metrics = (gaps: readonly UncomparedMetric[]): string =>
+      gaps.map((g) => g.metric).join()
+    const gaps = rescored.uncomparedMetrics ?? []
+    const below = metrics(gaps) === metrics(noteGaps) ? ' (below)' : ''
+    const names = listOf(gaps.map((g) => METRIC_NAME[g.metric]))
+    return `, because ${names} could not be compared with their usual${below}`
+  }
+  const why = rescored.summary.replace(/\.$/, '')
+  return `: ${why.charAt(0).toLowerCase()}${why.slice(1)}`
+}
+
+/**
+ * `present` for every card on the dashboard, each against the same person's
+ * check-ins before it — `scoreSession`'s contract is one person's history, and
+ * a caregiver's client will hold more than one person. Keyed by record id.
+ */
+export function presentAll(records: readonly SessionRecord[]): Map<string, Presentation> {
+  const byTime = [...records].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
+  const before = new Map<string, SessionRecord[]>()
+  const shown = new Map<string, Presentation>()
+  for (const record of byTime) {
+    const prior = before.get(record.personId) ?? []
+    const presentation = present(record, prior)
+    if (presentation !== null) shown.set(record.id, presentation)
+    before.set(record.personId, [...prior, record])
+  }
+  return shown
 }
