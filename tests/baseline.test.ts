@@ -159,11 +159,22 @@ describe('a capture the scorer refused to use', () => {
   })
 
   it('does not count it toward the check-ins a caregiver is told to wait for', () => {
-    // `Baseline.sessions` drives the "1 of 3 check-ins needed" progress. It
+    // `Baseline.sessions` drives the "1 of 3 usable check-ins" count. It
     // counted captures that would never inform a comparison, so the wait was
     // reported as shorter than it was.
     const refused = session({ id: 'refused', vitals: { confidence: 0.2 } })
     expect(computeBaseline([refused, ...history(2)]).sessions).toBe(2)
+  })
+
+  it('counts the refusals it left out, across the whole history, so the card can say why (KV-100)', () => {
+    const refused = Array.from({ length: 3 }, (_, i) =>
+      session({ id: `r-${i}`, capturedAt: `2026-06-0${i + 1}T09:00:00.000Z`, vitals: { confidence: 0.2 } }),
+    )
+    expect(computeBaseline([...refused, ...history(2)]).refusedSessions).toBe(3)
+    // Not windowed: refusals older than the trailing usable sessions still count.
+    const many = history(BASELINE_WINDOW_SESSIONS + 5)
+    expect(computeBaseline([...refused, ...many]).refusedSessions).toBe(3)
+    expect(computeBaseline(history(4)).refusedSessions).toBe(0)
   })
 
   it('does not let a bad run delete a baseline that is already established', () => {

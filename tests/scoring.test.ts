@@ -37,7 +37,9 @@ describe('scoreSession', () => {
   it('withholds a verdict until there is enough history for a baseline', () => {
     const assessment = scoreSession(session(), history(MIN_BASELINE_SESSIONS - 1))
     expect(assessment.flag).toBe('insufficient-signal')
-    expect(assessment.summary).toContain('Still learning their normal')
+    expect(assessment.summary).toBe(
+      'Not yet enough history to compare this check-in (2 of 3 usable check-ins then).',
+    )
   })
 
   it('still shows answer-based rules while the baseline is building', () => {
@@ -370,6 +372,42 @@ describe('scoreSession', () => {
     }
   })
 
+  it('says why a still-learning count is lower than the check-ins done (KV-100)', () => {
+    const refused = (n: number) =>
+      Array.from({ length: n }, (_, i) =>
+        session({ id: `r-${i}`, capturedAt: `2026-09-0${i + 1}T08:00:00.000Z`, vitals: { confidence: 0.2 } }),
+      )
+    expect(scoreSession(session(), [...history(2), ...refused(4)]).summary).toBe(
+      'Not yet enough history to compare this check-in (2 of 3 usable check-ins then). ' +
+        '4 earlier camera readings could not be used, so they are not counted.',
+    )
+    expect(scoreSession(session(), [...history(1), ...refused(1)]).summary).toBe(
+      'Not yet enough history to compare this check-in (1 of 3 usable check-ins then). ' +
+        '1 earlier camera reading could not be used, so it is not counted.',
+    )
+    const scored = scoreSession(session(), [...history(5), ...refused(2)])
+    expect(scored.baselineRefusedSessions).toBe(2)
+    // No clause where nothing was refused.
+    expect(scoreSession(session(), history(2)).summary).not.toMatch(/could not be used/)
+  })
+
+  it('says nothing about refusals on a card that did not record them, rather than "none"', () => {
+    // Scored before KV-100: the refusal count is unknown, not zero.
+    const old = {
+      ...session(),
+      assessment: {
+        flag: 'insufficient-signal' as const,
+        firedRules: [],
+        summary: 'Still learning their normal — 1 of 3 check-ins needed before daily comparisons start.',
+        baselineSessions: 1,
+        baselineSeededSessions: 0,
+      },
+    }
+    expect(present(old, history(1))?.summary).toBe(
+      'Not yet enough history to compare this check-in (1 of 3 usable check-ins then).',
+    )
+  })
+
   it('does not compare against a usual it does not have yet', () => {
     // The card used to withhold the comparison and make it in consecutive
     // sentences: "1 of 3 check-ins needed before daily comparisons start",
@@ -377,7 +415,7 @@ describe('scoreSession', () => {
     const assessment = scoreSession(session({ vitals: { breathingRateBrpm: 16 } }), history(1))
 
     expect(assessment.flag).toBe('insufficient-signal')
-    expect(assessment.summary).toContain('comparisons start')
+    expect(assessment.summary).toMatch(/^Not yet enough history to compare this check-in/)
     expect(assessment.firedRules).toEqual([])
   })
 
@@ -1367,7 +1405,10 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
       baselineSessions: 1,
     })
     const shown = present({ ...session({ vitals: { confidence: null } }), assessment: learning }, history(1))
-    expect(shown?.summary).toBe(learning.summary)
+    // Its reason, in today's words for it (KV-100).
+    expect(shown?.summary).toBe(
+      'Not yet enough history to compare this check-in (1 of 3 usable check-ins then).',
+    )
     expect(shown?.drift).toBe(
       'Scored again now, it would say instead: “The camera did not say how reliable this reading ' +
         'was, so this check-in is not being compared.”',
@@ -1411,7 +1452,7 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
     expect(shown?.drift).toBeNull()
     // A capture today's scorer would use is.
     const usable = present({ ...old, vitals: session().vitals }, history(1))
-    expect(usable?.drift).toMatch(/^Scored again now, it would say instead: “Still learning their normal/)
+    expect(usable?.drift).toMatch(/^Scored again now, it would say instead: “Not yet enough history/)
   })
 
   it('stores why a verdict was withheld, so it is never re-decided', () => {
@@ -1464,7 +1505,10 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
   it('gives a withheld drift its reason', () => {
     // Stored normal on a thin history that an older scorer compared anyway.
     const shown = present({ ...session(), assessment: stored({}) }, history(1))
-    expect(shown?.drift).toMatch(/would read “Not enough to say”: still learning their normal/)
+    expect(shown?.drift).toBe(
+      'Scored again now, it would read “Not enough to say”: not yet enough history to compare ' +
+        'this check-in (1 of 3 usable check-ins then).',
+    )
   })
 
   it('finds a pre-KV-87 card’s gaps by scoring it again, rather than saying "not recorded"', () => {

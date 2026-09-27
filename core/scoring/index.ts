@@ -259,6 +259,7 @@ export function scoreSession(
       firedRules: [],
       baselineSessions: baseline.sessions,
       baselineSeededSessions: baseline.seededSessions,
+      baselineRefusedSessions: baseline.refusedSessions,
     })
   }
 
@@ -280,6 +281,7 @@ export function scoreSession(
       firedRules: fired,
       baselineSessions: baseline.sessions,
       baselineSeededSessions: baseline.seededSessions,
+      baselineRefusedSessions: baseline.refusedSessions,
     })
   }
 
@@ -296,6 +298,7 @@ export function scoreSession(
     firedRules: fired,
     baselineSessions: baseline.sessions,
     baselineSeededSessions: baseline.seededSessions,
+    baselineRefusedSessions: baseline.refusedSessions,
     uncomparedMetrics: uncompared,
   }
   return withSummary(
@@ -328,7 +331,9 @@ type AssessmentFacts = Omit<Assessment, 'summary' | 'flag' | 'withheld'> &
 function summaryOf(facts: AssessmentFacts): string {
   if (facts.flag !== 'insufficient-signal') return summarise(facts.flag, facts.firedRules, [])
   const { withheld } = facts
-  if (withheld === 'still-learning') return learningSummary(facts.baselineSessions)
+  if (withheld === 'still-learning') {
+    return learningSummary(facts.baselineSessions, facts.baselineRefusedSessions)
+  }
   if (withheld === 'uncompared') {
     return summarise('normal', facts.firedRules, facts.uncomparedMetrics ?? [])
   }
@@ -339,12 +344,29 @@ function withSummary(facts: AssessmentFacts): Assessment {
   return { ...facts, summary: summaryOf(facts) }
 }
 
-/** The still-learning sentence (KV-138). */
-function learningSummary(sessions: number): string {
-  return (
-    `Still learning their normal — ${sessions} of ` +
-    `${MIN_BASELINE_SESSIONS} check-ins needed before daily comparisons start.`
-  )
+/**
+ * The sentence for a check-in scored before there was enough history to
+ * compare it (KV-100).
+ *
+ * About that check-in, not about the person's progress. It is stored and shown
+ * under its date forever, and "…needed before daily comparisons start" was a
+ * live status: on a dashboard read newest first, it sat under every card that
+ * had since compared. Where the person is now belongs in one live place, the
+ * dashboard header (#17). "Then" dates the count to the check-in.
+ *
+ * When earlier captures were refused, it says so: the count is of *usable*
+ * check-ins since KV-72, and a caregiver who has done six and is shown two
+ * should not have to connect that to four cards further down. Absent, the
+ * count of refusals is unknown, and nothing is said about it.
+ */
+function learningSummary(sessions: number, refused: number | undefined): string {
+  const count =
+    `Not yet enough history to compare this check-in (${sessions} of ` +
+    `${MIN_BASELINE_SESSIONS} usable check-ins then).`
+  if (refused === undefined || refused === 0) return count
+  return refused === 1
+    ? `${count} 1 earlier camera reading could not be used, so it is not counted.`
+    : `${count} ${refused} earlier camera readings could not be used, so they are not counted.`
 }
 
 /**
@@ -499,6 +521,7 @@ function withheldOf(stored: Assessment): Recovered | undefined {
   if (stored.withheld === 'uncompared') return gaps > 0 ? 'uncompared' : undefined
   if (stored.withheld !== undefined) return stored.withheld
   if (gaps > 0) return 'uncompared'
+  // Written from the scaffold to KV-100; later records store `withheld`.
   if (stored.summary.startsWith('Still learning their normal — ')) return 'still-learning'
   if (stored.summary === SCAFFOLD_UNUSABLE) return 'unusable'
   return UNUSABLE_BEFORE_WITHHELD.get(stored.summary)

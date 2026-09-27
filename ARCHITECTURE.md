@@ -309,6 +309,22 @@ Not done, deliberately: rescoring on display and showing that instead. A past ve
 would then change after a caregiver had read and acted on it, and history would stop
 being a record of what was said.
 
+### A card still learning describes its own check-in (KV-100)
+
+The still-learning sentence was a live status — *"2 of 3 check-ins needed before daily
+comparisons start"* — stored in the record and shown under its date forever. Read newest
+first, it sat at the bottom of a dashboard, under every card that had since compared. It
+now says what that check-in had: *"Not yet enough history to compare this check-in (2 of 3
+usable check-ins then)."* Where the person is *now* belongs in one live place, the
+dashboard header (#17). Older cards get the sentence too, composed from their stored count
+by KV-138's display-time composition, and the drift line quotes it.
+
+The count is of **usable** check-ins since KV-72, which was right for the mean and hid the
+refusals: someone who had done six check-ins was told two. So the refusals the baseline
+left out are counted (across the whole history, not the window) and stored beside it, and
+the card says so — *"4 earlier camera readings could not be used, so they are not counted."*
+A card scored before the count existed says nothing about refusals: unknown, not "none".
+
 ---
 
 ## Why the answers may raise a flag on their own
