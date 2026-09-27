@@ -38,6 +38,15 @@ export interface Baseline {
    */
   refusedSessions: number
   /**
+   * When the oldest and newest sessions in the window were captured, or null
+   * with none (KV-154). The window is the trailing 14 usable sessions however
+   * old (`BASELINE_WINDOW_SESSIONS`), so for someone who checks in rarely it
+   * can reach back over a year; carried so a card can say so, since "their
+   * usual" means something different over a fortnight and over a year.
+   */
+  oldestAt: string | null
+  newestAt: string | null
+  /**
    * How many of those were seeded demo history (KV-8) rather than measured.
    * Carried so a verdict can say what it was compared against: a real reading
    * scored against an invented fortnight is not a reading of anyone, and the
@@ -83,7 +92,8 @@ export const MIN_BASELINE_SESSIONS = 3
  * baseline, the KV-72 failure again; a long one floored so it never drops the
  * set below `MIN_BASELINE_SESSIONS` would not. So what is missing is only the
  * number.) A long, sparse history pins today's behaviour in the meantime, and
- * KV-154 would show the caregiver how far back a card's usual reaches.
+ * a card says how far back its usual reaches once that is far (KV-154,
+ * `oldestAt` below).
  */
 export const BASELINE_WINDOW_SESSIONS = 14
 
@@ -125,6 +135,8 @@ export function computeBaseline(history: readonly SessionRecord[]): Baseline {
   return {
     sessions: usable.length,
     refusedSessions: history.length - usableAll.length,
+    oldestAt: usable[0]?.capturedAt ?? null,
+    newestAt: usable[usable.length - 1]?.capturedAt ?? null,
     seededSessions: usable.filter((s) => s.seeded === true).length,
     pulseRateBpm: stat(pick((s) => s.vitals.pulseRateBpm)),
     breathingRateBrpm: stat(pick((s) => s.vitals.breathingRateBrpm)),

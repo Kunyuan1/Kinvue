@@ -76,6 +76,10 @@ export default function SessionCard({
           {seededNote !== null && (
             <p className="mt-1 text-sm text-(--color-muted)">{seededNote}</p>
           )}
+          {/* How far back "their usual" reaches, when that is far (KV-154). */}
+          {presentation?.spanNote != null && (
+            <p className="mt-1 text-sm text-(--color-muted)">{presentation.spanNote}</p>
+          )}
         </div>
         <div className="shrink-0 text-right text-sm text-(--color-muted)">
           <p>{when}</p>

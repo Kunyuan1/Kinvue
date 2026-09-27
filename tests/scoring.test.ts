@@ -5,6 +5,8 @@ import {
   hasScorableVitals,
   MIN_CAPTURE_SECONDS,
   learningStatus,
+  usualSpanDisclosure,
+  USUAL_SPAN_NOTE_AFTER_DAYS,
   present,
   presentAll,
   scoreSession,
@@ -1740,6 +1742,80 @@ describe('learningStatus: where the baseline is now (KV-17)', () => {
   it('says nothing relative to now', () => {
     for (const records of [history(1), [...refusedCaptures(3), ...history(2)]]) {
       expect(learningStatus(records, 'test-person', 'Margaret')).not.toMatch(RELATIVE_TIME)
+    }
+  })
+})
+
+describe('how far back a card’s usual reaches (KV-154)', () => {
+  /** `n` usable check-ins, `everyDays` apart, the last one a day before `SEP_30`. */
+  const SEP_30 = '2026-09-30T09:00:00.000Z'
+  const spread = (n: number, everyDays: number): SessionRecord[] =>
+    Array.from({ length: n }, (_, i) =>
+      session({
+        id: `s-${i}`,
+        capturedAt: new Date(Date.parse(SEP_30) - (1 + (n - 1 - i) * everyDays) * 86_400_000).toISOString(),
+      }),
+    )
+  const scoredAt = (prior: SessionRecord[]) => {
+    const s = session({ id: 'now', capturedAt: SEP_30 })
+    return { ...s, assessment: scoreSession(s, prior) }
+  }
+
+  it('stores the window’s oldest and newest check-in', () => {
+    const prior = spread(5, 3)
+    expect(scoredAt(prior).assessment.baselineSpan).toEqual({
+      from: prior[0]?.capturedAt,
+      to: prior[4]?.capturedAt,
+    })
+    // Nothing to span with no sessions: absent, not an empty range.
+    expect(scoredAt([]).assessment.baselineSpan).toBeUndefined()
+  })
+
+  it('says nothing while the usual is recent', () => {
+    // Daily for a fortnight: exactly what "their usual" is meant to be.
+    const card = scoredAt(spread(14, 1))
+    expect(usualSpanDisclosure(card.assessment, SEP_30)).toBeNull()
+    // The last day under the line, too.
+    const edge = scoredAt([...spread(3, 1), session({ id: 'old', capturedAt: new Date(Date.parse(SEP_30) - USUAL_SPAN_NOTE_AFTER_DAYS * 86_400_000).toISOString() })])
+    expect(usualSpanDisclosure(edge.assessment, SEP_30)).toBeNull()
+  })
+
+  it('says how far back, with the count, once it reaches past four weeks', () => {
+    // Twice a week for a little over a month: weeks.
+    expect(usualSpanDisclosure(scoredAt(spread(10, 3.5)).assessment, SEP_30)).toBe(
+      'Their usual here is 10 check-ins reaching back 4 weeks.',
+    )
+    // Once a month: the window holds fourteen of them, 391 days back — 12.8
+    // months, said as 12, since it rounds down rather than overstate.
+    expect(usualSpanDisclosure(scoredAt(spread(20, 30)).assessment, SEP_30)).toBe(
+      'Their usual here is 14 check-ins reaching back 12 months.',
+    )
+    expect(usualSpanDisclosure(scoredAt(spread(4, 20)).assessment, SEP_30)).toBe(
+      'Their usual here is 4 check-ins reaching back 2 months.',
+    )
+  })
+
+  it('appears only where the card leans on the baseline', () => {
+    // An unusable capture, and one still learning, compared nothing.
+    const s = session({ id: 'now', capturedAt: SEP_30, vitals: { confidence: 0.2 } })
+    expect(usualSpanDisclosure(scoreSession(s, spread(5, 30)), SEP_30)).toBeNull()
+    expect(usualSpanDisclosure(scoredAt(spread(2, 60)).assessment, SEP_30)).toBeNull()
+  })
+
+  it('finds an older card’s span by scoring it again, and never notes a seeded card', () => {
+    const prior = spread(5, 30)
+    const { baselineSpan: _dropped, ...old } = scoredAt(prior).assessment
+    const shown = present({ ...session({ id: 'now', capturedAt: SEP_30 }), assessment: old }, prior)
+    expect(shown?.spanNote).toBe('Their usual here is 5 check-ins reaching back 3 months.')
+    const seeded = present({ ...session({ id: 'now', capturedAt: SEP_30, seeded: true }) }, prior)
+    expect(seeded?.spanNote).toBeNull()
+  })
+
+  it('says nothing relative to now', () => {
+    for (const every of [3.5, 20, 30]) {
+      const note = usualSpanDisclosure(scoredAt(spread(14, every)).assessment, SEP_30)
+      expect(note).not.toBeNull()
+      expect(note).not.toMatch(RELATIVE_TIME)
     }
   })
 })

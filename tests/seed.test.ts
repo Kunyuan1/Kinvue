@@ -13,6 +13,7 @@ import {
   seedDemoHistory,
   withSeededVerdicts,
 } from '@core/seed/persona'
+import type { Assessment } from '@core/session/types'
 import { session } from './helpers'
 
 /**
@@ -292,10 +293,14 @@ describe('the seeded demo history', () => {
     expect(january.map((s) => s.timeZone)).toEqual(seeded.map((s) => s.timeZone))
     expect(january.map((s) => s.capturedAt)).not.toEqual(seeded.map((s) => s.capturedAt))
     // The verdict is the one thing computed rather than drawn. A rule that ever
-    // reads the date would make January's Margaret a different person.
-    expect(withSeededVerdicts(january).map((s) => s.assessment)).toEqual(
-      shown.map((s) => s.assessment),
-    )
+    // reads the date would make January's Margaret a different person. Less
+    // `baselineSpan` (KV-154), which records dates and so moves with them.
+    const verdict = (s: { assessment?: Assessment }) => {
+      if (s.assessment === undefined) return undefined
+      const { baselineSpan: _dates, ...rest } = s.assessment
+      return rest
+    }
+    expect(withSeededVerdicts(january).map(verdict)).toEqual(shown.map(verdict))
   })
 
   it('draws exactly this fortnight', () => {

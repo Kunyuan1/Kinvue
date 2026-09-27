@@ -136,6 +136,45 @@ export function seededBaselineDisclosure(assessment: Assessment): string | null 
         'check-ins behind this comparison were invented, not measured.'
 }
 
+/**
+ * Past this many days back from the check-in, a card says how far its usual
+ * reaches (KV-154). Four weeks: twice the fortnight the 14-session window
+ * stands for when someone checks in daily, so the note appears only where
+ * "their usual" has stopped meaning roughly that. A presentation choice, not a
+ * tuned number on the scoring — nothing is compared or withheld differently,
+ * and moving it changes one line on a card. The age *bound* on the window is
+ * #22's, and still deferred (KV-99).
+ */
+export const USUAL_SPAN_NOTE_AFTER_DAYS = 28
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * The sentence saying how far back a card's usual reaches, or null when it is
+ * recent enough not to change what "their usual" means (KV-154).
+ *
+ * "Their usual here is 14 check-ins reaching back 14 months." The count is in
+ * it because the span alone does not say which is thin: fourteen check-ins
+ * over fourteen months is a different usual from a fortnight's, and the
+ * caregiver cannot see the window any other way. Measured from the check-in
+ * back to the oldest session in the window, so it holds under the card's date
+ * for good. Weeks below two months, whole months from there, rounded down so
+ * it never overstates.
+ *
+ * Only where something on the card leans on the baseline, like the seeded
+ * disclosure; absent span, nothing — unknown, not "recent".
+ */
+export function usualSpanDisclosure(assessment: Assessment, capturedAt: string): string | null {
+  const span = assessment.baselineSpan
+  if (span === undefined || !restsOnBaseline(assessment)) return null
+  const days = Math.floor((Date.parse(capturedAt) - Date.parse(span.from)) / DAY_MS)
+  if (!(days > USUAL_SPAN_NOTE_AFTER_DAYS)) return null
+  const months = Math.floor(days / (365.25 / 12))
+  const reach = months >= 2 ? `${months} months` : `${Math.floor(days / 7)} weeks`
+  const n = assessment.baselineSessions
+  return `Their usual here is ${n} check-in${n === 1 ? '' : 's'} reaching back ${reach}.`
+}
+
 const METRIC_NAME: Record<ComparedMetric, string> = {
   pulse: 'pulse',
   breathing: 'breathing rate',
@@ -257,9 +296,7 @@ export function scoreSession(
       flag: 'insufficient-signal',
       withheld: unusable,
       firedRules: [],
-      baselineSessions: baseline.sessions,
-      baselineSeededSessions: baseline.seededSessions,
-      baselineRefusedSessions: baseline.refusedSessions,
+      ...baselineFacts(baseline),
     })
   }
 
@@ -279,9 +316,7 @@ export function scoreSession(
       flag: 'insufficient-signal',
       withheld: 'still-learning',
       firedRules: fired,
-      baselineSessions: baseline.sessions,
-      baselineSeededSessions: baseline.seededSessions,
-      baselineRefusedSessions: baseline.refusedSessions,
+      ...baselineFacts(baseline),
     })
   }
 
@@ -296,9 +331,7 @@ export function scoreSession(
   const withheld = scored === 'normal' && uncompared.length > 0
   const facts = {
     firedRules: fired,
-    baselineSessions: baseline.sessions,
-    baselineSeededSessions: baseline.seededSessions,
-    baselineRefusedSessions: baseline.refusedSessions,
+    ...baselineFacts(baseline),
     uncomparedMetrics: uncompared,
   }
   return withSummary(
@@ -306,6 +339,24 @@ export function scoreSession(
       ? { flag: 'insufficient-signal', withheld: 'uncompared', ...facts }
       : { flag: scored, ...facts },
   )
+}
+
+/** What every assessment records about the baseline it was scored against. */
+function baselineFacts(
+  baseline: Baseline,
+): Pick<
+  Assessment,
+  'baselineSessions' | 'baselineSeededSessions' | 'baselineRefusedSessions' | 'baselineSpan'
+> {
+  const { oldestAt, newestAt } = baseline
+  return {
+    baselineSessions: baseline.sessions,
+    baselineSeededSessions: baseline.seededSessions,
+    baselineRefusedSessions: baseline.refusedSessions,
+    ...(oldestAt !== null && newestAt !== null
+      ? { baselineSpan: { from: oldestAt, to: newestAt } }
+      : {}),
+  }
 }
 
 /**
@@ -484,6 +535,8 @@ export interface Presentation {
   firedRules: FiredRule[]
   /** The #87 note: which measured metrics went uncompared, or null. */
   uncomparedNote: string | null
+  /** How far back the usual reaches, when that is far (KV-154), or null. */
+  spanNote: string | null
   /** One line when today's scorer would say something different, or null. */
   drift: string | null
 }
@@ -685,6 +738,14 @@ export function present(
   const gaps = stored.uncomparedMetrics ?? rescored.uncomparedMetrics
   const uncomparedNote =
     gaps === undefined ? null : uncomparedDisclosure({ ...stored, uncomparedMetrics: gaps })
+  // A record from before KV-154 has no span: found by scoring it again against
+  // the same history, as its gaps are. A seeded card's usual is the demo's own
+  // fortnight, and it carries no notes of this kind (KV-103).
+  const baselineSpan = stored.baselineSpan ?? rescored.baselineSpan
+  const spanNote =
+    seeded || baselineSpan === undefined
+      ? null
+      : usualSpanDisclosure({ ...stored, baselineSpan }, session.capturedAt)
 
   return {
     flag: stored.flag,
@@ -692,6 +753,7 @@ export function present(
     summary,
     firedRules,
     uncomparedNote,
+    spanNote,
     drift: driftLine(
       {
         flag: stored.flag,

@@ -162,6 +162,13 @@ export interface Assessment {
    */
   baselineRefusedSessions?: number
   /**
+   * When the oldest and newest check-ins the baseline was built from were
+   * captured (KV-154), so a card can say how far back "their usual" reaches.
+   * Absent with no baseline sessions, and on a verdict scored before it
+   * existed, where it reads as unknown.
+   */
+  baselineSpan?: { from: string; to: string }
+  /**
    * Metrics measured at this check-in that could not be compared, because
    * their own history was too short (KV-87). Empty when every measured metric
    * was compared.

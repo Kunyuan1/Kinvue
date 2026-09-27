@@ -394,3 +394,20 @@ describe('where the baseline is, while it is learning (KV-17)', () => {
     expect(screen.queryByText(/usable check-ins so far/)).toBeNull()
   })
 })
+
+describe('how far back a card’s usual reaches (KV-154)', () => {
+  it('says so on a card whose usual is months old', async () => {
+    const monthly = Array.from({ length: 5 }, (_, i) =>
+      session({ id: `m-${i}`, capturedAt: new Date(Date.UTC(2026, 3 + i, 1, 9)).toISOString() }),
+    )
+    const now = session({ id: 'now', capturedAt: '2026-09-30T09:00:00.000Z' })
+    const records = [...monthly, now]
+    records.forEach((r, i) => (r.assessment = scoreSession(r, records.slice(0, i))))
+    listSessions.mockResolvedValue(records)
+    render(<App />)
+
+    expect(
+      await screen.findByText('Their usual here is 5 check-ins reaching back 5 months.'),
+    ).toBeTruthy()
+  })
+})

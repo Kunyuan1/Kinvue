@@ -70,7 +70,7 @@ on the calibration #22 will do against confirmed outcomes. It is not that a boun
 dangerous in itself: a *short* one would let a bad fortnight empty an established baseline,
 the failure KV-72 removed, but a long one floored so it never takes the usable set below
 `MIN_BASELINE_SESSIONS` would not. Only the number is missing. A test with a long, sparse
-history pins today's behaviour until then, and KV-154 would disclose the span on the card,
+history pins today's behaviour until then, and the card discloses the span (KV-154, below),
 so the cost is visible to the caregiver and not only written down here.
 
 **Both directions** (KV-9). The question is "does this look like their normal", and a pulse
@@ -340,6 +340,29 @@ A card scored before the count existed says nothing about refusals: unknown, not
 Its drift line treats the count as unknown too — it compares against today's sentence
 without the refusal clause — so a record's missing field is never reported as the scorer
 answering differently.
+
+### How far back a card's usual reaches (KV-154)
+
+The window is the trailing 14 usable check-ins however old (KV-99), so for someone who
+checks in rarely "their usual" can mean the past year rather than the past fortnight — and
+nothing on the card said which. Bounding the window by age waits on #22; *showing* the span
+needs no tuned number, since it is the `capturedAt` range of the window the code already
+has. So the baseline records its oldest and newest session, the assessment stores them
+(`baselineSpan`; absent on an older record, which gets it by scoring again against the
+same history, as its gaps do), and a card that made a comparison says, once the usual
+reaches more than four weeks back from the check-in: *"Their usual here is 14 check-ins
+reaching back 12 months."*
+
+- **The count is in it** because the span alone does not say whether the usual is thin:
+  fourteen check-ins over a year is a different usual from fourteen over a fortnight.
+- **Four weeks** (`USUAL_SPAN_NOTE_AFTER_DAYS`) is twice the fortnight the window stands for
+  when someone checks in daily. It decides only whether a line appears; nothing is scored
+  or withheld differently, so it is a presentation choice rather than the tuned horizon
+  #22 is for.
+- **Rounded down**, in weeks below two months and whole months from there, so it never
+  overstates. Measured from the check-in, not from now, so it holds under the card's date.
+- Not on a seeded card (KV-103), and not where nothing leaned on the baseline — an
+  unusable capture, or one too early to compare.
 
 ### Where the baseline is now: one live line, and a label of its own (KV-17)
 
