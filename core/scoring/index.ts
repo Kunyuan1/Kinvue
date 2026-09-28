@@ -9,7 +9,7 @@ import type {
   WithheldReason,
 } from '../session/types'
 import { unusableReason, type UnusableReason } from '../session/usable'
-import { ALL_RULES, BASELINE_RULE_IDS, uncomparedMetrics, type Rule } from './rules'
+import { ALL_RULES, BASELINE_RULE_IDS, round, uncomparedMetrics, type Rule } from './rules'
 
 export { ALL_RULES, BASELINE_RULE_IDS, canBeCalledUsual, uncomparedMetrics } from './rules'
 export type { Rule, RuleContext } from './rules'
@@ -262,9 +262,11 @@ export const READING_UNIT: Record<ComparedMetric, string> = {
 /**
  * A reading's number as the card shows it: whole units. The SDK reports
  * fractions, so a chart at one decimal quoted 74.6 beside a card saying 75.
+ * Rounded by the rules' own `round`, so there is one rounding for a reading
+ * wherever it is quoted (second review of #162).
  */
 export function readingText(value: number): string {
-  return String(Math.round(value))
+  return String(round(value))
 }
 
 /** How a metric is named in a sentence. Shared with the trend (KV-4). */
@@ -301,7 +303,7 @@ function listOf(words: readonly string[]): string {
  */
 function whatItShowed(gap: UncomparedMetric): string {
   if (gap.mean === undefined || gap.readings === 0) return ''
-  const value = `${Math.round(gap.mean)} ${METRIC_UNIT[gap.metric]}`
+  const value = `${readingText(gap.mean)} ${METRIC_UNIT[gap.metric]}`
   return gap.readings === 1
     ? ` (that one was ${value})`
     : ` (those ${gap.readings} averaged ${value})`

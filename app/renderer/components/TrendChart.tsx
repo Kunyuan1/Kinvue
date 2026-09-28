@@ -38,16 +38,28 @@ const PLOT_H = H - PAD.top - PAD.bottom
  * "Mar 3"s (review of #162).
  */
 function spansYears(points: readonly TrendPoint[]): boolean {
-  const years = new Set(points.map((p) => new Date(p.capturedAt).getUTCFullYear()))
+  // The year each date is printed with, in its own zone, not the UTC one: near
+  // New Year the two differ (second review of #162).
+  const years = new Set(
+    points.map((p) =>
+      new Date(p.capturedAt).toLocaleDateString('en-US', { ...inZone(p), year: 'numeric' }),
+    ),
+  )
   return years.size > 1
 }
 
-function dayOf(point: TrendPoint, withYear: boolean): string {
-  // `knownZone`, not the raw field: '' or an unknown zone throws, and this is
-  // drawn above every card (review of #162).
+/**
+ * `knownZone`, not the raw field: '' or an unknown zone throws, and this is
+ * drawn above every card (review of #162).
+ */
+function inZone(point: TrendPoint): { timeZone?: string } {
   const zone = knownZone(point.timeZone)
+  return zone === undefined ? {} : { timeZone: zone }
+}
+
+function dayOf(point: TrendPoint, withYear: boolean): string {
   return new Date(point.capturedAt).toLocaleDateString(undefined, {
-    ...(zone === undefined ? {} : { timeZone: zone }),
+    ...inZone(point),
     month: 'short',
     day: 'numeric',
     ...(withYear ? { year: 'numeric' } : {}),
@@ -192,13 +204,29 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
           </text>
         )}
 
+        {/* A lone point is drawn mid-plot, so its date goes under it, not at
+            the left edge (second review of #162). */}
         {first !== undefined && (
-          <text x={PAD.left} y={H - 8} fontSize={11} fill="var(--color-muted)">
+          <text
+            x={first === last ? first.cx : PAD.left}
+            y={H - 8}
+            textAnchor={first === last ? 'middle' : 'start'}
+            fontSize={11}
+            fill="var(--color-muted)"
+            data-axis-date
+          >
             {dayOf(first.p, withYear)}
           </text>
         )}
         {last !== undefined && last !== first && (
-          <text x={last.cx} y={H - 8} textAnchor="end" fontSize={11} fill="var(--color-muted)">
+          <text
+            x={last.cx}
+            y={H - 8}
+            textAnchor="end"
+            fontSize={11}
+            fill="var(--color-muted)"
+            data-axis-date
+          >
             {dayOf(last.p, withYear)}
           </text>
         )}
@@ -214,9 +242,12 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
         />
       </svg>
 
+      {/* Not a live region: it changes on every pointer move, and a screen
+          reader would announce each point crossed. The table below says the
+          same, calmly (second review of #162). */}
       {focus !== null && (
         <div
-          role="status"
+          role="tooltip"
           className="pointer-events-none absolute top-0 rounded-md border border-(--color-line) bg-(--color-ground) px-2 py-1 text-xs"
           style={{
             left: `${(focus.cx / W) * 100}%`,
@@ -232,6 +263,19 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
         </div>
       )}
     </div>
+  )
+}
+
+/** The sentences under the chart, from `core/trend`. */
+function Notes({ trend }: { trend: Trend }): React.JSX.Element {
+  return (
+    <>
+      {trendNotes(trend).map((note) => (
+        <p key={note} className="mt-1 text-sm text-(--color-muted)">
+          {note}
+        </p>
+      ))}
+    </>
   )
 }
 
@@ -272,13 +316,21 @@ export default function TrendChart({
       </div>
 
       {trend.points.length === 0 ? (
-        <p className="text-sm text-(--color-muted)">
-          {`No ${METRIC_NAME[metric]} readings to draw.`}
-        </p>
+        <>
+          <p className="text-sm text-(--color-muted)">
+            {`No ${METRIC_NAME[metric]} readings to draw.`}
+          </p>
+          {/* The notes still stand with nothing drawn: this is the tab where a
+              caregiver has least else to go on (second review of #162). */}
+          <Notes trend={trend} />
+        </>
       ) : (
         <>
           <h2 className="mb-2 text-sm font-medium">{trendTitle(trend)}</h2>
-          <Plot trend={trend} />
+          {/* Keyed by metric: a hovered index is a point on one metric's line,
+              and a tab changed from the keyboard never fires pointerleave
+              (second review of #162). */}
+          <Plot key={metric} trend={trend} />
           <p className="mt-2 flex flex-wrap items-center gap-4 text-xs text-(--color-muted)">
             {usualLabel(trend) !== null && (
               <span className="flex items-center gap-1">
@@ -316,11 +368,7 @@ export default function TrendChart({
               </>
             )}
           </p>
-          {trendNotes(trend).map((note) => (
-            <p key={note} className="mt-1 text-sm text-(--color-muted)">
-              {note}
-            </p>
-          ))}
+          <Notes trend={trend} />
           <details className="mt-2 text-sm">
             <summary className="cursor-pointer text-(--color-muted)">Show as a table</summary>
             <table className="mt-2 w-full text-left">

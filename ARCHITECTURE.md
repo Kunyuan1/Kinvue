@@ -436,7 +436,10 @@ against, with that check-in marked and the usual it was compared with drawn behi
 - **What the chart spans, and what it counts, follow what is drawn** (review of #162). The
   title counts readings and check-ins apart — *"HRV, ms: 3 readings over the last 14
   check-ins."* — since they differ whenever a metric goes unmeasured, and says "at the latest
-  check-in" only when the one reading is the latest's. Refusals are counted from the first
+  check-in" only when the one reading is the latest's. "The last" and "the latest" are said
+  only while no check-in in the stretch or after it was refused; otherwise the title counts
+  *"5 check-ins that could be used"*, since the last 5 usable are not the last 5 (second
+  review of #162). Refusals are counted from the first
   point drawn to the latest, so the number follows the metric on screen; a lone first point
   looks back to the check-in before it, since a first week of failed captures is exactly when
   the chart must not be silent. **A refusal newer than the latest point is said first**: the

@@ -5,7 +5,14 @@ import {
   type Baseline,
   type Stat,
 } from '../baseline'
-import { canBeCalledUsual, METRIC_NAME, METRIC_UNIT, READING_LABEL, READING_UNIT } from '../scoring'
+import {
+  canBeCalledUsual,
+  METRIC_NAME,
+  METRIC_UNIT,
+  READING_LABEL,
+  READING_UNIT,
+  readingText,
+} from '../scoring'
 import type { ComparedMetric, SessionRecord, Vitals } from '../session/types'
 import { unusableReason } from '../session/usable'
 
@@ -80,9 +87,10 @@ export interface Trend {
   /**
    * This person's check-ins in that stretch that could not be used, so are not
    * plotted: a point on a line carries no "not trusted" beside it, the way a
-   * card's sentence does (KV-12). The stretch starts just after the last usable
-   * check-in before the first point, so this follows the metric shown, and a
-   * lone first point still counts the refusals that came before it.
+   * card's sentence does (KV-12). The stretch runs from the first point to the
+   * latest, so this follows the metric shown. A lone point that is the latest
+   * has no stretch, and looks back instead: from just after the usable check-in
+   * before it, or from the start, so a first week of failed captures is said.
    */
   refused: number
   /**
@@ -191,25 +199,39 @@ const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
  * metric goes unmeasured, and "at the latest check-in" is said only when the
  * one reading is the latest's (review of #162). Named and unit'd as the card's
  * readings row names them.
+ *
+ * "The last" and "the latest" are said only while they are true of every
+ * check-in, not just the usable ones: with a refusal in the stretch or after
+ * it, the last 5 usable check-ins are not the last 5, and the note under the
+ * title says the newest could not be used (second review of #162). The count
+ * is then of the check-ins that could be used, and says so.
  */
 export function trendTitle(trend: Trend): string {
   const n = trend.points.length
   const k = trend.checkIns
   const what = `${READING_LABEL[trend.metric]}, ${READING_UNIT[trend.metric]}`
-  if (n === 1 && trend.points[0]?.latest === true) return `${what}, at the latest check-in.`
-  if (n === k) return `${what}, over the last ${k} check-ins.`
-  return `${what}: ${n} reading${n === 1 ? '' : 's'} over the last ${k} check-ins.`
+  if (n === 1 && trend.points[0]?.latest === true) {
+    return trend.refusedSince === 0
+      ? `${what}, at the latest check-in.`
+      : `${what}, at the latest check-in that could be used.`
+  }
+  const span =
+    trend.refused === 0 && trend.refusedSince === 0
+      ? `the last ${k} check-ins`
+      : `${k} check-ins that could be used`
+  if (n === k) return `${what}, over ${span}.`
+  return `${what}: ${n} reading${n === 1 ? '' : 's'} over ${span}.`
 }
 
 /**
- * "their usual 72 bpm" — the line's own label, rounded as the rules round it
- * (`toFixed`, not `Math.round`, which differ on some halves), so it quotes the
- * number the card beside it quotes.
+ * "their usual 72 bpm" — the line's own label, rounded by `readingText` as
+ * every reading and every rule's quote is, so it quotes the number the card
+ * beside it quotes.
  */
 export function usualLabel(trend: Trend): string | null {
   return trend.usual === null
     ? null
-    : `their usual ${Number(trend.usual.toFixed(0))} ${METRIC_UNIT[trend.metric]}`
+    : `their usual ${readingText(trend.usual)} ${METRIC_UNIT[trend.metric]}`
 }
 
 /**
@@ -228,12 +250,13 @@ export function trendNotes(trend: Trend): string[] {
   const notes: string[] = []
   // First, since the chart is read before the cards: its newest point is not
   // their newest check-in (review of #162).
+  // With nothing drawn there is no point to be the earlier one.
   if (trend.refusedSince > 0) {
+    const then = trend.points.length > 0 ? ', so the latest point here is an earlier one.' : '.'
     notes.push(
       trend.refusedSince === 1
-        ? 'The most recent check-in could not be used, so the latest point here is an earlier one.'
-        : `The ${trend.refusedSince} most recent check-ins could not be used, so the latest point ` +
-            'here is an earlier one.',
+        ? `The most recent check-in could not be used${then}`
+        : `The ${trend.refusedSince} most recent check-ins could not be used${then}`,
     )
   }
   if (trend.usual === null) {

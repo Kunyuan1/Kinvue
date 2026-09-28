@@ -230,4 +230,35 @@ describe('what the chart spans, and says about it (review of #162)', () => {
     // And not counted as "over this stretch" too.
     expect(two?.refused).toBe(0)
   })
+
+  it('says "latest" and "the last" only while no check-in in or after the stretch was refused (second review of #162)', () => {
+    // Refused Sep 28, usable Oct 1, refused Oct 2: the one point is not the latest check-in.
+    const lone = trendOf(
+      [refused('r-28', '2026-09-28T09:00:00.000Z'), latest(), refused('r-new', '2026-10-02T09:00:00.000Z')],
+      P,
+      'pulse',
+    )
+    expect(lone && trendTitle(lone)).toBe('Pulse, bpm, at the latest check-in that could be used.')
+    expect(lone && trendNotes(lone)[0]).toMatch(/^The most recent check-in could not be used/)
+
+    // Five usable, two refused among them: not "the last 5".
+    const five = [...history(4), latest()]
+    const within = trendOf(
+      [...five, refused('r-2', '2026-09-02T12:00:00.000Z'), refused('r-3', '2026-09-03T12:00:00.000Z')],
+      P,
+      'pulse',
+    )
+    expect(within && trendTitle(within)).toBe('Pulse, bpm, over 5 check-ins that could be used.')
+    const after = trendOf([...five, refused('r-new', '2026-10-02T09:00:00.000Z')], P, 'pulse')
+    expect(after && trendTitle(after)).toBe('Pulse, bpm, over 5 check-ins that could be used.')
+    // Readings counted apart still read the same way.
+    const sparse = trendOf(
+      [...history(3), day(4, { vitals: { pulseRateBpm: null } }), latest(), refused('r-new', '2026-10-02T09:00:00.000Z')],
+      P,
+      'pulse',
+    )
+    expect(sparse && trendTitle(sparse)).toBe('Pulse, bpm: 4 readings over 5 check-ins that could be used.')
+    // Nothing refused: unchanged.
+    expect(trendTitle(trendOf(five, P, 'pulse')!)).toBe('Pulse, bpm, over the last 5 check-ins.')
+  })
 })

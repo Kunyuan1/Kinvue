@@ -47,7 +47,8 @@ export interface Rule {
 }
 
 const clamp01 = (n: number): number => Math.min(1, Math.max(0, n))
-const round = (n: number, dp = 0): number => Number(n.toFixed(dp))
+/** How every number a rule quotes is rounded; the card and the chart use it too (KV-4). */
+export const round = (n: number, dp = 0): number => Number(n.toFixed(dp))
 
 /**
  * HRV falls under physiological stress, illness onset and poor sleep, and it

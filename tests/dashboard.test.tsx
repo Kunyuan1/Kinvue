@@ -520,9 +520,39 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
       left: 0, top: 0, width: 640, height: 180, right: 640, bottom: 180, x: 0, y: 0, toJSON: () => ({}),
     })
     fireEvent.pointerMove(svg!.querySelector('rect')!, { clientX: 630 })
-    const readout = screen.getByRole('status')
+    const readout = screen.getByRole('tooltip')
+    expect(readout.getAttribute('aria-live')).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
     expect(readout.textContent).toContain('80 bpm')
     expect(readout.textContent).toContain('latest')
+  })
+
+  it('drops the readout when the metric changes under a parked pointer (second review of #162)', async () => {
+    listSessions.mockResolvedValue(scored([...history(5), latest({ vitals: { pulseRateBpm: 80 } })]))
+    render(<App />)
+    await screen.findByText('Pulse, bpm, over the last 6 check-ins.')
+    const svg = document.querySelector<SVGSVGElement>('section svg[role="img"]')
+    vi.spyOn(svg!, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, width: 640, height: 180, right: 640, bottom: 180, x: 0, y: 0, toJSON: () => ({}),
+    })
+    fireEvent.pointerMove(svg!.querySelector('rect')!, { clientX: 630 })
+    expect(screen.getByRole('tooltip')).toBeTruthy()
+
+    // As from the keyboard: the pointer never leaves the plot.
+    fireEvent.click(screen.getByRole('button', { name: 'HRV' }))
+    expect(screen.getByText('HRV, ms, over the last 6 check-ins.')).toBeTruthy()
+    expect(screen.queryByRole('tooltip')).toBeNull()
+  })
+
+  it('dates a lone point under the point (second review of #162)', async () => {
+    listSessions.mockResolvedValue(scored([latest()]))
+    render(<App />)
+    await screen.findByText('Pulse, bpm, at the latest check-in.')
+    const dot = document.querySelector<SVGCircleElement>('section svg[role="img"] circle')
+    const dates = document.querySelectorAll<SVGTextElement>('section svg [data-axis-date]')
+    expect(dates.length).toBe(1)
+    expect(dates[0]?.getAttribute('x')).toBe(dot?.getAttribute('cx'))
+    expect(dates[0]?.getAttribute('text-anchor')).toBe('middle')
   })
 
   it('offers the same points as a table', async () => {
@@ -584,12 +614,50 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     expect(rows.at(-1)).toContain('2025')
   })
 
+  it("decides the year in each point's own zone, not UTC (second review of #162)", async () => {
+    // Both are Jan 2026 in Tokyo; the first is still 2025 in UTC.
+    const tokyo = (id: string, capturedAt: string): SessionRecord =>
+      session({ id, capturedAt, timeZone: 'Asia/Tokyo' })
+    listSessions.mockResolvedValue(
+      scored([
+        tokyo('ny-1', '2025-12-31T20:00:00.000Z'),
+        tokyo('ny-2', '2026-01-01T02:00:00.000Z'),
+        tokyo('ny-3', '2026-01-02T02:00:00.000Z'),
+        latest({ capturedAt: '2026-01-05T02:00:00.000Z', timeZone: 'Asia/Tokyo' }),
+      ]),
+    )
+    render(<App />)
+    await screen.findByText('Show as a table')
+    const rows = Array.from(document.querySelectorAll('section table tbody tr')).map((r) => r.textContent ?? '')
+    expect(rows.at(-1)).toContain('Jan 1')
+    for (const row of rows) expect(row).not.toMatch(/202[56]/)
+  })
+
   it('leaves the year off within one', async () => {
     listSessions.mockResolvedValue(scored([...history(2), latest()]))
     render(<App />)
     await screen.findByText('Show as a table')
     const first = document.querySelector('section table tbody tr')?.textContent ?? ''
     expect(first).not.toContain('2026')
+  })
+
+  it('keeps the notes on a tab with no readings to draw (second review of #162)', async () => {
+    const noHrv = history(4, { hrvRmssdMs: null })
+    listSessions.mockResolvedValue(
+      scored([
+        ...noHrv,
+        latest({ vitals: { hrvRmssdMs: null } }),
+        session({ id: 'r-1', capturedAt: '2026-10-02T09:00:00.000Z', vitals: { confidence: 0.2 } }),
+        session({ id: 'r-2', capturedAt: '2026-10-03T09:00:00.000Z', vitals: { confidence: 0.2 } }),
+      ]),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'HRV' }))
+
+    expect(screen.getByText('No HRV readings to draw.')).toBeTruthy()
+    // No point is drawn, so none is called the earlier one.
+    expect(screen.getByText('The 2 most recent check-ins could not be used.')).toBeTruthy()
+    expect(screen.getByText('HRV was not measured at the latest check-in.')).toBeTruthy()
   })
 
   it('draws nothing when no check-in could be used', async () => {
