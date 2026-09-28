@@ -1,6 +1,7 @@
-import { useMemo, useState } from "react";
-import type { ComparedMetric, SessionRecord } from "@core/session/types";
+import { useMemo, useState } from 'react'
+import type { ComparedMetric, SessionRecord } from '@core/session/types'
 import {
+  axisTicks,
   TREND_METRICS,
   trendNotes,
   trendOf,
@@ -8,8 +9,8 @@ import {
   usualLabel,
   type Trend,
   type TrendPoint,
-} from "@core/trend";
-import { METRIC_NAME, METRIC_UNIT } from "@core/scoring";
+} from '@core/trend'
+import { METRIC_NAME, METRIC_UNIT } from '@core/scoring'
 
 /**
  * One metric over the baseline window, the latest check-in marked and their
@@ -21,92 +22,81 @@ import { METRIC_NAME, METRIC_UNIT } from "@core/scoring";
  * in the check-ins shows as one.
  */
 
+/**
+ * Units as the card writes them beside a reading. The chart's latest value sits
+ * in a narrow margin, and "breaths/min" did not fit it (seen on screen).
+ */
+const SHORT_UNIT: Record<ComparedMetric, string> = {
+  pulse: 'bpm',
+  breathing: 'br/min',
+  hrv: 'ms',
+}
+
 const TAB_LABEL: Record<ComparedMetric, string> = {
-  pulse: "Pulse",
-  breathing: "Breathing",
-  hrv: "HRV",
-};
+  pulse: 'Pulse',
+  breathing: 'Breathing',
+  hrv: 'HRV',
+}
 
 // The drawing's own coordinates; the SVG scales to the card's width.
-const W = 640;
-const H = 180;
+const W = 640
+const H = 180
 // The right margin holds the latest value, where no line or gridline reaches.
-const PAD = { left: 40, right: 72, top: 16, bottom: 28 };
-const PLOT_W = W - PAD.left - PAD.right;
-const PLOT_H = H - PAD.top - PAD.bottom;
-
-/** Three or four round ticks covering [lo, hi]: steps of 1, 2 or 5 × 10^k. */
-function ticksFor(lo: number, hi: number): number[] {
-  const raw = (hi - lo) / 3;
-  const mag = 10 ** Math.floor(Math.log10(raw));
-  const step =
-    [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw) ?? 10 * mag;
-  const ticks: number[] = [];
-  for (let t = Math.ceil(lo / step) * step; t <= hi + 1e-9; t += step)
-    ticks.push(t);
-  return ticks;
-}
+const PAD = { left: 40, right: 72, top: 16, bottom: 28 }
+const PLOT_W = W - PAD.left - PAD.right
+const PLOT_H = H - PAD.top - PAD.bottom
 
 /** The day a point was captured, where it was captured (KV-28). */
 function dayOf(point: TrendPoint): string {
   return new Date(point.capturedAt).toLocaleDateString(undefined, {
     ...(point.timeZone === undefined ? {} : { timeZone: point.timeZone }),
-    month: "short",
-    day: "numeric",
-  });
+    month: 'short',
+    day: 'numeric',
+  })
 }
 
-const valueText = (value: number): string => String(Number(value.toFixed(1)));
+const valueText = (value: number): string => String(Number(value.toFixed(1)))
 
 function Plot({ trend }: { trend: Trend }): React.JSX.Element {
-  const [hovered, setHovered] = useState<number | null>(null);
-  const unit = METRIC_UNIT[trend.metric];
-  const points = trend.points;
+  const [hovered, setHovered] = useState<number | null>(null)
+  const unit = SHORT_UNIT[trend.metric]
+  const points = trend.points
 
-  const times = points.map((p) => Date.parse(p.capturedAt));
-  const t0 = Math.min(...times);
-  const t1 = Math.max(...times);
-  const values = [
-    ...points.map((p) => p.value),
-    ...(trend.usual === null ? [] : [trend.usual]),
-  ];
-  const spread = Math.max(...values) - Math.min(...values);
-  const pad =
-    spread === 0 ? Math.max(1, Math.abs(values[0] ?? 1) * 0.1) : spread * 0.15;
-  const lo = Math.min(...values) - pad;
-  const hi = Math.max(...values) + pad;
+  const times = points.map((p) => Date.parse(p.capturedAt))
+  const t0 = Math.min(...times)
+  const t1 = Math.max(...times)
+  const values = [...points.map((p) => p.value), ...(trend.usual === null ? [] : [trend.usual])]
+  const spread = Math.max(...values) - Math.min(...values)
+  const pad = spread === 0 ? Math.max(1, Math.abs(values[0] ?? 1) * 0.1) : spread * 0.15
+  const lo = Math.min(...values) - pad
+  const hi = Math.max(...values) + pad
 
   const x = (t: number): number =>
-    t1 === t0
-      ? PAD.left + PLOT_W / 2
-      : PAD.left + ((t - t0) / (t1 - t0)) * PLOT_W;
-  const y = (v: number): number =>
-    PAD.top + (1 - (v - lo) / (hi - lo)) * PLOT_H;
+    t1 === t0 ? PAD.left + PLOT_W / 2 : PAD.left + ((t - t0) / (t1 - t0)) * PLOT_W
+  const y = (v: number): number => PAD.top + (1 - (v - lo) / (hi - lo)) * PLOT_H
   const xy = points.map((p, i) => ({
     p,
     cx: x(times[i] ?? t0),
     cy: y(p.value),
-  }));
-  const path = xy
-    .map(({ cx, cy }, i) => `${i === 0 ? "M" : "L"}${cx},${cy}`)
-    .join(" ");
-  const ticks = ticksFor(lo, hi);
-  const label = usualLabel(trend);
-  const first = xy[0];
-  const last = xy[xy.length - 1];
-  const focus = hovered === null ? null : (xy[hovered] ?? null);
+  }))
+  const path = xy.map(({ cx, cy }, i) => `${i === 0 ? 'M' : 'L'}${cx},${cy}`).join(' ')
+  const ticks = axisTicks(lo, hi)
+  const label = usualLabel(trend)
+  const first = xy[0]
+  const last = xy[xy.length - 1]
+  const focus = hovered === null ? null : (xy[hovered] ?? null)
 
   // The crosshair snaps to the nearest check-in in time.
   const onMove = (e: React.PointerEvent<SVGRectElement>): void => {
-    const box = e.currentTarget.ownerSVGElement?.getBoundingClientRect();
-    if (box === undefined || box.width === 0) return;
-    const px = ((e.clientX - box.left) / box.width) * W;
-    let best = 0;
+    const box = e.currentTarget.ownerSVGElement?.getBoundingClientRect()
+    if (box === undefined || box.width === 0) return
+    const px = ((e.clientX - box.left) / box.width) * W
+    let best = 0
     xy.forEach(({ cx }, i) => {
-      if (Math.abs(cx - px) < Math.abs((xy[best]?.cx ?? 0) - px)) best = i;
-    });
-    setHovered(best);
-  };
+      if (Math.abs(cx - px) < Math.abs((xy[best]?.cx ?? 0) - px)) best = i
+    })
+    setHovered(best)
+  }
 
   return (
     <div className="relative">
@@ -114,7 +104,7 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
         viewBox={`0 0 ${W} ${H}`}
         className="h-auto w-full"
         role="img"
-        aria-label={`${trendTitle(trend)}${label === null ? "" : ` Line: ${label}.`}`}
+        aria-label={`${trendTitle(trend)}${label === null ? '' : ` Line: ${label}.`}`}
       >
         {ticks.map((t) => (
           <g key={t}>
@@ -133,7 +123,7 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
               dominantBaseline="middle"
               fontSize={11}
               fill="var(--color-muted)"
-              style={{ fontVariantNumeric: "tabular-nums" }}
+              style={{ fontVariantNumeric: 'tabular-nums' }}
             >
               {t}
             </text>
@@ -184,8 +174,8 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
             // a step larger than a hollow one to read the same size.
             r={p.latest ? 7 : p.seeded ? 4 : 5}
             // Seeded days are hollow (KV-8): never plotted as if measured.
-            fill={p.seeded ? "var(--color-raised)" : "var(--color-series)"}
-            stroke={p.seeded ? "var(--color-series)" : "var(--color-raised)"}
+            fill={p.seeded ? 'var(--color-raised)' : 'var(--color-series)'}
+            stroke={p.seeded ? 'var(--color-series)' : 'var(--color-raised)'}
             strokeWidth={2}
             data-seeded={p.seeded}
             data-latest={p.latest}
@@ -210,13 +200,7 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
           </text>
         )}
         {last !== undefined && last !== first && (
-          <text
-            x={last.cx}
-            y={H - 8}
-            textAnchor="end"
-            fontSize={11}
-            fill="var(--color-muted)"
-          >
+          <text x={last.cx} y={H - 8} textAnchor="end" fontSize={11} fill="var(--color-muted)">
             {dayOf(last.p)}
           </text>
         )}
@@ -238,38 +222,35 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
           className="pointer-events-none absolute top-0 rounded-md border border-(--color-line) bg-(--color-ground) px-2 py-1 text-xs"
           style={{
             left: `${(focus.cx / W) * 100}%`,
-            transform: focus.cx > W / 2 ? "translateX(-100%)" : undefined,
+            transform: focus.cx > W / 2 ? 'translateX(-100%)' : undefined,
           }}
         >
           <p className="font-medium">{`${valueText(focus.p.value)} ${unit}`}</p>
           <p className="text-(--color-muted)">
             {dayOf(focus.p)}
-            {focus.p.latest ? " · latest" : ""}
-            {focus.p.seeded ? " · seeded demo data" : ""}
+            {focus.p.latest ? ' · latest' : ''}
+            {focus.p.seeded ? ' · seeded demo data' : ''}
           </p>
         </div>
       )}
     </div>
-  );
+  )
 }
 
 export default function TrendChart({
   records,
   personId,
 }: {
-  records: readonly SessionRecord[];
-  personId: string;
+  records: readonly SessionRecord[]
+  personId: string
 }): React.JSX.Element | null {
-  const [metric, setMetric] = useState<ComparedMetric>("pulse");
-  const trend = useMemo(
-    () => trendOf(records, personId, metric),
-    [records, personId, metric],
-  );
+  const [metric, setMetric] = useState<ComparedMetric>('pulse')
+  const trend = useMemo(() => trendOf(records, personId, metric), [records, personId, metric])
   // No usable check-in at all — for any metric, since that is what null means:
   // nothing to draw, and the cards say why.
-  if (trend === null) return null;
+  if (trend === null) return null
 
-  const unit = METRIC_UNIT[metric];
+  const unit = METRIC_UNIT[metric]
   return (
     <section className="mb-8 rounded-xl border border-(--color-line) bg-(--color-raised) p-5">
       <div className="mb-3 flex gap-2" role="group" aria-label="Metric">
@@ -281,8 +262,8 @@ export default function TrendChart({
             onClick={() => setMetric(m)}
             className={`rounded-md border px-3 py-1 text-sm ${
               m === metric
-                ? "border-(--color-muted) text-(--color-ink)"
-                : "border-(--color-line) text-(--color-muted) hover:bg-(--color-ground)"
+                ? 'border-(--color-muted) text-(--color-ink)'
+                : 'border-(--color-line) text-(--color-muted) hover:bg-(--color-ground)'
             }`}
           >
             {TAB_LABEL[m]}
@@ -302,14 +283,7 @@ export default function TrendChart({
             {usualLabel(trend) !== null && (
               <span className="flex items-center gap-1">
                 <svg width="14" height="10" aria-hidden="true">
-                  <line
-                    x1="0"
-                    x2="14"
-                    y1="5"
-                    y2="5"
-                    stroke="var(--color-muted)"
-                    strokeWidth="1"
-                  />
+                  <line x1="0" x2="14" y1="5" y2="5" stroke="var(--color-muted)" strokeWidth="1" />
                 </svg>
                 {usualLabel(trend)}
               </span>
@@ -344,9 +318,7 @@ export default function TrendChart({
             </p>
           ))}
           <details className="mt-2 text-sm">
-            <summary className="cursor-pointer text-(--color-muted)">
-              Show as a table
-            </summary>
+            <summary className="cursor-pointer text-(--color-muted)">Show as a table</summary>
             <table className="mt-2 w-full text-left">
               <thead className="text-(--color-muted)">
                 <tr>
@@ -355,18 +327,15 @@ export default function TrendChart({
                   <th className="font-normal" />
                 </tr>
               </thead>
-              <tbody style={{ fontVariantNumeric: "tabular-nums" }}>
+              <tbody style={{ fontVariantNumeric: 'tabular-nums' }}>
                 {[...trend.points].reverse().map((p) => (
                   <tr key={p.id}>
                     <td>{dayOf(p)}</td>
                     <td>{valueText(p.value)}</td>
                     <td className="text-(--color-muted)">
-                      {[
-                        p.latest ? "latest" : "",
-                        p.seeded ? "seeded demo data" : "",
-                      ]
-                        .filter((s) => s !== "")
-                        .join(" · ")}
+                      {[p.latest ? 'latest' : '', p.seeded ? 'seeded demo data' : '']
+                        .filter((s) => s !== '')
+                        .join(' · ')}
                     </td>
                   </tr>
                 ))}
@@ -376,5 +345,5 @@ export default function TrendChart({
         </>
       )}
     </section>
-  );
+  )
 }

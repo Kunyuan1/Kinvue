@@ -1,4 +1,10 @@
-import { baselineWindow, computeBaseline, MIN_BASELINE_SESSIONS, type Baseline, type Stat } from '../baseline'
+import {
+  baselineWindow,
+  computeBaseline,
+  MIN_BASELINE_SESSIONS,
+  type Baseline,
+  type Stat,
+} from '../baseline'
 import { canBeCalledUsual, METRIC_NAME, METRIC_UNIT } from '../scoring'
 import type { ComparedMetric, SessionRecord, Vitals } from '../session/types'
 import { unusableReason } from '../session/usable'
@@ -128,6 +134,26 @@ export function trendOf(
     seededPoints: points.filter((p) => p.seeded).length,
     refused,
   }
+}
+
+/**
+ * Round values for a chart's value axis covering [lo, hi]: the smallest step
+ * of 1, 2 or 5 × 10^k that leaves at most five, so a narrow range still gets
+ * three or more to read a point against. Rounding the step *up* to the next
+ * round number instead left breathing (14–19) with one tick and an HRV of 24
+ * under the lowest (KV-4, seen on screen). Here, not in the renderer, so the
+ * caregiver's client draws the same axis.
+ */
+export function axisTicks(lo: number, hi: number): number[] {
+  if (!(hi > lo)) return [lo]
+  const mag = 10 ** Math.floor(Math.log10((hi - lo) / 5))
+  const step =
+    [1, 2, 5, 10, 20]
+      .map((m) => m * mag)
+      .find((s) => Math.floor(hi / s) - Math.ceil(lo / s) + 1 <= 5) ?? 20 * mag
+  const ticks: number[] = []
+  for (let i = Math.ceil(lo / step); i * step <= hi; i++) ticks.push(Number((i * step).toFixed(10)))
+  return ticks
 }
 
 const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)

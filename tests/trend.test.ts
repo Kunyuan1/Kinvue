@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { BASELINE_WINDOW_SESSIONS, computeBaseline } from '@core/baseline'
 import { scoreSession } from '@core/scoring'
-import { trendNotes, trendOf, trendTitle, usualLabel } from '@core/trend'
+import { axisTicks, trendNotes, trendOf, trendTitle, usualLabel } from '@core/trend'
 import type { SessionRecord } from '@core/session/types'
 import { history, seededHistory, session } from './helpers'
 
@@ -129,5 +129,31 @@ describe('what the chart says (KV-4)', () => {
         expect(line).not.toMatch(RELATIVE_TIME)
       }
     }
+  })
+})
+
+describe('axisTicks: round values to read a point against (KV-4)', () => {
+  it('gives a narrow range three or more ticks — the two seen on screen with one or two', () => {
+    // Breathing 14–19 around a usual of 15, padded as the chart pads it.
+    expect(axisTicks(13.25, 19.75)).toEqual([14, 16, 18])
+    // HRV 24–38 around 34: 24 now sits beside a tick, not under the lowest.
+    expect(axisTicks(21.9, 40.1)).toEqual([25, 30, 35, 40])
+  })
+
+  it('never gives more than five, at any scale', () => {
+    for (const [lo, hi] of [[0, 1], [60, 110], [0.2, 0.9], [0, 1000], [71.5, 72.5]] as const) {
+      const ticks = axisTicks(lo, hi)
+      expect(ticks.length, `${lo}–${hi}`).toBeGreaterThanOrEqual(2)
+      expect(ticks.length, `${lo}–${hi}`).toBeLessThanOrEqual(5)
+      for (const t of ticks) expect(t >= lo && t <= hi, `${t} in ${lo}–${hi}`).toBe(true)
+    }
+  })
+
+  it('keeps decimal ticks clean', () => {
+    expect(axisTicks(0.2, 0.9)).toEqual([0.2, 0.4, 0.6, 0.8])
+  })
+
+  it('does not loop on an empty range', () => {
+    expect(axisTicks(5, 5)).toEqual([5])
   })
 })
