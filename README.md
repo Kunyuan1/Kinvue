@@ -143,6 +143,8 @@ app/
       CaptureScreen.tsx  the ~30s in front of the camera (settable) — the one screen the
                          cared-for person reads, not the caregiver
       QuestionFlow.tsx   the four questions, also addressed to them
+      SectionBoundary.tsx  a card or the chart that fails to draw leaves a sentence, not
+                         an empty window (KV-163)
       SessionCard.tsx    one check-in: readings, every answer, the rules that fired
       TrendChart.tsx     one metric over the baseline window, drawn from core/trend (KV-4)
     styles.css           Tailwind v4 theme tokens

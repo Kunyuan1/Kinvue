@@ -13,6 +13,39 @@ import { history, session } from './helpers'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
 
 /**
+ * A card, or the chart, that can be made to throw while drawing (KV-163).
+ *
+ * Both delegate to the real component, so every other test here draws them
+ * as they are. A throw of our own, rather than a record crafted to break one:
+ * whatever breaks one today gets fixed, as `knownZone` fixed the last one, and
+ * the test would quietly stop exercising anything.
+ */
+const drawControl = vi.hoisted(() => ({
+  cardThrowsFor: null as string | null,
+  chartThrows: false,
+}))
+
+vi.mock('@renderer/components/SessionCard', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@renderer/components/SessionCard')>()
+  return {
+    default: (props: Parameters<typeof actual.default>[0]) => {
+      if (props.session.id === drawControl.cardThrowsFor) throw new Error('card failed to draw')
+      return actual.default(props)
+    },
+  }
+})
+
+vi.mock('@renderer/components/TrendChart', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@renderer/components/TrendChart')>()
+  return {
+    default: (props: Parameters<typeof actual.default>[0]) => {
+      if (drawControl.chartThrows) throw new Error('chart failed to draw')
+      return actual.default(props)
+    },
+  }
+})
+
+/**
  * What the dashboard's error box says, from the call sites that decide it
  * (KV-95). `dashboardErrorText` is tested on its own in `failure.test.ts`; this
  * is the part that picks *which* fallback a caregiver reads, and when the box
@@ -43,6 +76,8 @@ beforeEach(() => {
       cancelCapture: vi.fn(() => Promise.resolve()),
     },
   })
+  drawControl.cardThrowsFor = null
+  drawControl.chartThrows = false
   // The dashboard logs the original of anything it will not show.
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
 })
@@ -666,6 +701,44 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     )
     render(<App />)
     await screen.findByText('Not enough to say')
+    expect(screen.queryByRole('button', { name: 'Pulse' })).toBeNull()
+  })
+})
+
+describe('one section that cannot be drawn (KV-163)', () => {
+  const three = (): SessionRecord[] =>
+    [
+      ...history(3),
+      session({ id: 'latest', capturedAt: '2026-10-01T09:00:00.000Z', vitals: { pulseRateBpm: 80 } }),
+    ].map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+  const cards = (): Element[] => Array.from(document.querySelectorAll('article'))
+
+  it('leaves a sentence where that card was, and the other cards and the chart drawn', async () => {
+    drawControl.cardThrowsFor = 'h-1'
+    listSessions.mockResolvedValue(three())
+    render(<App />)
+
+    expect(
+      await screen.findByText('This check-in could not be shown. It is still saved, unchanged.'),
+    ).toBeTruthy()
+    expect(cards().length).toBe(3)
+    expect(screen.getByText('Pulse, bpm, over the last 4 check-ins.')).toBeTruthy()
+    // For the developer, in the console; never on the screen.
+    expect(console.error).toHaveBeenCalledWith(
+      'A dashboard section could not be drawn.',
+      expect.objectContaining({ message: 'card failed to draw' }),
+      expect.anything(),
+    )
+    expect(document.body.textContent).not.toMatch(/failed to draw|Error/)
+  })
+
+  it('keeps every card when the chart is the part that fails', async () => {
+    drawControl.chartThrows = true
+    listSessions.mockResolvedValue(three())
+    render(<App />)
+
+    expect(await screen.findByText(/^The trend could not be drawn\./)).toBeTruthy()
+    expect(cards().length).toBe(4)
     expect(screen.queryByRole('button', { name: 'Pulse' })).toBeNull()
   })
 })

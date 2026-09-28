@@ -13,6 +13,7 @@ import {
 } from '@core/capture/failure'
 import CaptureScreen from './components/CaptureScreen'
 import QuestionFlow from './components/QuestionFlow'
+import SectionBoundary from './components/SectionBoundary'
 import SessionCard from './components/SessionCard'
 import TrendChart from './components/TrendChart'
 import { dashboardErrorText } from './dashboardError'
@@ -472,17 +473,29 @@ export default function App(): React.JSX.Element {
         </div>
       )}
 
+      {/* Each section contained on its own (KV-163): one that cannot be drawn
+          leaves a sentence in its place, not an empty window. */}
       {sessions !== null && sessions.length > 0 && (
-        <TrendChart records={sessions} personId={DEMO_PERSON_ID} />
+        <SectionBoundary
+          fallback={
+            'The trend could not be drawn. ' +
+            'The check-ins themselves are still saved, and listed below.'
+          }
+          className="mb-8 rounded-xl border border-(--color-line) bg-(--color-raised) p-5"
+        >
+          <TrendChart records={sessions} personId={DEMO_PERSON_ID} />
+        </SectionBoundary>
       )}
 
       <div className="space-y-4">
         {newest.map((session) => (
-          <SessionCard
+          <SectionBoundary
             key={session.id}
-            session={session}
-            presentation={shown.get(session.id) ?? null}
-          />
+            fallback="This check-in could not be shown. It is still saved, unchanged."
+            className="rounded-xl border border-(--color-line) bg-(--color-raised) p-5"
+          >
+            <SessionCard session={session} presentation={shown.get(session.id) ?? null} />
+          </SectionBoundary>
         ))}
       </div>
     </main>
