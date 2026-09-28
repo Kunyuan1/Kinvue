@@ -241,6 +241,32 @@ export function usualReachStatus(
   return stale ? `${line}; the most recent was ${howLong(span.to, today)} ago.` : `${line}.`
 }
 
+/**
+ * How a reading is shown on its own — the card's readings row, and every label
+ * on the trend (review of #162): one name, one unit and one rounding for each
+ * metric, wherever a number stands without a sentence around it. Sentences
+ * name it as `METRIC_NAME` and `METRIC_UNIT` do, as the rules quote it.
+ */
+export const READING_LABEL: Record<ComparedMetric, string> = {
+  pulse: 'Pulse',
+  breathing: 'Breathing',
+  hrv: 'HRV',
+}
+
+export const READING_UNIT: Record<ComparedMetric, string> = {
+  pulse: 'bpm',
+  breathing: 'br/min',
+  hrv: 'ms',
+}
+
+/**
+ * A reading's number as the card shows it: whole units. The SDK reports
+ * fractions, so a chart at one decimal quoted 74.6 beside a card saying 75.
+ */
+export function readingText(value: number): string {
+  return String(Math.round(value))
+}
+
 /** How a metric is named in a sentence. Shared with the trend (KV-4). */
 export const METRIC_NAME: Record<ComparedMetric, string> = {
   pulse: 'pulse',

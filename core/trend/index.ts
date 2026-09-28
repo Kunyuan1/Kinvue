@@ -5,7 +5,7 @@ import {
   type Baseline,
   type Stat,
 } from '../baseline'
-import { canBeCalledUsual, METRIC_NAME, METRIC_UNIT } from '../scoring'
+import { canBeCalledUsual, METRIC_NAME, METRIC_UNIT, READING_LABEL, READING_UNIT } from '../scoring'
 import type { ComparedMetric, SessionRecord, Vitals } from '../session/types'
 import { unusableReason } from '../session/usable'
 
@@ -72,11 +72,25 @@ export interface Trend {
   /** How many of `points` are seeded demo data. */
   seededPoints: number
   /**
-   * This person's check-ins over the same stretch that could not be used, so
-   * are not plotted: a point on a line carries no "not trusted" beside it,
-   * the way a card's sentence does (KV-12).
+   * Usable check-ins from the first point drawn to the latest: the stretch the
+   * chart spans, which `points` undercounts when some did not measure this
+   * metric (review of #162).
+   */
+  checkIns: number
+  /**
+   * This person's check-ins in that stretch that could not be used, so are not
+   * plotted: a point on a line carries no "not trusted" beside it, the way a
+   * card's sentence does (KV-12). The stretch starts just after the last usable
+   * check-in before the first point, so this follows the metric shown, and a
+   * lone first point still counts the refusals that came before it.
    */
   refused: number
+  /**
+   * Check-ins after the latest usable one that could not be used: the chart's
+   * newest point is not their newest check-in, and a caregiver reading the chart
+   * first should be told (review of #162).
+   */
+  refusedSince: number
 }
 
 /**
@@ -117,13 +131,21 @@ export function trendOf(
         ]
   })
 
-  const from = window[0]?.capturedAt ?? latest.capturedAt
-  const refused = theirs.filter(
-    (r) =>
-      unusableReason(r.vitals) !== null &&
-      r.capturedAt >= from &&
-      r.capturedAt <= latest.capturedAt,
-  ).length
+  const first = points[0]
+  const refusedAt = (r: SessionRecord): boolean => unusableReason(r.vitals) !== null
+  // The stretch the chart spans: from its first point to the latest, so a
+  // refusal counts only where the reader would expect a point for it, whichever
+  // metric is shown. A lone point that is the latest has no stretch, and looks
+  // back instead, to the usable check-in before it or to the start — a first
+  // week of failed captures is exactly when the chart must not be silent.
+  const lone = points.length === 1 && first?.latest === true
+  const earlier = lone ? usable.filter((r) => r.capturedAt < latest.capturedAt).at(-1) : undefined
+  const inStretch = (r: SessionRecord): boolean =>
+    first !== undefined &&
+    r.capturedAt <= latest.capturedAt &&
+    (lone
+      ? earlier === undefined || r.capturedAt > earlier.capturedAt
+      : r.capturedAt >= first.capturedAt)
 
   return {
     metric,
@@ -132,7 +154,11 @@ export function trendOf(
     usualReadings: stat?.n ?? 0,
     latestMeasured: read(latest.vitals) !== null,
     seededPoints: points.filter((p) => p.seeded).length,
-    refused,
+    checkIns: usable.filter(
+      (r) => first !== undefined && r.capturedAt >= first.capturedAt && inStretch(r),
+    ).length,
+    refused: theirs.filter((r) => refusedAt(r) && inStretch(r)).length,
+    refusedSince: theirs.filter((r) => refusedAt(r) && r.capturedAt > latest.capturedAt).length,
   }
 }
 
@@ -158,11 +184,21 @@ export function axisTicks(lo: number, hi: number): number[] {
 
 const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
 
-/** "Pulse, bpm, over the last 12 check-ins." — what the chart is of. */
+/**
+ * What the chart is of: "Pulse, bpm, over the last 12 check-ins.", or, when
+ * some did not measure it, "HRV, ms: 3 readings over the last 14 check-ins."
+ * Readings and check-ins are counted apart, since they differ whenever a
+ * metric goes unmeasured, and "at the latest check-in" is said only when the
+ * one reading is the latest's (review of #162). Named and unit'd as the card's
+ * readings row names them.
+ */
 export function trendTitle(trend: Trend): string {
   const n = trend.points.length
-  const over = n === 1 ? 'at the latest check-in' : `over the last ${n} check-ins`
-  return `${capitalise(METRIC_NAME[trend.metric])}, ${METRIC_UNIT[trend.metric]}, ${over}.`
+  const k = trend.checkIns
+  const what = `${READING_LABEL[trend.metric]}, ${READING_UNIT[trend.metric]}`
+  if (n === 1 && trend.points[0]?.latest === true) return `${what}, at the latest check-in.`
+  if (n === k) return `${what}, over the last ${k} check-ins.`
+  return `${what}: ${n} reading${n === 1 ? '' : 's'} over the last ${k} check-ins.`
 }
 
 /**
@@ -179,7 +215,8 @@ export function usualLabel(trend: Trend): string | null {
 /**
  * The sentences under the chart, in the order a caregiver needs them.
  *
- * First whether there is a usual at all: a trend over a baseline still being
+ * First whether the newest point is their newest check-in, then whether there
+ * is a usual at all: a trend over a baseline still being
  * learned must say so on the chart (#17), and it is said per metric, since
  * HRV routinely has fewer readings than pulse. Then what the points are not:
  * the latest check-in when it did not measure this, seeded days, check-ins
@@ -189,6 +226,16 @@ export function usualLabel(trend: Trend): string | null {
 export function trendNotes(trend: Trend): string[] {
   const name = METRIC_NAME[trend.metric]
   const notes: string[] = []
+  // First, since the chart is read before the cards: its newest point is not
+  // their newest check-in (review of #162).
+  if (trend.refusedSince > 0) {
+    notes.push(
+      trend.refusedSince === 1
+        ? 'The most recent check-in could not be used, so the latest point here is an earlier one.'
+        : `The ${trend.refusedSince} most recent check-ins could not be used, so the latest point ` +
+            'here is an earlier one.',
+    )
+  }
   if (trend.usual === null) {
     notes.push(
       `No usual for ${name} yet — ${trend.usualReadings} of the ${MIN_BASELINE_SESSIONS} ` +
@@ -206,10 +253,13 @@ export function trendNotes(trend: Trend): string[] {
     )
   }
   if (trend.refused > 0) {
+    // A lone point has no stretch to speak of: the refusals were before it.
+    const where =
+      trend.points.length === 1 && trend.points[0]?.latest === true ? 'before it' : 'over this stretch'
     notes.push(
       trend.refused === 1
-        ? '1 check-in over this stretch could not be used, so it is not shown.'
-        : `${trend.refused} check-ins over this stretch could not be used, so they are not shown.`,
+        ? `1 check-in ${where} could not be used, so it is not shown.`
+        : `${trend.refused} check-ins ${where} could not be used, so they are not shown.`,
     )
   }
   return notes

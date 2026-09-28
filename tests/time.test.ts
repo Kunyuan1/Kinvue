@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { localDateOf } from '@core/session/time'
+import { knownZone, localDateOf } from '@core/session/time'
 import { session } from './helpers'
 
 /**
@@ -54,5 +54,16 @@ describe('localDateOf', () => {
   it('reads the zone off a whole session record', () => {
     const record = { ...session(), timeZone: 'Europe/London' }
     expect(localDateOf(record)).toBe('2026-09-15')
+  })
+})
+
+describe('knownZone: a zone formatting can use (review of #162)', () => {
+  it('passes a zone Intl knows', () => {
+    expect(knownZone('Europe/London')).toBe('Europe/London')
+  })
+
+  it('gives nothing for a zone that would throw, so nothing is shown in a wrong one', () => {
+    // '' and an unknown name both throw RangeError from Intl.
+    for (const zone of [undefined, '', 'Mars/Olympus_Mons']) expect(knownZone(zone)).toBeUndefined()
   })
 })

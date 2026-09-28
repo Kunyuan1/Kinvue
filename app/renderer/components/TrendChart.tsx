@@ -10,7 +10,8 @@ import {
   type Trend,
   type TrendPoint,
 } from '@core/trend'
-import { METRIC_NAME, METRIC_UNIT } from '@core/scoring'
+import { METRIC_NAME, READING_LABEL, READING_UNIT, readingText } from '@core/scoring'
+import { knownZone } from '@core/session/time'
 
 /**
  * One metric over the baseline window, the latest check-in marked and their
@@ -22,22 +23,6 @@ import { METRIC_NAME, METRIC_UNIT } from '@core/scoring'
  * in the check-ins shows as one.
  */
 
-/**
- * Units as the card writes them beside a reading. The chart's latest value sits
- * in a narrow margin, and "breaths/min" did not fit it (seen on screen).
- */
-const SHORT_UNIT: Record<ComparedMetric, string> = {
-  pulse: 'bpm',
-  breathing: 'br/min',
-  hrv: 'ms',
-}
-
-const TAB_LABEL: Record<ComparedMetric, string> = {
-  pulse: 'Pulse',
-  breathing: 'Breathing',
-  hrv: 'HRV',
-}
-
 // The drawing's own coordinates; the SVG scales to the card's width.
 const W = 640
 const H = 180
@@ -47,20 +32,33 @@ const PLOT_W = W - PAD.left - PAD.right
 const PLOT_H = H - PAD.top - PAD.bottom
 
 /** The day a point was captured, where it was captured (KV-28). */
-function dayOf(point: TrendPoint): string {
+/**
+ * Whether dates need a year: when the points cross into another year. The
+ * window has no age bound, so for someone checking in monthly it can hold two
+ * "Mar 3"s (review of #162).
+ */
+function spansYears(points: readonly TrendPoint[]): boolean {
+  const years = new Set(points.map((p) => new Date(p.capturedAt).getUTCFullYear()))
+  return years.size > 1
+}
+
+function dayOf(point: TrendPoint, withYear: boolean): string {
+  // `knownZone`, not the raw field: '' or an unknown zone throws, and this is
+  // drawn above every card (review of #162).
+  const zone = knownZone(point.timeZone)
   return new Date(point.capturedAt).toLocaleDateString(undefined, {
-    ...(point.timeZone === undefined ? {} : { timeZone: point.timeZone }),
+    ...(zone === undefined ? {} : { timeZone: zone }),
     month: 'short',
     day: 'numeric',
+    ...(withYear ? { year: 'numeric' } : {}),
   })
 }
 
-const valueText = (value: number): string => String(Number(value.toFixed(1)))
-
 function Plot({ trend }: { trend: Trend }): React.JSX.Element {
   const [hovered, setHovered] = useState<number | null>(null)
-  const unit = SHORT_UNIT[trend.metric]
+  const unit = READING_UNIT[trend.metric]
   const points = trend.points
+  const withYear = spansYears(points)
 
   const times = points.map((p) => Date.parse(p.capturedAt))
   const t0 = Math.min(...times)
@@ -190,18 +188,18 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
             fontSize={12}
             fill="var(--color-ink)"
           >
-            {`${valueText(last.p.value)} ${unit}`}
+            {`${readingText(last.p.value)} ${unit}`}
           </text>
         )}
 
         {first !== undefined && (
           <text x={PAD.left} y={H - 8} fontSize={11} fill="var(--color-muted)">
-            {dayOf(first.p)}
+            {dayOf(first.p, withYear)}
           </text>
         )}
         {last !== undefined && last !== first && (
           <text x={last.cx} y={H - 8} textAnchor="end" fontSize={11} fill="var(--color-muted)">
-            {dayOf(last.p)}
+            {dayOf(last.p, withYear)}
           </text>
         )}
 
@@ -225,9 +223,9 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
             transform: focus.cx > W / 2 ? 'translateX(-100%)' : undefined,
           }}
         >
-          <p className="font-medium">{`${valueText(focus.p.value)} ${unit}`}</p>
+          <p className="font-medium">{`${readingText(focus.p.value)} ${unit}`}</p>
           <p className="text-(--color-muted)">
-            {dayOf(focus.p)}
+            {dayOf(focus.p, withYear)}
             {focus.p.latest ? ' · latest' : ''}
             {focus.p.seeded ? ' · seeded demo data' : ''}
           </p>
@@ -250,7 +248,9 @@ export default function TrendChart({
   // nothing to draw, and the cards say why.
   if (trend === null) return null
 
-  const unit = METRIC_UNIT[metric]
+  const unit = READING_UNIT[metric]
+  const withYear = spansYears(trend.points)
+  const measuredPoints = trend.points.length - trend.seededPoints
   return (
     <section className="mb-8 rounded-xl border border-(--color-line) bg-(--color-raised) p-5">
       <div className="mb-3 flex gap-2" role="group" aria-label="Metric">
@@ -266,7 +266,7 @@ export default function TrendChart({
                 : 'border-(--color-line) text-(--color-muted) hover:bg-(--color-ground)'
             }`}
           >
-            {TAB_LABEL[m]}
+            {READING_LABEL[m]}
           </button>
         ))}
       </div>
@@ -288,14 +288,18 @@ export default function TrendChart({
                 {usualLabel(trend)}
               </span>
             )}
+            {/* Each kind keyed only if it is on the chart: an all-seeded demo
+                has no filled dot to explain (review of #162). */}
             {trend.seededPoints > 0 && (
               <>
-                <span className="flex items-center gap-1">
-                  <svg width="10" height="10" aria-hidden="true">
-                    <circle cx="5" cy="5" r="4" fill="var(--color-series)" />
-                  </svg>
-                  measured
-                </span>
+                {measuredPoints > 0 && (
+                  <span className="flex items-center gap-1">
+                    <svg width="10" height="10" aria-hidden="true">
+                      <circle cx="5" cy="5" r="4" fill="var(--color-series)" />
+                    </svg>
+                    measured
+                  </span>
+                )}
                 <span className="flex items-center gap-1">
                   <svg width="10" height="10" aria-hidden="true">
                     <circle
@@ -323,15 +327,15 @@ export default function TrendChart({
               <thead className="text-(--color-muted)">
                 <tr>
                   <th className="font-normal">Date</th>
-                  <th className="font-normal">{`${TAB_LABEL[metric]} (${unit})`}</th>
+                  <th className="font-normal">{`${READING_LABEL[metric]} (${unit})`}</th>
                   <th className="font-normal" />
                 </tr>
               </thead>
               <tbody style={{ fontVariantNumeric: 'tabular-nums' }}>
                 {[...trend.points].reverse().map((p) => (
                   <tr key={p.id}>
-                    <td>{dayOf(p)}</td>
-                    <td>{valueText(p.value)}</td>
+                    <td>{dayOf(p, withYear)}</td>
+                    <td>{readingText(p.value)}</td>
                     <td className="text-(--color-muted)">
                       {[p.latest ? 'latest' : '', p.seeded ? 'seeded demo data' : '']
                         .filter((s) => s !== '')

@@ -114,7 +114,7 @@ describe('trendOf: one metric over the baseline window (KV-4)', () => {
 describe('what the chart says (KV-4)', () => {
   it('names what is plotted, the count and the unit', () => {
     const trend = trendOf([...history(5), latest()], P, 'breathing')
-    expect(trend && trendTitle(trend)).toBe('Breathing rate, breaths/min, over the last 6 check-ins.')
+    expect(trend && trendTitle(trend)).toBe('Breathing, br/min, over the last 6 check-ins.')
     const one = trendOf([latest()], P, 'pulse')
     expect(one && trendTitle(one)).toBe('Pulse, bpm, at the latest check-in.')
   })
@@ -155,5 +155,79 @@ describe('axisTicks: round values to read a point against (KV-4)', () => {
 
   it('does not loop on an empty range', () => {
     expect(axisTicks(5, 5)).toEqual([5])
+  })
+})
+
+describe('what the chart spans, and says about it (review of #162)', () => {
+  const day = (d: number, over: Parameters<typeof session>[0] = {}): SessionRecord =>
+    session({ id: `d-${d}`, capturedAt: new Date(Date.UTC(2026, 8, d, 9)).toISOString(), ...over })
+
+  it('counts refusals over the stretch drawn, not the window behind it (finding 2)', () => {
+    // 14 usable check-ins Sep 1–14, HRV on Sep 13–14 only; refusals Sep 2 and 3.
+    const usable = Array.from({ length: 14 }, (_, i) =>
+      day(i + 1, { vitals: { hrvRmssdMs: i >= 12 ? 40 : null } }),
+    )
+    const records = [
+      ...usable,
+      refused('r-2', '2026-09-02T12:00:00.000Z'),
+      refused('r-3', '2026-09-03T12:00:00.000Z'),
+      latest({ vitals: { hrvRmssdMs: 38 } }),
+    ]
+    const hrv = trendOf(records, P, 'hrv')
+    expect(hrv?.points[0]?.capturedAt.slice(0, 10)).toBe('2026-09-13')
+    expect(hrv?.refused).toBe(0)
+    // On Pulse, where Sep 1 is drawn, the same two are in the stretch.
+    expect(trendOf(records, P, 'pulse')?.refused).toBe(2)
+  })
+
+  it('counts readings and check-ins apart, and never claims the latest for an older reading (finding 3)', () => {
+    // Three usable check-ins, HRV on the first only; the latest measured none.
+    const records = [
+      day(1, { vitals: { hrvRmssdMs: 40 } }),
+      day(2, { vitals: { hrvRmssdMs: null } }),
+      day(3, { vitals: { hrvRmssdMs: null } }),
+      latest({ vitals: { hrvRmssdMs: null } }),
+    ]
+    const hrv = trendOf(records, P, 'hrv')
+    expect(hrv && trendTitle(hrv)).toBe('HRV, ms: 1 reading over the last 4 check-ins.')
+    expect(hrv && trendNotes(hrv)).toContain('HRV was not measured at the latest check-in.')
+    // Fourteen check-ins, HRV on three of them.
+    const sparse = Array.from({ length: 13 }, (_, i) =>
+      day(i + 1, { vitals: { hrvRmssdMs: i >= 11 ? 40 : null } }),
+    )
+    // Consecutive readings: as many readings as check-ins, so said once.
+    const three = trendOf([...sparse, latest()], P, 'hrv')
+    expect(three && trendTitle(three)).toBe('HRV, ms, over the last 3 check-ins.')
+    const wide = [...sparse.map((r, i) => (i === 0 ? { ...r, vitals: { ...r.vitals, hrvRmssdMs: 40 } } : r)), latest()]
+    const spanned = trendOf(wide, P, 'hrv')
+    expect(spanned && trendTitle(spanned)).toBe('HRV, ms: 4 readings over the last 14 check-ins.')
+  })
+
+  it('says, under a lone first point, that the check-ins before it could not be used (finding 4)', () => {
+    const records = [
+      refused('r-28', '2026-09-28T09:00:00.000Z'),
+      refused('r-29', '2026-09-29T09:00:00.000Z'),
+      refused('r-30', '2026-09-30T09:00:00.000Z'),
+      latest(),
+    ]
+    const trend = trendOf(records, P, 'pulse')
+    expect(trend?.refused).toBe(3)
+    expect(trend && trendNotes(trend)).toContain(
+      '3 check-ins before it could not be used, so they are not shown.',
+    )
+    expect(trend && trendTitle(trend)).toBe('Pulse, bpm, at the latest check-in.')
+  })
+
+  it('says first when the newest check-in could not be used (design B)', () => {
+    const records = [...history(4), latest(), refused('r-new', '2026-10-02T09:00:00.000Z')]
+    const trend = trendOf(records, P, 'pulse')
+    expect(trend?.refusedSince).toBe(1)
+    expect(trend && trendNotes(trend)[0]).toBe(
+      'The most recent check-in could not be used, so the latest point here is an earlier one.',
+    )
+    const two = trendOf([...records, refused('r-newer', '2026-10-03T09:00:00.000Z')], P, 'pulse')
+    expect(two && trendNotes(two)[0]).toMatch(/^The 2 most recent check-ins could not be used/)
+    // And not counted as "over this stretch" too.
+    expect(two?.refused).toBe(0)
   })
 })

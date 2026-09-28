@@ -433,10 +433,29 @@ against, with that check-in marked and the usual it was compared with drawn behi
   line has no "not being compared" beside it, the way its card does (KV-12) — and counted
   in a sentence. A check-in that did not measure the metric is a gap, never a zero. Seeded
   days are hollow, with a key, and counted: never plotted as if measured (KV-8).
+- **What the chart spans, and what it counts, follow what is drawn** (review of #162). The
+  title counts readings and check-ins apart — *"HRV, ms: 3 readings over the last 14
+  check-ins."* — since they differ whenever a metric goes unmeasured, and says "at the latest
+  check-in" only when the one reading is the latest's. Refusals are counted from the first
+  point drawn to the latest, so the number follows the metric on screen; a lone first point
+  looks back to the check-in before it, since a first week of failed captures is exactly when
+  the chart must not be silent. **A refusal newer than the latest point is said first**: the
+  chart is read before the cards, and its newest point is then not their newest check-in.
+- **The usual is still drawn when the latest check-in did not measure the metric**, though
+  that check-in's card says it could not be compared (KV-87). Considered in review of #162
+  and kept: the line is a fact about their history, not a comparison the chart is making,
+  and the note under it says the latest was not measured — a missing reading is not drawn as
+  one near the usual.
 - **Severity is not plotted.** The flag is not a number; the metric is.
 - **Placed by date**, so a gap in the check-ins shows as one (KV-154's stale usual, drawn).
 - **Shaped in `core/trend`, sentences included**, because the caregiver's own client (#42)
-  needs the same series and will not run this renderer. The renderer only draws: a small
+  needs the same series and will not run this renderer. So are the value axis
+  (`axisTicks`) and every word and number on it: the reading's label, unit and rounding
+  (`READING_LABEL`, `READING_UNIT`, `readingText` in `core/scoring`) are the card's readings
+  row's too, so a chart never quotes 74.6 beside a card saying 75, or "breaths/min" beside
+  "br/min" (review of #162). A date is shown in the zone it was taken through `knownZone`,
+  which every such reader uses: an empty or unknown zone makes `Intl` throw, and the chart,
+  drawn above the cards, would have taken them with it. The renderer only draws: a small
   hand-written SVG rather than a chart library, keeping the runtime dependencies at three
   (decided by the owner), with a hover readout and a table view of the same points.
 

@@ -477,7 +477,7 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     expect(circles().filter((c) => c.dataset.latest === 'true').length).toBe(1)
 
     fireEvent.click(screen.getByRole('button', { name: 'Breathing' }))
-    expect(screen.getByText('Breathing rate, breaths/min, over the last 6 check-ins.')).toBeTruthy()
+    expect(screen.getByText('Breathing, br/min, over the last 6 check-ins.')).toBeTruthy()
     expect(screen.getByRole('button', { name: 'Breathing' }).getAttribute('aria-pressed')).toBe('true')
   })
 
@@ -533,6 +533,63 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     expect(rows.length).toBe(3)
     expect(rows[0]?.textContent).toContain('80')
     expect(rows[0]?.textContent).toContain('latest')
+  })
+
+  it('keeps the dashboard on screen over a record whose zone would throw (review of #162)', async () => {
+    // The store casts parsed JSON without checking inside records; '' and an
+    // unknown zone both make Intl throw, and there is no error boundary.
+    const odd = scored([
+      ...history(3),
+      session({ id: 'blank-zone', capturedAt: '2026-09-20T09:00:00.000Z', timeZone: '' }),
+      latest({ timeZone: 'Mars/Olympus_Mons' }),
+    ])
+    listSessions.mockResolvedValue(odd)
+    render(<App />)
+    expect(await screen.findByText('Pulse, bpm, over the last 5 check-ins.')).toBeTruthy()
+    expect(screen.getAllByText(/^Looks normal$/).length).toBeGreaterThan(0)
+  })
+
+  it('quotes a fractional reading as the card does, whole (review of #162)', async () => {
+    // Real captures are fractional; every other fixture here is whole, which
+    // is where one decimal and none agree.
+    listSessions.mockResolvedValue(scored([...history(3), latest({ vitals: { pulseRateBpm: 74.6 } })]))
+    render(<App />)
+    await screen.findByText('Show as a table')
+    expect(screen.getAllByText('75 bpm').length).toBeGreaterThanOrEqual(2) // card and chart label
+    expect(document.body.textContent).not.toMatch(/74\.6/)
+  })
+
+  it('keys only the kinds of point on the chart: an all-seeded demo has no "measured" (review of #162)', async () => {
+    const demo = Array.from({ length: 5 }, (_, i) =>
+      session({ id: `seed-${i}`, capturedAt: `2026-09-0${i + 1}T09:00:00.000Z`, seeded: true }),
+    )
+    listSessions.mockResolvedValue(scored(demo))
+    render(<App />)
+    expect(await screen.findByText('Every point here is seeded demo data, not measured.')).toBeTruthy()
+    expect(screen.getByText('seeded demo data', { selector: 'span' })).toBeTruthy()
+    expect(screen.queryByText('measured', { selector: 'span' })).toBeNull()
+  })
+
+  it('dates points with the year when they cross into another (review of #162)', async () => {
+    const december = Array.from({ length: 3 }, (_, i) =>
+      session({ id: `dec-${i}`, capturedAt: `2025-12-2${i + 1}T12:00:00.000Z`, timeZone: 'UTC' }),
+    )
+    listSessions.mockResolvedValue(
+      scored([...december, latest({ capturedAt: '2026-01-05T12:00:00.000Z', timeZone: 'UTC' })]),
+    )
+    render(<App />)
+    await screen.findByText('Show as a table')
+    const rows = Array.from(document.querySelectorAll('section table tbody tr')).map((r) => r.textContent ?? '')
+    expect(rows[0]).toContain('2026')
+    expect(rows.at(-1)).toContain('2025')
+  })
+
+  it('leaves the year off within one', async () => {
+    listSessions.mockResolvedValue(scored([...history(2), latest()]))
+    render(<App />)
+    await screen.findByText('Show as a table')
+    const first = document.querySelector('section table tbody tr')?.textContent ?? ''
+    expect(first).not.toContain('2026')
   })
 
   it('draws nothing when no check-in could be used', async () => {
