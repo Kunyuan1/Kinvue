@@ -439,10 +439,9 @@ against, with that check-in marked and the usual it was compared with drawn behi
   check-in" only when the one reading is the latest's. "The last" and "the latest" are said
   only while no check-in in the stretch or after it was refused; otherwise the title counts
   *"5 check-ins that could be used"*, since the last 5 usable are not the last 5 (second
-  review of #162). Refusals are counted from the first
-  point drawn to the latest, so the number follows the metric on screen; a lone first point
-  looks back to the check-in before it, since a first week of failed captures is exactly when
-  the chart must not be silent. **A refusal newer than the latest point is said first**: the
+  review of #162). Refusals are counted from the first point drawn to the latest, so the
+  number follows the metric on screen; a lone first point looks back to the check-in before
+  it, since a first week of failed captures is exactly when the chart must not be silent. **A refusal newer than the latest point is said first**: the
   chart is read before the cards, and its newest point is then not their newest check-in.
 - **The usual is still drawn when the latest check-in did not measure the metric**, though
   that check-in's card says it could not be compared (KV-87). Considered in review of #162

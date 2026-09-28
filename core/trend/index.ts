@@ -251,8 +251,8 @@ export function trendNotes(trend: Trend): string[] {
   const notes: string[] = []
   // First, since the chart is read before the cards: its newest point is not
   // their newest check-in (review of #162).
-  // With nothing drawn there is no point to be the earlier one.
   if (trend.refusedSince > 0) {
+    // With nothing drawn there is no point to be the earlier one.
     const then = trend.points.length > 0 ? ', so the latest point here is an earlier one.' : '.'
     notes.push(
       trend.refusedSince === 1
