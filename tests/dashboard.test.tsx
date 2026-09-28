@@ -451,3 +451,96 @@ describe('how far back a card’s usual reaches (KV-154)', () => {
     expect(seededNote.compareDocumentPosition(stale) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })
+
+describe('the trend, one metric over the baseline window (KV-4)', () => {
+  /** This person's check-ins, each scored against the ones before it, as a store holds them. */
+  const scored = (records: SessionRecord[]): SessionRecord[] => {
+    const mine = records.map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+    mine.forEach((r, i) => {
+      if (r.seeded !== true) r.assessment = scoreSession(r, mine.slice(0, i))
+    })
+    return mine
+  }
+  const latest = (over: Parameters<typeof session>[0] = {}): SessionRecord =>
+    session({ id: 'latest', capturedAt: '2026-10-01T09:00:00.000Z', ...over })
+  const circles = (): SVGCircleElement[] =>
+    Array.from(document.querySelectorAll<SVGCircleElement>('section svg[role="img"] circle'))
+
+  it('draws the metric chosen, with the latest marked and the usual the card compared with', async () => {
+    listSessions.mockResolvedValue(scored([...history(5), latest({ vitals: { pulseRateBpm: 80 } })]))
+    render(<App />)
+
+    expect(await screen.findByText('Pulse, bpm, over the last 6 check-ins.')).toBeTruthy()
+    expect(screen.getByText('their usual 72 bpm')).toBeTruthy()
+    // The latest point's own label, in the drawing — the card beside it says 80 bpm too.
+    expect(screen.getAllByText('80 bpm').some((e) => e.tagName.toLowerCase() === 'text')).toBe(true)
+    expect(circles().filter((c) => c.dataset.latest === 'true').length).toBe(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Breathing' }))
+    expect(screen.getByText('Breathing rate, breaths/min, over the last 6 check-ins.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Breathing' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('says on the chart when there is no usual yet, and draws no line (#17)', async () => {
+    listSessions.mockResolvedValue(scored([...history(1), latest()]))
+    render(<App />)
+
+    expect(
+      await screen.findByText(
+        'No usual for pulse yet — 1 of the 3 readings needed, so there is no line to compare with.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText(/^their usual/)).toBeNull()
+  })
+
+  it('draws seeded days hollow, with a key, and says how many', async () => {
+    const seeded = Array.from({ length: 4 }, (_, i) =>
+      session({ id: `seed-${i}`, capturedAt: `2026-08-0${i + 1}T09:00:00.000Z`, seeded: true }),
+    )
+    listSessions.mockResolvedValue(scored([...seeded, ...history(2), latest()]))
+    render(<App />)
+
+    expect(
+      await screen.findByText('4 of these points are seeded demo data, not measured.'),
+    ).toBeTruthy()
+    const hollow = circles().filter((c) => c.dataset.seeded === 'true')
+    expect(hollow.length).toBe(4)
+    for (const c of hollow) expect(c.getAttribute('fill')).toBe('var(--color-raised)')
+    expect(screen.getByText('seeded demo data', { selector: 'span' })).toBeTruthy()
+  })
+
+  it('reads out the check-in nearest the pointer', async () => {
+    listSessions.mockResolvedValue(scored([...history(5), latest({ vitals: { pulseRateBpm: 80 } })]))
+    render(<App />)
+    await screen.findByText('Pulse, bpm, over the last 6 check-ins.')
+
+    // jsdom lays nothing out; give the chart the size of its own drawing.
+    const svg = document.querySelector<SVGSVGElement>('section svg[role="img"]')
+    vi.spyOn(svg!, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, width: 640, height: 180, right: 640, bottom: 180, x: 0, y: 0, toJSON: () => ({}),
+    })
+    fireEvent.pointerMove(svg!.querySelector('rect')!, { clientX: 630 })
+    const readout = screen.getByRole('status')
+    expect(readout.textContent).toContain('80 bpm')
+    expect(readout.textContent).toContain('latest')
+  })
+
+  it('offers the same points as a table', async () => {
+    listSessions.mockResolvedValue(scored([...history(2), latest({ vitals: { pulseRateBpm: 80 } })]))
+    render(<App />)
+    await screen.findByText('Show as a table')
+    const rows = document.querySelectorAll('section table tbody tr')
+    expect(rows.length).toBe(3)
+    expect(rows[0]?.textContent).toContain('80')
+    expect(rows[0]?.textContent).toContain('latest')
+  })
+
+  it('draws nothing when no check-in could be used', async () => {
+    listSessions.mockResolvedValue(
+      scored([session({ id: 'r', capturedAt: '2026-09-01T09:00:00.000Z', vitals: { confidence: 0.2 } })]),
+    )
+    render(<App />)
+    await screen.findByText('Not enough to say')
+    expect(screen.queryByRole('button', { name: 'Pulse' })).toBeNull()
+  })
+})

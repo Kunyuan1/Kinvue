@@ -11,7 +11,7 @@ import type {
 import { unusableReason, type UnusableReason } from '../session/usable'
 import { ALL_RULES, BASELINE_RULE_IDS, uncomparedMetrics, type Rule } from './rules'
 
-export { ALL_RULES, BASELINE_RULE_IDS, uncomparedMetrics } from './rules'
+export { ALL_RULES, BASELINE_RULE_IDS, canBeCalledUsual, uncomparedMetrics } from './rules'
 export type { Rule, RuleContext } from './rules'
 
 /**
@@ -241,14 +241,15 @@ export function usualReachStatus(
   return stale ? `${line}; the most recent was ${howLong(span.to, today)} ago.` : `${line}.`
 }
 
-const METRIC_NAME: Record<ComparedMetric, string> = {
+/** How a metric is named in a sentence. Shared with the trend (KV-4). */
+export const METRIC_NAME: Record<ComparedMetric, string> = {
   pulse: 'pulse',
   breathing: 'breathing rate',
   hrv: 'HRV',
 }
 
 /** The unit a metric's mean is quoted in, as the rules that compare it quote it. */
-const METRIC_UNIT: Record<ComparedMetric, string> = {
+export const METRIC_UNIT: Record<ComparedMetric, string> = {
   pulse: 'bpm',
   breathing: 'breaths/min',
   hrv: 'ms',

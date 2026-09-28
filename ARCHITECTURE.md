@@ -415,6 +415,33 @@ camera could not use. Decided by the owner, and adjusted in review:
 
 ---
 
+## Why the trend is a view of the baseline, not a second opinion (KV-4)
+
+A card says whether one check-in looked different; what a caregiver cannot do by eye is see
+the weeks around it. The dashboard draws one metric at a time — pulse, breathing rate or
+HRV, chosen above the chart — over the window the latest usable check-in was scored
+against, with that check-in marked and the usual it was compared with drawn behind it.
+
+- **It draws what the scorer used, from the same code.** The points are
+  `baselineWindow` of the check-ins before the latest, exported from `core/baseline` so the
+  window has one definition; the line is `computeBaseline`'s mean for them, drawn only where
+  `canBeCalledUsual` would let a rule quote it. So the chart never shows a usual the card
+  below declined to use (KV-71), and its label is rounded the way the rules round, so it
+  quotes the card's number. Where there is no usual yet it says so under the chart, per
+  metric — HRV routinely has fewer readings than pulse — which is #17's constraint.
+- **What is not a point says so.** A capture the scorer refused is left off — a point on a
+  line has no "not being compared" beside it, the way its card does (KV-12) — and counted
+  in a sentence. A check-in that did not measure the metric is a gap, never a zero. Seeded
+  days are hollow, with a key, and counted: never plotted as if measured (KV-8).
+- **Severity is not plotted.** The flag is not a number; the metric is.
+- **Placed by date**, so a gap in the check-ins shows as one (KV-154's stale usual, drawn).
+- **Shaped in `core/trend`, sentences included**, because the caregiver's own client (#42)
+  needs the same series and will not run this renderer. The renderer only draws: a small
+  hand-written SVG rather than a chart library, keeping the runtime dependencies at three
+  (decided by the owner), with a hover readout and a table view of the same points.
+
+---
+
 ## Why the answers may raise a flag on their own
 
 Decided in KV-10: **a day can read `elevated` on the answers alone, with nothing wrong on

@@ -144,6 +144,7 @@ app/
                          cared-for person reads, not the caregiver
       QuestionFlow.tsx   the four questions, also addressed to them
       SessionCard.tsx    one check-in: readings, every answer, the rules that fired
+      TrendChart.tsx     one metric over the baseline window, drawn from core/trend (KV-4)
     styles.css           Tailwind v4 theme tokens
 
 core/                    Plain TypeScript. No Electron, no React — unit-testable.
@@ -161,6 +162,8 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
   capture/guidance.ts    which of the camera's hints are worth showing the person
   capture/failure.ts     telling apart the ways a check-in fails to happen
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
+  trend/index.ts         the trend's series and its sentences, shaped here so the
+                         caregiver's own client draws the same thing (KV-4)
 
 tests/                   Vitest. Covers baseline, scoring, validation, check-in, time,
                          device, guidance, frames, answers, failures, the capture reply,

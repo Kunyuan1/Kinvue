@@ -70,7 +70,7 @@ const HRV_DROP_FULL_SEVERITY_AT = 0.5
  * never greater than `Baseline.sessions`, so this gate subsumes the session
  * count rather than sitting beside it.
  */
-const canBeCalledUsual = (usual: Stat | null): usual is Stat =>
+export const canBeCalledUsual = (usual: Stat | null): usual is Stat =>
   usual !== null && usual.n >= MIN_BASELINE_SESSIONS
 
 
