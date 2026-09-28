@@ -9,9 +9,9 @@ import type {
   WithheldReason,
 } from '../session/types'
 import { unusableReason, type UnusableReason } from '../session/usable'
-import { ALL_RULES, BASELINE_RULE_IDS, uncomparedMetrics, type Rule } from './rules'
+import { ALL_RULES, BASELINE_RULE_IDS, round, uncomparedMetrics, type Rule } from './rules'
 
-export { ALL_RULES, BASELINE_RULE_IDS, uncomparedMetrics } from './rules'
+export { ALL_RULES, BASELINE_RULE_IDS, canBeCalledUsual, uncomparedMetrics } from './rules'
 export type { Rule, RuleContext } from './rules'
 
 /**
@@ -241,14 +241,43 @@ export function usualReachStatus(
   return stale ? `${line}; the most recent was ${howLong(span.to, today)} ago.` : `${line}.`
 }
 
-const METRIC_NAME: Record<ComparedMetric, string> = {
+/**
+ * How a reading is shown on its own — the card's readings row, and every label
+ * on the trend (review of #162): one name, one unit and one rounding for each
+ * metric, wherever a number stands without a sentence around it. Sentences
+ * name it as `METRIC_NAME` and `METRIC_UNIT` do, as the rules quote it.
+ */
+export const READING_LABEL: Record<ComparedMetric, string> = {
+  pulse: 'Pulse',
+  breathing: 'Breathing',
+  hrv: 'HRV',
+}
+
+export const READING_UNIT: Record<ComparedMetric, string> = {
+  pulse: 'bpm',
+  breathing: 'br/min',
+  hrv: 'ms',
+}
+
+/**
+ * A reading's number as the card shows it: whole units. The SDK reports
+ * fractions, so a chart at one decimal quoted 74.6 beside a card saying 75.
+ * Rounded by the rules' own `round`, so there is one rounding for a reading
+ * wherever it is quoted (second review of #162).
+ */
+export function readingText(value: number): string {
+  return String(round(value))
+}
+
+/** How a metric is named in a sentence. Shared with the trend (KV-4). */
+export const METRIC_NAME: Record<ComparedMetric, string> = {
   pulse: 'pulse',
   breathing: 'breathing rate',
   hrv: 'HRV',
 }
 
 /** The unit a metric's mean is quoted in, as the rules that compare it quote it. */
-const METRIC_UNIT: Record<ComparedMetric, string> = {
+export const METRIC_UNIT: Record<ComparedMetric, string> = {
   pulse: 'bpm',
   breathing: 'breaths/min',
   hrv: 'ms',
@@ -274,7 +303,7 @@ function listOf(words: readonly string[]): string {
  */
 function whatItShowed(gap: UncomparedMetric): string {
   if (gap.mean === undefined || gap.readings === 0) return ''
-  const value = `${Math.round(gap.mean)} ${METRIC_UNIT[gap.metric]}`
+  const value = `${readingText(gap.mean)} ${METRIC_UNIT[gap.metric]}`
   return gap.readings === 1
     ? ` (that one was ${value})`
     : ` (those ${gap.readings} averaged ${value})`

@@ -451,3 +451,221 @@ describe('how far back a card’s usual reaches (KV-154)', () => {
     expect(seededNote.compareDocumentPosition(stale) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })
+
+describe('the trend, one metric over the baseline window (KV-4)', () => {
+  /** This person's check-ins, each scored against the ones before it, as a store holds them. */
+  const scored = (records: SessionRecord[]): SessionRecord[] => {
+    const mine = records.map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+    mine.forEach((r, i) => {
+      if (r.seeded !== true) r.assessment = scoreSession(r, mine.slice(0, i))
+    })
+    return mine
+  }
+  const latest = (over: Parameters<typeof session>[0] = {}): SessionRecord =>
+    session({ id: 'latest', capturedAt: '2026-10-01T09:00:00.000Z', ...over })
+  const circles = (): SVGCircleElement[] =>
+    Array.from(document.querySelectorAll<SVGCircleElement>('section svg[role="img"] circle'))
+
+  it('draws the metric chosen, with the latest marked and the usual the card compared with', async () => {
+    listSessions.mockResolvedValue(scored([...history(5), latest({ vitals: { pulseRateBpm: 80 } })]))
+    render(<App />)
+
+    expect(await screen.findByText('Pulse, bpm, over the last 6 check-ins.')).toBeTruthy()
+    expect(screen.getByText('their usual 72 bpm')).toBeTruthy()
+    // The latest point's own label, in the drawing — the card beside it says 80 bpm too.
+    expect(screen.getAllByText('80 bpm').some((e) => e.tagName.toLowerCase() === 'text')).toBe(true)
+    expect(circles().filter((c) => c.dataset.latest === 'true').length).toBe(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Breathing' }))
+    expect(screen.getByText('Breathing, br/min, over the last 6 check-ins.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Breathing' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('says on the chart when there is no usual yet, and draws no line (#17)', async () => {
+    listSessions.mockResolvedValue(scored([...history(1), latest()]))
+    render(<App />)
+
+    expect(
+      await screen.findByText(
+        'No usual for pulse yet — 1 of the 3 readings needed, so there is no line to compare with.',
+      ),
+    ).toBeTruthy()
+    expect(screen.queryByText(/^their usual/)).toBeNull()
+  })
+
+  it('draws seeded days hollow, with a key, and says how many', async () => {
+    const seeded = Array.from({ length: 4 }, (_, i) =>
+      session({ id: `seed-${i}`, capturedAt: `2026-08-0${i + 1}T09:00:00.000Z`, seeded: true }),
+    )
+    listSessions.mockResolvedValue(scored([...seeded, ...history(2), latest()]))
+    render(<App />)
+
+    expect(
+      await screen.findByText('4 of these points are seeded demo data, not measured.'),
+    ).toBeTruthy()
+    const hollow = circles().filter((c) => c.dataset.seeded === 'true')
+    expect(hollow.length).toBe(4)
+    for (const c of hollow) expect(c.getAttribute('fill')).toBe('var(--color-raised)')
+    expect(screen.getByText('seeded demo data', { selector: 'span' })).toBeTruthy()
+  })
+
+  it('reads out the check-in nearest the pointer', async () => {
+    listSessions.mockResolvedValue(scored([...history(5), latest({ vitals: { pulseRateBpm: 80 } })]))
+    render(<App />)
+    await screen.findByText('Pulse, bpm, over the last 6 check-ins.')
+
+    // jsdom lays nothing out; give the chart the size of its own drawing.
+    const svg = document.querySelector<SVGSVGElement>('section svg[role="img"]')
+    vi.spyOn(svg!, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, width: 640, height: 180, right: 640, bottom: 180, x: 0, y: 0, toJSON: () => ({}),
+    })
+    fireEvent.pointerMove(svg!.querySelector('rect')!, { clientX: 630 })
+    const readout = screen.getByRole('tooltip')
+    expect(readout.getAttribute('aria-live')).toBeNull()
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(readout.textContent).toContain('80 bpm')
+    expect(readout.textContent).toContain('latest')
+  })
+
+  it('drops the readout when the metric changes under a parked pointer (second review of #162)', async () => {
+    listSessions.mockResolvedValue(scored([...history(5), latest({ vitals: { pulseRateBpm: 80 } })]))
+    render(<App />)
+    await screen.findByText('Pulse, bpm, over the last 6 check-ins.')
+    const svg = document.querySelector<SVGSVGElement>('section svg[role="img"]')
+    vi.spyOn(svg!, 'getBoundingClientRect').mockReturnValue({
+      left: 0, top: 0, width: 640, height: 180, right: 640, bottom: 180, x: 0, y: 0, toJSON: () => ({}),
+    })
+    fireEvent.pointerMove(svg!.querySelector('rect')!, { clientX: 630 })
+    expect(screen.getByRole('tooltip')).toBeTruthy()
+
+    // As from the keyboard: the pointer never leaves the plot.
+    fireEvent.click(screen.getByRole('button', { name: 'HRV' }))
+    expect(screen.getByText('HRV, ms, over the last 6 check-ins.')).toBeTruthy()
+    expect(screen.queryByRole('tooltip')).toBeNull()
+  })
+
+  it('dates a lone point under the point (second review of #162)', async () => {
+    listSessions.mockResolvedValue(scored([latest()]))
+    render(<App />)
+    await screen.findByText('Pulse, bpm, at the latest check-in.')
+    const dot = document.querySelector<SVGCircleElement>('section svg[role="img"] circle')
+    const dates = document.querySelectorAll<SVGTextElement>('section svg [data-axis-date]')
+    expect(dates.length).toBe(1)
+    expect(dates[0]?.getAttribute('x')).toBe(dot?.getAttribute('cx'))
+    expect(dates[0]?.getAttribute('text-anchor')).toBe('middle')
+  })
+
+  it('offers the same points as a table', async () => {
+    listSessions.mockResolvedValue(scored([...history(2), latest({ vitals: { pulseRateBpm: 80 } })]))
+    render(<App />)
+    await screen.findByText('Show as a table')
+    const rows = document.querySelectorAll('section table tbody tr')
+    expect(rows.length).toBe(3)
+    expect(rows[0]?.textContent).toContain('80')
+    expect(rows[0]?.textContent).toContain('latest')
+  })
+
+  it('keeps the dashboard on screen over a record whose zone would throw (review of #162)', async () => {
+    // The store casts parsed JSON without checking inside records; '' and an
+    // unknown zone both make Intl throw, and there is no error boundary.
+    const odd = scored([
+      ...history(3),
+      session({ id: 'blank-zone', capturedAt: '2026-09-20T09:00:00.000Z', timeZone: '' }),
+      latest({ timeZone: 'Mars/Olympus_Mons' }),
+    ])
+    listSessions.mockResolvedValue(odd)
+    render(<App />)
+    expect(await screen.findByText('Pulse, bpm, over the last 5 check-ins.')).toBeTruthy()
+    expect(screen.getAllByText(/^Looks normal$/).length).toBeGreaterThan(0)
+  })
+
+  it('quotes a fractional reading as the card does, whole (review of #162)', async () => {
+    // Real captures are fractional; every other fixture here is whole, which
+    // is where one decimal and none agree.
+    listSessions.mockResolvedValue(scored([...history(3), latest({ vitals: { pulseRateBpm: 74.6 } })]))
+    render(<App />)
+    await screen.findByText('Show as a table')
+    expect(screen.getAllByText('75 bpm').length).toBeGreaterThanOrEqual(2) // card and chart label
+    expect(document.body.textContent).not.toMatch(/74\.6/)
+  })
+
+  it('keys only the kinds of point on the chart: an all-seeded demo has no "measured" (review of #162)', async () => {
+    const demo = Array.from({ length: 5 }, (_, i) =>
+      session({ id: `seed-${i}`, capturedAt: `2026-09-0${i + 1}T09:00:00.000Z`, seeded: true }),
+    )
+    listSessions.mockResolvedValue(scored(demo))
+    render(<App />)
+    expect(await screen.findByText('Every point here is seeded demo data, not measured.')).toBeTruthy()
+    expect(screen.getByText('seeded demo data', { selector: 'span' })).toBeTruthy()
+    expect(screen.queryByText('measured', { selector: 'span' })).toBeNull()
+  })
+
+  it('dates points with the year when they cross into another (review of #162)', async () => {
+    const december = Array.from({ length: 3 }, (_, i) =>
+      session({ id: `dec-${i}`, capturedAt: `2025-12-2${i + 1}T12:00:00.000Z`, timeZone: 'UTC' }),
+    )
+    listSessions.mockResolvedValue(
+      scored([...december, latest({ capturedAt: '2026-01-05T12:00:00.000Z', timeZone: 'UTC' })]),
+    )
+    render(<App />)
+    await screen.findByText('Show as a table')
+    const rows = Array.from(document.querySelectorAll('section table tbody tr')).map((r) => r.textContent ?? '')
+    expect(rows[0]).toContain('2026')
+    expect(rows.at(-1)).toContain('2025')
+  })
+
+  it("decides the year in each point's own zone, not UTC (second review of #162)", async () => {
+    // Both are Jan 2026 in Tokyo; the first is still 2025 in UTC.
+    const tokyo = (id: string, capturedAt: string): SessionRecord =>
+      session({ id, capturedAt, timeZone: 'Asia/Tokyo' })
+    listSessions.mockResolvedValue(
+      scored([
+        tokyo('ny-1', '2025-12-31T20:00:00.000Z'),
+        tokyo('ny-2', '2026-01-01T02:00:00.000Z'),
+        tokyo('ny-3', '2026-01-02T02:00:00.000Z'),
+        latest({ capturedAt: '2026-01-05T02:00:00.000Z', timeZone: 'Asia/Tokyo' }),
+      ]),
+    )
+    render(<App />)
+    await screen.findByText('Show as a table')
+    const rows = Array.from(document.querySelectorAll('section table tbody tr')).map((r) => r.textContent ?? '')
+    expect(rows.at(-1)).toContain('Jan 1')
+    for (const row of rows) expect(row).not.toMatch(/202[56]/)
+  })
+
+  it('leaves the year off within one', async () => {
+    listSessions.mockResolvedValue(scored([...history(2), latest()]))
+    render(<App />)
+    await screen.findByText('Show as a table')
+    const first = document.querySelector('section table tbody tr')?.textContent ?? ''
+    expect(first).not.toContain('2026')
+  })
+
+  it('keeps the notes on a tab with no readings to draw (second review of #162)', async () => {
+    const noHrv = history(4, { hrvRmssdMs: null })
+    listSessions.mockResolvedValue(
+      scored([
+        ...noHrv,
+        latest({ vitals: { hrvRmssdMs: null } }),
+        session({ id: 'r-1', capturedAt: '2026-10-02T09:00:00.000Z', vitals: { confidence: 0.2 } }),
+        session({ id: 'r-2', capturedAt: '2026-10-03T09:00:00.000Z', vitals: { confidence: 0.2 } }),
+      ]),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'HRV' }))
+
+    expect(screen.getByText('No HRV readings to draw.')).toBeTruthy()
+    // No point is drawn, so none is called the earlier one.
+    expect(screen.getByText('The 2 most recent check-ins could not be used.')).toBeTruthy()
+    expect(screen.getByText('HRV was not measured at the latest check-in.')).toBeTruthy()
+  })
+
+  it('draws nothing when no check-in could be used', async () => {
+    listSessions.mockResolvedValue(
+      scored([session({ id: 'r', capturedAt: '2026-09-01T09:00:00.000Z', vitals: { confidence: 0.2 } })]),
+    )
+    render(<App />)
+    await screen.findByText('Not enough to say')
+    expect(screen.queryByRole('button', { name: 'Pulse' })).toBeNull()
+  })
+})

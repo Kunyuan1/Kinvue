@@ -11,6 +11,14 @@
   --color-normal: #4ade80;
   --color-elevated: #fbbf24;
   --color-unknown: #64748b;
+
+  /*
+   * The trend's line and points (KV-4). Not a flag colour — those are reserved
+   * for the verdict, and a flag is not what the chart plots. Checked against
+   * --color-raised, the surface it is drawn on: lightness, chroma and 3:1
+   * contrast all pass.
+   */
+  --color-series: #5b8def;
 }
 
 body {

@@ -10,6 +10,28 @@ import type { SessionRecord } from './types'
  * theirs, not the reader's. See KV-28.
  */
 
+/**
+ * A recorded zone that formatting can use, or undefined when there is none
+ * to use: absent (before KV-28), empty, or one `Intl` does not know.
+ *
+ * Every place that shows a date in the zone it was taken calls this (review of
+ * #162). `Intl` throws RangeError on `timeZone: ''` or an unknown zone, and
+ * the store casts parsed JSON without checking what is inside a record, so an
+ * unguarded reader turns one odd record into a render that throws — and, with
+ * the chart drawn above the cards, a dashboard with nothing on it. Undefined
+ * means "show it in the reader's zone", which is what a record with no zone
+ * already gets; nothing is guessed into a different one.
+ */
+export function knownZone(timeZone: string | undefined): string | undefined {
+  if (timeZone === undefined || timeZone === '') return undefined
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone })
+    return timeZone
+  } catch {
+    return undefined
+  }
+}
+
 /** The `YYYY-MM-DD` the capture happened on, where it happened. */
 export function localDateOf(
   session: Pick<SessionRecord, 'capturedAt' | 'timeZone'>,

@@ -14,6 +14,7 @@ import {
 import CaptureScreen from './components/CaptureScreen'
 import QuestionFlow from './components/QuestionFlow'
 import SessionCard from './components/SessionCard'
+import TrendChart from './components/TrendChart'
 import { dashboardErrorText } from './dashboardError'
 
 /**
@@ -469,6 +470,10 @@ export default function App(): React.JSX.Element {
             Seed demo history
           </button>
         </div>
+      )}
+
+      {sessions !== null && sessions.length > 0 && (
+        <TrendChart records={sessions} personId={DEMO_PERSON_ID} />
       )}
 
       <div className="space-y-4">

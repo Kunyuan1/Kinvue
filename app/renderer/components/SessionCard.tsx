@@ -1,6 +1,14 @@
-import { FLAG_LABEL, seededDisclosureFor, type Presentation } from '@core/scoring'
+import {
+  FLAG_LABEL,
+  READING_LABEL,
+  READING_UNIT,
+  readingText,
+  seededDisclosureFor,
+  type Presentation,
+} from '@core/scoring'
 import { describeAnswers } from '@core/session/answers'
-import type { Flag, SessionRecord } from '@core/session/types'
+import { knownZone } from '@core/session/time'
+import type { ComparedMetric, Flag, SessionRecord } from '@core/session/types'
 
 const FLAG_COLOR: Record<Flag, string> = {
   normal: 'text-(--color-normal)',
@@ -41,7 +49,7 @@ export default function SessionCard({
   // format and renders the words "Invalid Date" when it does not match.
   // A record written before zones existed falls back to the reader's zone,
   // because nothing better is knowable about it.
-  const zone = session.timeZone === '' ? undefined : session.timeZone
+  const zone = knownZone(session.timeZone)
   const inZone = zone === undefined ? {} : { timeZone: zone }
   const at = new Date(capturedAt)
   const when = at.toLocaleDateString(undefined, {
@@ -95,9 +103,9 @@ export default function SessionCard({
       </header>
 
       <dl className="mt-4 flex gap-6 text-sm">
-        <Reading label="Pulse" value={vitals.pulseRateBpm} unit="bpm" />
-        <Reading label="Breathing" value={vitals.breathingRateBrpm} unit="br/min" />
-        <Reading label="HRV" value={vitals.hrvRmssdMs} unit="ms" />
+        <Reading metric="pulse" value={vitals.pulseRateBpm} />
+        <Reading metric="breathing" value={vitals.breathingRateBrpm} />
+        <Reading metric="hrv" value={vitals.hrvRmssdMs} />
       </dl>
 
       {/*
@@ -143,20 +151,19 @@ export default function SessionCard({
   )
 }
 
+/** One reading, named, unit'd and rounded as the trend shows it too (review of #162). */
 function Reading({
-  label,
+  metric,
   value,
-  unit,
 }: {
-  label: string
+  metric: ComparedMetric
   value: number | null
-  unit: string
 }): React.JSX.Element {
   return (
     <div>
-      <dt className="text-xs text-(--color-muted)">{label}</dt>
+      <dt className="text-xs text-(--color-muted)">{READING_LABEL[metric]}</dt>
       <dd className="tabular-nums">
-        {value === null ? '—' : `${Math.round(value)} ${unit}`}
+        {value === null ? '—' : `${readingText(value)} ${READING_UNIT[metric]}`}
       </dd>
     </div>
   )

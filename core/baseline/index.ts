@@ -113,6 +113,23 @@ function stat(values: number[]): Stat | null {
   return { mean, sd: Math.sqrt(variance), n: values.length }
 }
 
+/** The sessions the scorer would use, oldest first. */
+function usableInOrder(history: readonly SessionRecord[]): SessionRecord[] {
+  return history
+    .filter((s) => unusableReason(s.vitals) === null)
+    .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
+}
+
+/**
+ * The sessions a baseline built from `history` is made of, oldest first: the
+ * trailing `BASELINE_WINDOW_SESSIONS` usable ones. Exported so a view of the
+ * baseline — the trend (KV-4) — plots exactly what the scorer compared
+ * against, from the one definition of the window rather than a copy of it.
+ */
+export function baselineWindow(history: readonly SessionRecord[]): SessionRecord[] {
+  return usableInOrder(history).slice(-BASELINE_WINDOW_SESSIONS)
+}
+
 /**
  * Build a baseline from a person's prior sessions.
  *
@@ -131,17 +148,14 @@ export function computeBaseline(history: readonly SessionRecord[]): Baseline {
   // Filtered before the window is taken, not after: see
   // `BASELINE_WINDOW_SESSIONS`. The order only became load-bearing once the
   // predicate could fire on ordinary bad lighting.
-  const usableAll = history
-    .filter((s) => unusableReason(s.vitals) === null)
-    .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
-  const usable = usableAll.slice(-BASELINE_WINDOW_SESSIONS)
+  const usable = baselineWindow(history)
 
   const pick = (get: (s: SessionRecord) => number | null): number[] =>
     usable.map(get).filter((v): v is number => v !== null)
 
   return {
     sessions: usable.length,
-    refusedSessions: history.length - usableAll.length,
+    refusedSessions: history.filter((s) => unusableReason(s.vitals) !== null).length,
     span: spanOf(usable),
     seededSessions: usable.filter((s) => s.seeded === true).length,
     pulseRateBpm: stat(pick((s) => s.vitals.pulseRateBpm)),
