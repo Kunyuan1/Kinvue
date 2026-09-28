@@ -8,7 +8,6 @@ import {
 import {
   canBeCalledUsual,
   METRIC_NAME,
-  METRIC_UNIT,
   READING_LABEL,
   READING_UNIT,
   readingText,
@@ -226,12 +225,14 @@ export function trendTitle(trend: Trend): string {
 /**
  * "their usual 72 bpm" — the line's own label, rounded by `readingText` as
  * every reading and every rule's quote is, so it quotes the number the card
- * beside it quotes.
+ * beside it quotes. In the chart's unit, not the rules' prose one: the point
+ * beside it reads "15 br/min", and a key saying "breaths/min" was the drift
+ * the first review of #162 was about.
  */
 export function usualLabel(trend: Trend): string | null {
   return trend.usual === null
     ? null
-    : `their usual ${readingText(trend.usual)} ${METRIC_UNIT[trend.metric]}`
+    : `their usual ${readingText(trend.usual)} ${READING_UNIT[trend.metric]}`
 }
 
 /**

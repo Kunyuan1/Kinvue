@@ -115,6 +115,8 @@ describe('what the chart says (KV-4)', () => {
   it('names what is plotted, the count and the unit', () => {
     const trend = trendOf([...history(5), latest()], P, 'breathing')
     expect(trend && trendTitle(trend)).toBe('Breathing, br/min, over the last 6 check-ins.')
+    // The key names the unit the points beside it are labelled in.
+    expect(trend && usualLabel(trend)).toMatch(/^their usual \d+ br\/min$/)
     const one = trendOf([latest()], P, 'pulse')
     expect(one && trendTitle(one)).toBe('Pulse, bpm, at the latest check-in.')
   })
