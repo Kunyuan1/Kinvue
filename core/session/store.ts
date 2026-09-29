@@ -2,6 +2,7 @@ import { constants } from 'node:fs'
 import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { failureTag } from '../capture/failure'
+import { asAskedNow } from './answers'
 import type { SessionRecord } from './types'
 
 /**
@@ -321,6 +322,9 @@ export function createJsonSessionStore(
       return sessions
         .filter((s) => s.personId === personId)
         .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
+        // A seeded day from before KV-16 read as the question asked now; only
+        // ever here, on the way out, never in what `append` writes back.
+        .map(asAskedNow)
     },
     /**
      * Read-modify-write, with no lock.

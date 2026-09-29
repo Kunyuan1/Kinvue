@@ -103,14 +103,14 @@ export function seedDemoHistory(
     //
     // This used to say "nothing here should trip a rule", which was never
     // true and nothing checked (KV-14). Rules fire on most of these days, and
-    // they should: MOOD holds `low`, SLEEP holds `poorly`, some days go
-    // un-eaten, and a wobble this wide clears `Z_FIRES_AT` against a short
+    // they should: MOOD holds `low`, SLEEP holds `poorly`, some days a meal is
+    // skipped, and a wobble this wide clears `Z_FIRES_AT` against a short
     // baseline. A demo where nothing ever registers reads as a flat line, not
     // as a person.
     //
     // The odds below are what is *drawn*, not what the demo shows: the redraw
     // after them rejects heavy days, and the heaviest answers most. Over 3600
-    // days, un-eaten is drawn 10% and kept 7.4%; pain drawn 15%, kept 13.4%.
+    // days, a skipped meal is drawn 10% and kept 7.4%; pain drawn 15%, kept 13.4%.
     // So narrowing a draw here buys no safety — the ceiling already provides
     // it — and costs variety. How close the worst day comes is recorded in the
     // test, as WORST_DAY_TODAY, and nowhere else.
@@ -142,7 +142,9 @@ export function seedDemoHistory(
       answers: {
         mood: pick(MOOD, r()),
         sleep: pick(SLEEP, r()),
-        eatenToday: r() > 0.1,
+        // The question asked now (KV-16), from the same draw as the old
+        // `eatenToday: r() > 0.1`, so the fortnight is the same days.
+        skippedMeal: r() <= 0.1,
         painReported: r() > 0.85,
       },
     })

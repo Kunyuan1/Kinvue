@@ -24,9 +24,11 @@ import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
  * so a mis-tap is not cosmetic, and the flow was previously forward-only on the
  * screen least able to afford that.
  *
- * Nothing can be skipped. `CheckInAnswers` has no way to say "not asked", and
- * a missing answer that arrived as `false` would fire the `not-eaten` rule on
- * a question nobody put to them. See `core/session/answers.ts`.
+ * Nothing can be skipped. `CheckInAnswers` has no way to say "not asked", so
+ * a missing answer would have to arrive as one of the real ones: as `true`, it
+ * fires `skipped-meal` on a question nobody put to them; as `false`, it says
+ * "skipped meals no" on the card for a meal nobody asked about. Either is an
+ * answer invented. See `core/session/answers.ts`.
  */
 
 /**
@@ -145,15 +147,21 @@ export default function QuestionFlow({
       )}
 
       {step === 2 && (
-        <Question title="Have you eaten today?">
-          <Choice chosen={draft.eatenToday === true} onClick={() => answer({ eatenToday: true })}>
-            Yes
+        // Asked about a meal skipped, not whether they have eaten "today": at
+        // 8am "not yet" was breakfast still to come, and it counted the same as
+        // a missed day (KV-16). This means the same at any hour.
+        <Question title="Have you skipped any meals since yesterday?">
+          <Choice
+            chosen={draft.skippedMeal === false}
+            onClick={() => answer({ skippedMeal: false })}
+          >
+            No
           </Choice>
           <Choice
-            chosen={draft.eatenToday === false}
-            onClick={() => answer({ eatenToday: false })}
+            chosen={draft.skippedMeal === true}
+            onClick={() => answer({ skippedMeal: true })}
           >
-            Not yet
+            Yes
           </Choice>
         </Question>
       )}

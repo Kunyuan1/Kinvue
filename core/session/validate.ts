@@ -28,10 +28,12 @@ const oneOf = <T extends string>(options: readonly T[], v: unknown): v is T =>
 /** The answers, or null if the input is not a valid `CheckInAnswers`. */
 export function parseCheckInAnswers(input: unknown): CheckInAnswers | null {
   if (!isRecord(input)) return null
-  const { mood, sleep, eatenToday, painReported, painNote } = input
+  const { mood, sleep, skippedMeal, painReported, painNote } = input
 
   if (!oneOf(MOODS, mood) || !oneOf(SLEEPS, sleep)) return null
-  if (typeof eatenToday !== 'boolean' || typeof painReported !== 'boolean') return null
+  // `skippedMeal`, not `eatenToday`: a check-in is written with the question
+  // asked now (KV-16), so one carrying only the old answer is rejected.
+  if (typeof skippedMeal !== 'boolean' || typeof painReported !== 'boolean') return null
 
   // The note is only collected when pain was reported. A note without pain is
   // a caller bug, and guessing which half is wrong would be inventing an answer.
@@ -43,7 +45,7 @@ export function parseCheckInAnswers(input: unknown): CheckInAnswers | null {
   }
 
   // Rebuilt field by field so nothing the caller added rides along into the store.
-  const answers: CheckInAnswers = { mood, sleep, eatenToday, painReported }
+  const answers: CheckInAnswers = { mood, sleep, skippedMeal, painReported }
   if (painNote !== undefined) answers.painNote = painNote
   return answers
 }

@@ -14,6 +14,7 @@ import {
   withSeededVerdicts,
 } from '@core/seed/persona'
 import type { Assessment } from '@core/session/types'
+import { asAskedNow } from '@core/session/answers'
 import { session } from './helpers'
 
 /**
@@ -161,8 +162,8 @@ describe('the seeded demo history', () => {
   it('never scores a day as elevated', () => {
     // The property the demo actually needs, and the one `persona.ts` now
     // claims. The stronger reading of the old comment — that no rule fires at
-    // all — is false. Four rules fire across the fortnight: `not-eaten` (the
-    // 1-in-10 `eatenToday` draw), `low-mood` (MOOD's `low`), `poor-sleep`
+    // all — is false. Four rules fire across the fortnight: `skipped-meal` (the
+    // 1-in-10 `skippedMeal` draw), `low-mood` (MOOD's `low`), `poor-sleep`
     // (SLEEP's `poorly`, shown but barely weighed — KV-91), and
     // `pulse-elevated`, from the vitals jitter alone clearing `Z_FIRES_AT`
     // against a short, steady baseline. Rules firing is what makes the demo
@@ -231,6 +232,16 @@ describe('the seeded demo history', () => {
           `rules [${assessment?.firedRules.map((r) => r.id).join(', ') ?? ''}]`,
       ).not.toBe('elevated')
     })
+
+    // As the store lists it since KV-16 (review of #167): the same answers a
+    // fresh seed draws, so two installs agree about a person who does not
+    // exist, and no demo card is left saying "Had not eaten yet".
+    const listed = installed.map(asAskedNow)
+    expect(listed.map((r) => r.answers)).toEqual(seeded.map((r) => r.answers))
+    for (const { assessment } of withSeededVerdicts(listed)) {
+      expect(assessment?.flag).not.toBe('elevated')
+      expect(assessment?.firedRules.map((r) => r.id)).not.toContain('not-eaten')
+    }
   })
 
   it('keeps every day under the ceiling for any seed, not only this one', () => {
@@ -332,13 +343,13 @@ describe('the seeded demo history', () => {
     ])
     expect(
       seeded.map(({ answers: a }) =>
-        [a.sleep, a.mood, a.eatenToday ? 'ate' : 'not-eaten', a.painReported ? 'pain' : '']
+        [a.sleep, a.mood, a.skippedMeal === true ? 'skipped-meal' : 'ate', a.painReported ? 'pain' : '']
           .filter(Boolean)
           .join(' '),
       ),
     ).toEqual([
-      'well good not-eaten',
-      'ok ok not-eaten',
+      'well good skipped-meal',
+      'ok ok skipped-meal',
       'poorly good ate',
       'ok ok ate',
       'well good ate',

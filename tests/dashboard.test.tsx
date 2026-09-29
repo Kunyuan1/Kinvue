@@ -357,7 +357,7 @@ describe('a card whose pulse was never compared (KV-87)', () => {
     const scored = session({
       id: 'amber',
       vitals: { pulseRateBpm: 101.5 },
-      answers: { sleep: 'poorly', painReported: true, eatenToday: false },
+      answers: { sleep: 'poorly', painReported: true, skippedMeal: true },
     })
     scored.assessment = scoreSession(scored, past)
     listSessions.mockResolvedValue([scored])
@@ -390,9 +390,9 @@ describe('what they said, on every card (KV-110)', () => {
     // The whole row, not one phrase (KV-110 review): a row rendering only the
     // answer no rule covers, or a blank, must not pass.
     expect(
-      await screen.findByText('Answers: mood good · sleep well · eaten yes · pain no'),
+      await screen.findByText('Answers: mood good · sleep well · skipped meals no · pain no'),
     ).toBeTruthy()
-    expect(screen.getByText('Answers: mood good · sleep badly · eaten yes · pain no')).toBeTruthy()
+    expect(screen.getByText('Answers: mood good · sleep badly · skipped meals no · pain no')).toBeTruthy()
     // The rule still says what counted, separately from what was answered.
     expect(screen.getByText('Slept poorly')).toBeTruthy()
   })

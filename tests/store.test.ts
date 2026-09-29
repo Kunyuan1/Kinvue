@@ -9,7 +9,7 @@ import {
   UnreadableStoreError,
 } from '@core/session/store'
 import { classifyDashboardError, classifySubmitError } from '@core/capture/failure'
-import { session } from './helpers'
+import { session, sessionBeforeKV16 } from './helpers'
 
 /**
  * A rename that can be made to fail once.
@@ -116,6 +116,27 @@ describe('createJsonSessionStore', () => {
     const got = await store.list('test-person')
     expect(got).toHaveLength(2)
     expect(got[0]).toEqual(first)
+  })
+
+  it('lists a seeded day from before KV-16 by the question asked now, and writes nothing back (review of #167)', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    const seededOld = sessionBeforeKV16(false, { id: 'seeded', seeded: true, capturedAt: '2026-09-01T09:00:00.000Z' })
+    const realOld = sessionBeforeKV16(false, { id: 'real', capturedAt: '2026-09-02T09:00:00.000Z' })
+    await store.append(seededOld)
+    await store.append(realOld)
+    // An append after the list, which rewrites the whole file.
+    const [seeded, real] = await store.list('test-person')
+    await store.append(session({ id: 'new', capturedAt: '2026-09-03T09:00:00.000Z' }))
+
+    // Generated data, read as a fresh seed would have written it.
+    expect(seeded?.answers).toEqual({ ...seededOld.answers, eatenToday: undefined, skippedMeal: true })
+    expect(seeded?.answers).not.toHaveProperty('eatenToday')
+    // A real person's answer keeps the question they were asked.
+    expect(real).toEqual(realOld)
+    // And on disk, both exactly as written.
+    const onDisk = JSON.parse(await readFile(path, 'utf8')) as { sessions: unknown[] }
+    expect(onDisk.sessions.slice(0, 2)).toEqual([seededOld, realOld])
   })
 })
 

@@ -1,9 +1,12 @@
 import type { CheckInAnswers, SessionRecord, Vitals } from '@core/session/types'
 
-const GOOD_ANSWERS: CheckInAnswers = {
+/** The answers a check-in written today carries: the meal question as asked now (KV-16). */
+type NewAnswers = Extract<CheckInAnswers, { skippedMeal: boolean }>
+
+const GOOD_ANSWERS: NewAnswers = {
   mood: 'good',
   sleep: 'well',
-  eatenToday: true,
+  skippedMeal: false,
   painReported: false,
 }
 
@@ -21,7 +24,7 @@ const GOOD_VITALS: Vitals = {
 export function session(
   overrides: {
     vitals?: Partial<Vitals>
-    answers?: Partial<CheckInAnswers>
+    answers?: Partial<Omit<NewAnswers, 'eatenToday'>>
     capturedAt?: string
     id?: string
     seeded?: true
@@ -40,6 +43,23 @@ export function session(
   // Likewise absent unless asked for: a record with no zone is a real case
   // (anything written before KV-28, or a device that could not say).
   if (overrides.timeZone !== undefined) record.timeZone = overrides.timeZone
+  return record
+}
+
+/**
+ * A check-in written before KV-16: asked "have you eaten today?", so it has
+ * `eatenToday` and no `skippedMeal` at all — the field absent, as on disk, not
+ * set to `undefined`. Stated once here, because `session()` spreads today's
+ * answers first, and forgetting to take `skippedMeal` out made a record with
+ * both answers instead of an old one (review of #167).
+ */
+export function sessionBeforeKV16(
+  eatenToday: boolean,
+  overrides: Parameters<typeof session>[0] = {},
+): SessionRecord {
+  const record = session(overrides)
+  const { skippedMeal: _asked, ...rest } = record.answers
+  record.answers = { ...rest, eatenToday }
   return record
 }
 
