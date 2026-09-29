@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest'
 import { BASELINE_WINDOW_SESSIONS, computeBaseline } from '@core/baseline'
 import { scoreSession } from '@core/scoring'
-import { axisTicks, trendNotes, trendOf, trendTitle, usualLabel } from '@core/trend'
+import {
+  axisTicks,
+  trendNotes,
+  trendOf,
+  trendScale,
+  trendTitle,
+  usualLabel,
+  usualRangeLabel,
+} from '@core/trend'
 import type { SessionRecord } from '@core/session/types'
 import { history, seededHistory, session } from './helpers'
 
@@ -262,5 +270,57 @@ describe('what the chart spans, and says about it (review of #162)', () => {
     expect(sparse && trendTitle(sparse)).toBe('Pulse, bpm: 4 readings over 5 check-ins that could be used.')
     // Nothing refused: unchanged.
     expect(trendTitle(trendOf(five, P, 'pulse')!)).toBe('Pulse, bpm, over the last 5 check-ins.')
+  })
+})
+
+describe('how far the chart reaches, and their usual range on it (KV-165)', () => {
+  const pulses = (values: number[]): SessionRecord[] =>
+    values.map((pulse, i) =>
+      session({ id: `p-${i}`, capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(), vitals: { pulseRateBpm: pulse } }),
+    )
+
+  it('draws a calm fortnight calm: the readings do not fill the plot', () => {
+    // 71–74 around a usual of 72, where nothing fires: once a mountain range.
+    const trend = trendOf([...pulses([71, 72, 73, 72, 74, 71, 73]), latest({ vitals: { pulseRateBpm: 72 } })], P, 'pulse')!
+    expect(trend.usualRange).not.toBeNull()
+    const { lo, hi } = trendScale(trend)
+    const values = trend.points.map((p) => p.value)
+    expect((Math.max(...values) - Math.min(...values)) / (hi - lo)).toBeLessThan(0.5)
+  })
+
+  it('always reaches their whole usual range, so a point outside it is drawn outside it', () => {
+    const trend = trendOf([...pulses([72, 78, 69, 81, 75]), latest({ vitals: { pulseRateBpm: 95 } })], P, 'pulse')!
+    const { low, high } = trend.usualRange!
+    const { lo, hi } = trendScale(trend)
+    expect(lo).toBeLessThanOrEqual(low)
+    expect(hi).toBeGreaterThanOrEqual(high!)
+    expect(95).toBeGreaterThan(high!)
+    expect(usualRangeLabel(trend)).toMatch(/^their usual range, \d+–\d+ bpm$/)
+  })
+
+  it('draws no range without a usual, and still does not shout while it is learning', () => {
+    const trend = trendOf([...pulses([71, 74]), latest({ vitals: { pulseRateBpm: 72 } })], P, 'pulse')!
+    expect(trend.usual).toBeNull()
+    expect(trend.usualRange).toBeNull()
+    expect(usualRangeLabel(trend)).toBeNull()
+    const { lo, hi } = trendScale(trend)
+    expect(3 / (hi - lo)).toBeLessThan(0.6)
+  })
+
+  it('never ticks finer than the whole units readings are quoted in', () => {
+    // A lone breathing reading of 13 drew 12.5 and 13.5 (seen testing #167).
+    const trend = trendOf([latest({ vitals: { breathingRateBrpm: 13 } })], P, 'breathing')!
+    const { ticks } = trendScale(trend)
+    expect(ticks.length).toBeGreaterThanOrEqual(3)
+    for (const t of ticks) expect(Number.isInteger(t), `${t}`).toBe(true)
+  })
+
+  it('gives HRV a range with no top, reaching as far above the usual as below', () => {
+    const trend = trendOf([...history(5), latest()], P, 'hrv')!
+    const range = trend.usualRange!
+    expect(range.high).toBeNull()
+    expect(usualRangeLabel(trend)).toMatch(/^their usual range, \d+ ms and up$/)
+    const { hi } = trendScale(trend)
+    expect(hi).toBeGreaterThanOrEqual(trend.usual! + (trend.usual! - range.low))
   })
 })

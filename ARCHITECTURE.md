@@ -448,6 +448,20 @@ against, with that check-in marked and the usual it was compared with drawn behi
   and kept: the line is a fact about their history, not a comparison the chart is making,
   and the note under it says the latest was not measured — a missing reading is not drawn as
   one near the usual.
+- **Their usual range is drawn, and the scale never shrinks inside it** (KV-165). Scaled to
+  the window alone, a calm fortnight (pulse 71 to 74 around 72, where nothing fires until
+  about 3 bpm out) filled the plot top to bottom under a card saying "A normal day for
+  them": the amber-versus-red argument, made in pixels. The band is where a reading falls
+  with no comparison rule firing, built by `usualRangeOf` in `rules.ts` from the rules' own
+  constants: the usual ± 2 of the floored spread for pulse and breathing, and for HRV, whose
+  only rule is a drop, from 25% below the usual upward. A point inside it is one the verdict
+  found usual, and a card saying "different from their usual" has its point outside. The
+  axis always reaches the whole band; before there is a usual it uses the same construction
+  around the points with the rules' smallest scale, so a baseline still being learned is not
+  drawn louder than a mature one. Ticks are never finer than the whole units every reading
+  is quoted in. The band is quiet and labelled "their usual range", not an alarm line.
+  Worked out from the same history as the usual line, so it does not settle #94, which is
+  about the card's words and waits on a real card.
 - **Severity is not plotted.** The flag is not a number; the metric is.
 - **Placed by date**, so a gap in the check-ins shows as one (KV-154's stale usual, drawn).
 - **Shaped in `core/trend`, sentences included**, because the caregiver's own client (#42)

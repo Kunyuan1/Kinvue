@@ -11,6 +11,8 @@ import {
   READING_LABEL,
   READING_UNIT,
   readingText,
+  usualRangeOf,
+  type UsualRange,
 } from '../scoring'
 import type { ComparedMetric, SessionRecord, Vitals } from '../session/types'
 import { unusableReason } from '../session/usable'
@@ -71,6 +73,12 @@ export interface Trend {
    * was none to compare with: too few readings of this metric (KV-71).
    */
   usual: number | null
+  /**
+   * Their usual range around that usual: where a reading falls with no
+   * comparison rule firing (`usualRangeOf`, KV-165). Null exactly when `usual`
+   * is: a range is drawn only around a usual the rules would quote.
+   */
+  usualRange: UsualRange | null
   /** Readings of this metric behind that usual, whether or not it is one yet. */
   usualReadings: number
   /** Whether the latest check-in measured this metric at all. */
@@ -158,6 +166,7 @@ export function trendOf(
     metric,
     points,
     usual: canBeCalledUsual(stat) ? stat.mean : null,
+    usualRange: canBeCalledUsual(stat) ? usualRangeOf(metric, stat) : null,
     usualReadings: stat?.n ?? 0,
     latestMeasured: read(latest.vitals) !== null,
     seededPoints: points.filter((p) => p.seeded).length,
@@ -177,9 +186,10 @@ export function trendOf(
  * under the lowest (KV-4, seen on screen). Here, not in the renderer, so the
  * caregiver's client draws the same axis.
  */
-export function axisTicks(lo: number, hi: number): number[] {
+export function axisTicks(lo: number, hi: number, minStep = 0): number[] {
   if (!(hi > lo)) return [lo]
-  const mag = 10 ** Math.floor(Math.log10((hi - lo) / 5))
+  // `minStep`: no finer than the values are quoted (KV-165).
+  const mag = Math.max(minStep, 10 ** Math.floor(Math.log10((hi - lo) / 5)))
   const step =
     [1, 2, 5, 10, 20]
       .map((m) => m * mag)
@@ -187,6 +197,74 @@ export function axisTicks(lo: number, hi: number): number[] {
   const ticks: number[] = []
   for (let i = Math.ceil(lo / step); i * step <= hi; i++) ticks.push(Number((i * step).toFixed(10)))
   return ticks
+}
+
+/**
+ * Every reading is quoted in whole units (`readingText`), so an axis at 12.5
+ * and 13.5 claims a precision no reading has — seen on a lone breathing
+ * reading of 13 (KV-165).
+ */
+const TICK_STEP_MIN = 1
+/**
+ * The narrowest the value axis may be: three whole-unit ticks at least, so a
+ * lone point, or a steady run with no usual yet, still has numbers to be read
+ * against. A drawing constant, not a scoring one.
+ */
+const SPAN_MIN = 3
+
+/** The value axis of a chart: its extent and the ticks drawn on it. */
+export interface TrendScale {
+  lo: number
+  hi: number
+  ticks: number[]
+}
+
+/**
+ * How far up and down the chart reaches (KV-165).
+ *
+ * Scaled to the window's own points alone, a calm fortnight — pulse 71 to 74
+ * around a usual of 72, where nothing fires until about 3 bpm out — filled the
+ * plot top to bottom: a mountain range above a card saying "A normal day for
+ * them". That is the amber-versus-red argument made in pixels. So the axis is
+ * never narrower than their usual range, the band the rules measure against:
+ * a change is drawn as large as the rules find it, not as large as the window
+ * happens to be. Before there is a usual, the same construction around the
+ * points' own mean, with the rules' smallest scale (`MIN_SD_FRACTION_OF_MEAN`),
+ * so a building baseline is not drawn louder than a mature one. HRV's range
+ * has no top, so it reaches as far above the usual as below it.
+ *
+ * Here, not in the renderer, as `axisTicks` is: the caregiver's client draws
+ * the same picture.
+ */
+export function trendScale(trend: Trend): TrendScale {
+  const values = [...trend.points.map((p) => p.value), ...(trend.usual === null ? [] : [trend.usual])]
+  const centre = trend.usual ?? values.reduce((sum, v) => sum + v, 0) / Math.max(1, values.length)
+  const range = trend.usualRange ?? usualRangeOf(trend.metric, { mean: centre, sd: 0, n: 0 })
+  const reach = [...values, range.low, range.high ?? centre + (centre - range.low)]
+  let lo = Math.min(...reach)
+  let hi = Math.max(...reach)
+  const pad = (hi - lo) * 0.15
+  lo -= pad
+  hi += pad
+  if (hi - lo < SPAN_MIN) {
+    const mid = (lo + hi) / 2
+    lo = mid - SPAN_MIN / 2
+    hi = mid + SPAN_MIN / 2
+  }
+  return { lo, hi, ticks: axisTicks(lo, hi, TICK_STEP_MIN) }
+}
+
+/**
+ * "their usual range, 68–76 bpm", or for HRV "their usual range, 26 ms and
+ * up" — the band's label, rounded as every reading is. Null with no range.
+ */
+export function usualRangeLabel(trend: Trend): string | null {
+  const range = trend.usualRange
+  if (range === null) return null
+  const unit = READING_UNIT[trend.metric]
+  return range.high === null
+    ? `their usual range, ${readingText(range.low)} ${unit} and up`
+    : `their usual range, ${readingText(range.low)}–${readingText(range.high)} ${unit}`
 }
 
 const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)

@@ -184,6 +184,31 @@ const spreadOf = (usual: Stat): Spread => {
   return usual.sd < floor ? { sd: floor, floored: true } : { sd: usual.sd, floored: false }
 }
 
+/** Where a reading can fall without a comparison rule firing on it. */
+export interface UsualRange {
+  low: number
+  /** Null when no rule fires above the usual: HRV's only rule is a drop. */
+  high: number | null
+}
+
+/**
+ * Their usual range for a metric: where a reading can fall without a
+ * comparison rule firing on it (KV-165). Pulse and breathing, the usual
+ * ± `Z_FIRES_AT` of the same floored spread `zRule` divides by; HRV, from
+ * `HRV_DROP_FIRES_AT` below the usual upward, since nothing fires above it.
+ *
+ * Built here from the rules' own constants, beside them, so the range the
+ * chart draws is the one the verdict was reached on and cannot drift from it:
+ * a point inside it is a reading no comparison rule fired on, and a card
+ * saying "different from their usual" has its point outside. The boundary
+ * itself fires, as the rules' `<` comparisons say.
+ */
+export function usualRangeOf(metric: ComparedMetric, usual: Stat): UsualRange {
+  if (metric === 'hrv') return { low: usual.mean * (1 - HRV_DROP_FIRES_AT), high: null }
+  const { sd } = spreadOf(usual)
+  return { low: usual.mean - Z_FIRES_AT * sd, high: usual.mean + Z_FIRES_AT * sd }
+}
+
 /** Decimal places for a quoted spread. See `howFarOut` for why it is not 0. */
 const SPREAD_DP = 1
 

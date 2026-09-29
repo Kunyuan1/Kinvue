@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
 import type { ComparedMetric, SessionRecord } from '@core/session/types'
 import {
-  axisTicks,
   TREND_METRICS,
   trendNotes,
   trendOf,
+  trendScale,
   trendTitle,
   usualLabel,
+  usualRangeLabel,
   type Trend,
   type TrendPoint,
 } from '@core/trend'
@@ -76,11 +77,8 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
   const times = points.map((p) => Date.parse(p.capturedAt))
   const t0 = Math.min(...times)
   const t1 = Math.max(...times)
-  const values = [...points.map((p) => p.value), ...(trend.usual === null ? [] : [trend.usual])]
-  const spread = Math.max(...values) - Math.min(...values)
-  const pad = spread === 0 ? Math.max(1, Math.abs(values[0] ?? 1) * 0.1) : spread * 0.15
-  const lo = Math.min(...values) - pad
-  const hi = Math.max(...values) + pad
+  // Never narrower than their usual range, so a calm run is drawn calm (KV-165).
+  const { lo, hi, ticks } = trendScale(trend)
 
   const x = (t: number): number =>
     t1 === t0 ? PAD.left + PLOT_W / 2 : PAD.left + ((t - t0) / (t1 - t0)) * PLOT_W
@@ -91,8 +89,9 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
     cy: y(p.value),
   }))
   const path = xy.map(({ cx, cy }, i) => `${i === 0 ? 'M' : 'L'}${cx},${cy}`).join(' ')
-  const ticks = axisTicks(lo, hi)
   const label = usualLabel(trend)
+  const rangeLabel = usualRangeLabel(trend)
+  const range = trend.usualRange
   const first = xy[0]
   const last = xy[xy.length - 1]
   const focus = hovered === null ? null : (xy[hovered] ?? null)
@@ -115,8 +114,27 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
         viewBox={`0 0 ${W} ${H}`}
         className="h-auto w-full"
         role="img"
-        aria-label={`${trendTitle(trend)}${label === null ? '' : ` Line: ${label}.`}`}
+        aria-label={
+          `${trendTitle(trend)}${label === null ? '' : ` Line: ${label}.`}` +
+          `${rangeLabel === null ? '' : ` Band: ${rangeLabel}.`}`
+        }
       >
+        {/* Their usual range (KV-165): where a reading falls with no comparison
+            rule firing, so a point inside it is one the verdict found usual.
+            Quiet on purpose — the band says "usual", not where an alarm
+            starts. HRV's has no top, so it runs to the top of the plot. */}
+        {range !== null && (
+          <rect
+            x={PAD.left}
+            width={PLOT_W}
+            y={y(range.high ?? hi)}
+            height={y(range.low) - y(range.high ?? hi)}
+            fill="var(--color-line)"
+            fillOpacity={0.6}
+            data-usual-range
+          />
+        )}
+
         {ticks.map((t) => (
           <g key={t}>
             <line
@@ -238,6 +256,7 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
           width={PLOT_W}
           height={PLOT_H}
           fill="transparent"
+          data-pointer-area
           onPointerMove={onMove}
           onPointerLeave={() => setHovered(null)}
         />
@@ -339,6 +358,14 @@ export default function TrendChart({
                   <line x1="0" x2="14" y1="5" y2="5" stroke="var(--color-muted)" strokeWidth="1" />
                 </svg>
                 {usualLabel(trend)}
+              </span>
+            )}
+            {usualRangeLabel(trend) !== null && (
+              <span className="flex items-center gap-1">
+                <svg width="14" height="10" aria-hidden="true">
+                  <rect width="14" height="10" fill="var(--color-line)" fillOpacity="0.6" />
+                </svg>
+                {usualRangeLabel(trend)}
               </span>
             )}
             {/* Each kind keyed only if it is on the chart: an all-seeded demo

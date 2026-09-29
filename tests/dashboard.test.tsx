@@ -557,6 +557,24 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     expect(screen.getByRole('button', { name: 'Breathing' }).getAttribute('aria-pressed')).toBe('true')
   })
 
+  it('draws their usual range behind the points, keyed, once there is a usual (KV-165)', async () => {
+    listSessions.mockResolvedValue(scored([...history(5), latest({ vitals: { pulseRateBpm: 80 } })]))
+    render(<App />)
+
+    expect(await screen.findByText(/^their usual range, \d+–\d+ bpm$/)).toBeTruthy()
+    expect(document.querySelectorAll('section svg[role="img"] rect[data-usual-range]').length).toBe(1)
+    const label = document.querySelector('section svg[role="img"]')?.getAttribute('aria-label') ?? ''
+    expect(label).toMatch(/Band: their usual range, \d+–\d+ bpm\./)
+  })
+
+  it('draws no range while the usual is still being learned (KV-165)', async () => {
+    listSessions.mockResolvedValue(scored([...history(1), latest()]))
+    render(<App />)
+    await screen.findByText(/^No usual for pulse yet/)
+    expect(document.querySelector('rect[data-usual-range]')).toBeNull()
+    expect(screen.queryByText(/^their usual range/)).toBeNull()
+  })
+
   it('says on the chart when there is no usual yet, and draws no line (#17)', async () => {
     listSessions.mockResolvedValue(scored([...history(1), latest()]))
     render(<App />)
@@ -595,7 +613,7 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     vi.spyOn(svg!, 'getBoundingClientRect').mockReturnValue({
       left: 0, top: 0, width: 640, height: 180, right: 640, bottom: 180, x: 0, y: 0, toJSON: () => ({}),
     })
-    fireEvent.pointerMove(svg!.querySelector('rect')!, { clientX: 630 })
+    fireEvent.pointerMove(svg!.querySelector('rect[data-pointer-area]')!, { clientX: 630 })
     const readout = screen.getByRole('tooltip')
     expect(readout.getAttribute('aria-live')).toBeNull()
     expect(screen.queryByRole('status')).toBeNull()
@@ -611,7 +629,7 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     vi.spyOn(svg!, 'getBoundingClientRect').mockReturnValue({
       left: 0, top: 0, width: 640, height: 180, right: 640, bottom: 180, x: 0, y: 0, toJSON: () => ({}),
     })
-    fireEvent.pointerMove(svg!.querySelector('rect')!, { clientX: 630 })
+    fireEvent.pointerMove(svg!.querySelector('rect[data-pointer-area]')!, { clientX: 630 })
     expect(screen.getByRole('tooltip')).toBeTruthy()
 
     // As from the keyboard: the pointer never leaves the plot.

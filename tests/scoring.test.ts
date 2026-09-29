@@ -18,7 +18,8 @@ import {
 } from '@core/scoring'
 import { DEMO_PERSON_ID, seedDemoHistory, withSeededVerdicts } from '@core/seed/persona'
 import type { Assessment, SessionRecord } from '@core/session/types'
-import { ALL_RULES, BASELINE_RULE_IDS } from '@core/scoring'
+import { ALL_RULES, BASELINE_RULE_IDS, usualRangeOf } from '@core/scoring'
+import { computeBaseline } from '@core/baseline'
 import { history, seededHistory, session, sessionBeforeKV16 } from './helpers'
 
 const ids = (a: Assessment): string[] => a.firedRules.map((r) => r.id)
@@ -1964,5 +1965,43 @@ describe('usualReachStatus: how far back the usual reaches, said once (KV-154)',
   it('counts only this person', () => {
     const others = spreadTo(20, 3.5).map((r) => ({ ...r, personId: 'someone-else' }))
     expect(usualReachStatus(others, 'test-person', 'Margaret', NOW)).toBeNull()
+  })
+})
+
+describe('usualRangeOf: where a reading can fall with no comparison rule firing (KV-165)', () => {
+  const COMPARISON = new Set(BASELINE_RULE_IDS)
+  const fired = (vitals: NonNullable<Parameters<typeof session>[0]>['vitals'], past: SessionRecord[]): string[] =>
+    scoreSession(session({ vitals }), past)
+      .firedRules.map((r) => r.id)
+      .filter((id) => COMPARISON.has(id))
+  const EPS = 0.01
+
+  it('agrees with the pulse rules at both edges, on a spread of their own', () => {
+    const past = [72, 78, 69, 81, 75].map((pulse, i) =>
+      session({ id: `p-${i}`, capturedAt: `2026-09-0${i + 1}T09:00:00.000Z`, vitals: { pulseRateBpm: pulse } }),
+    )
+    const { low, high } = usualRangeOf('pulse', computeBaseline(past).pulseRateBpm!)
+    expect(fired({ pulseRateBpm: low + EPS }, past)).toEqual([])
+    expect(fired({ pulseRateBpm: high! - EPS }, past)).toEqual([])
+    expect(fired({ pulseRateBpm: low - EPS }, past)).toEqual(['pulse-low'])
+    expect(fired({ pulseRateBpm: high! + EPS }, past)).toEqual(['pulse-elevated'])
+  })
+
+  it('agrees with the breathing rules on a flat history, where the floor is the spread', () => {
+    const past = history(5)
+    const { low, high } = usualRangeOf('breathing', computeBaseline(past).breathingRateBrpm!)
+    expect(fired({ breathingRateBrpm: low + EPS }, past)).toEqual([])
+    expect(fired({ breathingRateBrpm: high! - EPS }, past)).toEqual([])
+    expect(fired({ breathingRateBrpm: low - EPS }, past)).toEqual(['breathing-low'])
+    expect(fired({ breathingRateBrpm: high! + EPS }, past)).toEqual(['breathing-elevated'])
+  })
+
+  it('has no top for HRV, whose only rule is a drop', () => {
+    const past = history(5)
+    const range = usualRangeOf('hrv', computeBaseline(past).hrvRmssdMs!)
+    expect(range.high).toBeNull()
+    expect(fired({ hrvRmssdMs: range.low + EPS }, past)).toEqual([])
+    expect(fired({ hrvRmssdMs: range.low - EPS }, past)).toEqual(['hrv-drop'])
+    expect(fired({ hrvRmssdMs: 500 }, past)).toEqual([])
   })
 })
