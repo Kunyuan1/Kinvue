@@ -77,27 +77,42 @@ export interface CaptureResult {
 export type MoodAnswer = 'good' | 'ok' | 'low'
 export type SleepAnswer = 'well' | 'ok' | 'poorly'
 
+/**
+ * The meal question: exactly one of the two ever asked (KV-16). A union, not
+ * two optional fields, so a check-in built with neither, or with both, does
+ * not compile (review of #167). Each side names the other as `undefined` so a
+ * reader can ask either field of any record without narrowing first.
+ */
+export type MealAnswer =
+  | {
+      /**
+       * Whether they skipped a meal since the day before. Asked from KV-16 on,
+       * and on every check-in written since.
+       */
+      skippedMeal: boolean
+      eatenToday?: undefined
+    }
+  | {
+      /**
+       * "Have you eaten today?", as asked before KV-16, and only ever on a
+       * record written then. Never written now: at 8am its "not yet" was an
+       * ordinary morning, not a missed meal, and it weighed the same as one at
+       * 4pm. A real check-in keeps it — "not yet" is not an answer to the new
+       * question, and nobody's words are put into it. A seeded one is read as
+       * the new question (`asAskedNow`), since it is generated data.
+       */
+      eatenToday: boolean
+      skippedMeal?: undefined
+    }
+
 /** The four questions asked after the capture. Deliberately short. */
-export interface CheckInAnswers {
+export type CheckInAnswers = {
   mood: MoodAnswer
   sleep: SleepAnswer
-  /**
-   * Whether they skipped a meal since the day before (KV-16). Asked from KV-16
-   * on, and required on every check-in written since: `core/session/validate.ts`
-   * rejects one without it. Absent on an older record, which has `eatenToday`.
-   */
-  skippedMeal?: boolean
-  /**
-   * "Have you eaten today?", as asked before KV-16, and only ever on a record
-   * written then. Never written now: at 8am its "not yet" was an ordinary
-   * morning, not a missed meal, and it weighed the same as one at 4pm. Kept,
-   * not converted — "not yet" is not an answer to the new question.
-   */
-  eatenToday?: boolean
   painReported: boolean
   /** Free text, only collected when painReported is true. */
   painNote?: string
-}
+} & MealAnswer
 
 /** One rule that fired, in the words the caregiver reads. */
 export interface FiredRule {

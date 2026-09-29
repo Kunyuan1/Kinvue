@@ -24,9 +24,11 @@ import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
  * so a mis-tap is not cosmetic, and the flow was previously forward-only on the
  * screen least able to afford that.
  *
- * Nothing can be skipped. `CheckInAnswers` has no way to say "not asked", and
- * a missing answer that arrived as `false` would fire the `not-eaten` rule on
- * a question nobody put to them. See `core/session/answers.ts`.
+ * Nothing can be skipped. `CheckInAnswers` has no way to say "not asked", so
+ * a missing answer would have to arrive as one of the real ones: as `true`, it
+ * fires `skipped-meal` on a question nobody put to them; as `false`, it says
+ * "skipped meals no" on the card for a meal nobody asked about. Either is an
+ * answer invented. See `core/session/answers.ts`.
  */
 
 /**

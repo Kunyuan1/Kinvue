@@ -82,7 +82,7 @@ describe('describeAnswers (KV-110)', () => {
   const all: CheckInAnswers = { mood: 'good', sleep: 'well', skippedMeal: false, painReported: false }
 
   it('labels every answer, including the ones no rule fires on', () => {
-    expect(describeAnswers(all)).toEqual(['mood good', 'sleep well', 'meals none skipped', 'pain no'])
+    expect(describeAnswers(all)).toEqual(['mood good', 'sleep well', 'skipped meals no', 'pain no'])
   })
 
   it('labels a record from before KV-16 with the question it was asked', () => {
@@ -94,7 +94,7 @@ describe('describeAnswers (KV-110)', () => {
   it("uses the person's own choices from the questions", () => {
     expect(
       describeAnswers({ mood: 'ok', sleep: 'poorly', skippedMeal: true, painReported: true }),
-    ).toEqual(['mood all right', 'sleep badly', 'meals skipped', 'pain yes'])
+    ).toEqual(['mood all right', 'sleep badly', 'skipped meals yes', 'pain yes'])
     expect(describeAnswers({ ...all, mood: 'low', sleep: 'ok' }).slice(0, 2)).toEqual([
       'mood low',
       'sleep all right',
@@ -104,7 +104,7 @@ describe('describeAnswers (KV-110)', () => {
   it('gives one label per question, in the order they are asked', () => {
     // Positional, not just a count (KV-110 review): reorder ANSWER_STEPS and
     // the row must follow.
-    const topic = { mood: 'mood', sleep: 'sleep', skippedMeal: 'meals', painReported: 'pain' }
+    const topic = { mood: 'mood', sleep: 'sleep', skippedMeal: 'skipped', painReported: 'pain' }
     expect(describeAnswers(all).map((label) => label.split(' ')[0])).toEqual(
       ANSWER_STEPS.map((step) => topic[step]),
     )
@@ -116,14 +116,15 @@ describe('describeAnswers (KV-110)', () => {
     expect(describeAnswers(odd as unknown as CheckInAnswers)).toEqual([
       'mood not recorded',
       'sleep not recorded',
-      'meals not recorded',
+      'skipped meals not recorded',
       'pain not recorded',
     ])
     // An older record's answer the same way, and one with neither.
-    const oldOdd = { ...odd, skippedMeal: undefined, eatenToday: 'yes' }
+    const { skippedMeal: _, ...oddBefore } = odd
+    const oldOdd = { ...oddBefore, eatenToday: 'yes' }
     expect(describeAnswers(oldOdd as unknown as CheckInAnswers)[2]).toBe('eaten not recorded')
-    const neither = { ...odd, skippedMeal: undefined }
-    expect(describeAnswers(neither as unknown as CheckInAnswers)[2]).toBe('meals not recorded')
+    const neither = oddBefore
+    expect(describeAnswers(neither as unknown as CheckInAnswers)[2]).toBe('skipped meals not recorded')
   })
 
   it('does not say when, quote the pain note, or attribute speech', () => {

@@ -19,7 +19,7 @@ import {
 import { DEMO_PERSON_ID, seedDemoHistory, withSeededVerdicts } from '@core/seed/persona'
 import type { Assessment, SessionRecord } from '@core/session/types'
 import { ALL_RULES, BASELINE_RULE_IDS } from '@core/scoring'
-import { history, seededHistory, session } from './helpers'
+import { history, seededHistory, session, sessionBeforeKV16 } from './helpers'
 
 const ids = (a: Assessment): string[] => a.firedRules.map((r) => r.id)
 
@@ -118,14 +118,14 @@ describe('scoreSession', () => {
   it('reads a record from before KV-16 by the question it was asked', () => {
     // "Not yet" to "have you eaten today?" still fires, and weighs what it did.
     const before = scoreSession(
-      session({ answers: { eatenToday: false, skippedMeal: undefined } }),
+      sessionBeforeKV16(false),
       history(5),
     )
     expect(before.firedRules).toEqual([
       expect.objectContaining({ id: 'not-eaten', title: 'Had not eaten yet', severity: 0.3 }),
     ])
     const ate = scoreSession(
-      session({ answers: { eatenToday: true, skippedMeal: undefined } }),
+      sessionBeforeKV16(true),
       history(5),
     )
     expect(ate.firedRules).toEqual([])
@@ -139,6 +139,17 @@ describe('scoreSession', () => {
       expect(ids(a)).not.toContain('not-eaten')
       expect(ids(a).includes('skipped-meal')).toBe(skippedMeal)
     }
+  })
+
+  it('reads a record carrying both meal answers once, by the question asked now (review of #167)', () => {
+    // Not a shape the app writes, and the type refuses it; a hand-edited store
+    // or another client could. Both rules firing summed to 0.6: an amber with
+    // nothing on camera, outside KV-10's six, from one question answered twice.
+    const both = session()
+    both.answers = { ...both.answers, skippedMeal: true, eatenToday: false } as unknown as typeof both.answers
+    const a = scoreSession(both, history(5))
+    expect(ids(a)).toEqual(['skipped-meal'])
+    expect(a.flag).toBe('normal')
   })
 
   it('does not double-count pain when poor sleep already pairs with it', () => {
@@ -258,7 +269,7 @@ describe('scoreSession', () => {
       scoreSession(session({ answers: { sleep: 'poorly' } }), history(5)),
       scoreSession(session({ answers: { painReported: true } }), history(5)),
       // A record from before KV-16, which the old question's rule still reads.
-      scoreSession(session({ answers: { eatenToday: false, skippedMeal: undefined } }), history(5)),
+      scoreSession(sessionBeforeKV16(false), history(5)),
       scoreSession(session({ vitals: { pulseRateBpm: 95 } }), varied),
       // The low side (KV-9), against the same flat history.
       scoreSession(session({ vitals: { pulseRateBpm: 40, breathingRateBrpm: 6 } }), history(5)),
@@ -1366,7 +1377,7 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
 
   it('writes an answer rule in its current words, and keeps its severity', () => {
     const old = {
-      ...session({ answers: { eatenToday: false, skippedMeal: undefined } }),
+      ...sessionBeforeKV16(false),
       assessment: stored({
         firedRules: [
           { id: 'not-eaten', title: 'Has not eaten today', explanation: 'They have not eaten today.', severity: 0.3 },
@@ -1417,7 +1428,7 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
     // Every stored form KV-93 changed, on cards that drift, withhold and
     // compare, so the sweep covers summary, rules and the new sentence alike.
     const pastPulse = [72, 78, 69, 81, 75].map((pulse, i) => at(`p-${i}`, i + 1, { vitals: { pulseRateBpm: pulse } }))
-    const answers = { painReported: true, sleep: 'poorly', mood: 'low', eatenToday: false, skippedMeal: undefined } as const
+    const answers = { painReported: true, sleep: 'poorly', mood: 'low', eatenToday: false } as const
     const olds = [
       stored({
         firedRules: [

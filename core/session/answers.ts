@@ -1,4 +1,29 @@
-import type { CheckInAnswers, MoodAnswer, SleepAnswer } from './types'
+import type { CheckInAnswers, MoodAnswer, SleepAnswer, SessionRecord } from './types'
+
+/**
+ * A record with its answers as the questions are asked now (review of #167).
+ *
+ * Only a seeded one changes. A real check-in keeps the question it was asked:
+ * "not yet" to "have you eaten today?" is not an answer to "have you skipped
+ * any meals since yesterday?", and converting it would put words in a real
+ * person's mouth. A seeded record is generated data, and KV-103 already
+ * scores it by today's rules as a view, not a fact — so it is read as the
+ * question asked now. The seed draws `skippedMeal` from the same number that
+ * once drew `eatenToday` (`r() <= 0.1` is `!(r() > 0.1)`), so this is exactly
+ * what a fresh seed writes: a demo seeded before KV-16 reads as one seeded
+ * since, rather than showing "Had not eaten yet" forever for a person who does
+ * not exist.
+ *
+ * A view, never a write: records are append-only, and the store applies this
+ * only to what it lists.
+ */
+export function asAskedNow(record: SessionRecord): SessionRecord {
+  if (record.seeded !== true) return record
+  const { answers } = record
+  if (answers.skippedMeal !== undefined || typeof answers.eatenToday !== 'boolean') return record
+  const { eatenToday, ...rest } = answers
+  return { ...record, answers: { ...rest, skippedMeal: !eatenToday } }
+}
 
 /**
  * The four questions' answers: turning a half-finished set into a check-in, or
@@ -77,17 +102,19 @@ const yesNo = (value: unknown, yes: string, no: string): string =>
 const LABEL: Record<(typeof ANSWER_STEPS)[number], (answers: CheckInAnswers) => string> = {
   mood: (a) => `mood ${word(MOOD, a.mood)}`,
   sleep: (a) => `sleep ${word(SLEEP, a.sleep)}`,
-  // The question the record was asked (KV-16): an older one keeps its own words.
+  // The question the record was asked (KV-16): an older one keeps its own
+  // words. The value is the button pressed, "No" or "Yes", as for pain — not a
+  // paraphrase of it (review of #167).
   skippedMeal: (a) =>
     a.skippedMeal === undefined && a.eatenToday !== undefined
       ? `eaten ${yesNo(a.eatenToday, 'yes', 'not yet')}`
-      : `meals ${yesNo(a.skippedMeal, 'skipped', 'none skipped')}`,
+      : `skipped meals ${yesNo(a.skippedMeal, 'yes', 'no')}`,
   painReported: (a) => `pain ${yesNo(a.painReported, 'yes', 'no')}`,
 }
 
 /**
  * The four answers as a compact record, one label per question, in the order
- * they are asked (KV-110): "mood low", "sleep badly", "meals skipped",
+ * they are asked (KV-110): "mood low", "sleep badly", "skipped meals yes",
  * "pain yes". A record from before KV-16 says "eaten yes" or "eaten not yet",
  * which is what it was asked.
  *
@@ -103,7 +130,7 @@ const LABEL: Record<(typeof ANSWER_STEPS)[number], (answers: CheckInAnswers) => 
  * caregiver read one fact two or three times, and "they said" put words in
  * the mouth of seeded demo data nobody spoke. A label is neither a rule nor a
  * quotation. The values are the person's own choices from the questions —
- * "all right", "badly", "skipped" — with no "today": the card's date says
+ * "all right", "badly", "yes" — with no "today": the card's date says
  * when (KV-93). The pain note, when there is one, is shown on its own and
  * unedited; this only says whether there was pain.
  *

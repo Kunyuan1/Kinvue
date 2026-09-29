@@ -471,7 +471,7 @@ that *failed*, where scoring the answers and calling the day `normal` would miss
 was measured. This is about a capture that *worked* and saw nothing unusual.
 
 Six of the thirty-six answer combinations do it today, and every one includes pain; five
-of the six are pain with a meal skipped. A person in pain who is not eating is having a day
+of the six are pain with a meal skipped. A person in pain who has skipped a meal is having a day
 worth a look whatever their pulse was, and the camera cannot see either. `elevated` means
 "worth a look", not "something is wrong with their body", so a flag that rests on what they
 said rather than on what was measured stays inside both lines the product does not cross:
@@ -505,7 +505,7 @@ before this rule existed. Making an answer visible by giving it a rule also give
 which is the wrong tool for the job.
 
 **So every card now shows all four answers, apart from the rules** (KV-110): *"Answers:
-mood all right · sleep badly · meals none skipped · pain no"*. The answers are shown whatever they
+mood all right · sleep badly · skipped meals no · pain no"*. The answers are shown whatever they
 were; the fired rules below them say what counted. They are labels, not sentences: sentences
 repeated the rule titles word for word on the cards that matter, and "they said" put words in
 the mouth of seeded data nobody spoke. The values are the person's own choices from the
@@ -549,16 +549,32 @@ cutoff hour, which would have been one more tuned constant for #22 to defend. Th
 sits where the person answering can see it rather than inside the scorer.
 
 - **A new field, not a new meaning for the old one.** New check-ins store `skippedMeal`, and
-  `skipped-meal` fires on `true`. A record written before keeps `eatenToday`, and `not-eaten`
-  still reads it: stored verdicts stand (KV-138) and a seeded day is scored by today's rules
-  (KV-103). "Not yet" is not an answer to the new question, so nothing is converted.
-  `not-eaten` fires only on an explicit `false`: absent is not "no".
-- **Weighed the same, 0.30**, so KV-10's six answer combinations that flag are the same six,
-  and the test that pins them says so.
-- **The card labels each record by the question it was asked**: "meals skipped" or "meals
-  none skipped" from KV-16 on, "eaten yes" or "eaten not yet" before it.
+  `skipped-meal` fires on `true`. A real check-in written before keeps `eatenToday`, and
+  `not-eaten` still reads it: its verdict stands (KV-138), and "not yet" is not an answer to
+  the new question, so it is never converted. `not-eaten` fires only on an explicit `false`
+  (absent is not "no"), and never on a record that also carries `skippedMeal`: one question,
+  one rule (review of #167). The type, `MealAnswer`, holds exactly one of the two.
+- **A seeded day is read as the question asked now** (review of #167). It is generated data,
+  and KV-103 already treats its verdict as a view of today's rules; the seed draws
+  `skippedMeal` from the same number that drew `eatenToday`, so reading an old seeded record
+  as `skippedMeal: !eatenToday` is exactly what a fresh seed writes. The store's `list` does
+  it on the way out and never writes it back, so a demo seeded before KV-16 reads the same as
+  one seeded since, rather than saying "Had not eaten yet" forever about nobody.
+- **Weighed the same, 0.30 — kept, not re-argued.** The case for changing the question is
+  that the old 0.30 often fired on nothing, so a skipped meal, a firmer fact, may deserve
+  more. The weight stays because KV-10 decided which answer combinations may flag, and
+  moving it would reopen that decision inside a wording change. Whether it should move is
+  #22's, which owns the weights; until then the six combinations are the same six.
+- **The card labels each record by the question it was asked**, with the button pressed:
+  "skipped meals yes" or "skipped meals no" from KV-16 on, "eaten yes" or "eaten not yet"
+  before it. Not "meals none skipped": nobody chose those words (review of #167).
 - The process boundary requires `skippedMeal`: a check-in carrying only the old answer is
   rejected, not quietly converted.
+- **`not-eaten` can go** once no real check-in from before KV-16 can be read: when every
+  store in use has been started after it, or a migration has moved those records aside.
+  Until then it is what keeps an old real card's verdict in its own words.
+
+---
 
 ## Why Electron, and where the camera runs
 
