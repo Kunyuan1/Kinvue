@@ -9,6 +9,7 @@ import {
 import { describeAnswers } from '@core/session/answers'
 import { knownZone } from '@core/session/time'
 import type { ComparedMetric, Flag, SessionRecord } from '@core/session/types'
+import { CARD_BOX } from './boxes'
 
 const FLAG_COLOR: Record<Flag, string> = {
   normal: 'text-(--color-normal)',
@@ -68,7 +69,7 @@ export default function SessionCard({
     : null
 
   return (
-    <article className="rounded-xl border border-(--color-line) bg-(--color-raised) p-5">
+    <article className={CARD_BOX}>
       <header className="flex items-baseline justify-between gap-4">
         <div>
           <p className={`font-medium ${FLAG_COLOR[flag]}`}>

@@ -968,14 +968,32 @@ function driftReason(rescored: Assessment, noteGaps: readonly UncomparedMetric[]
  * `present` for every card on the dashboard, each against the same person's
  * check-ins before it — `scoreSession`'s contract is one person's history, and
  * a caregiver's client will hold more than one person. Keyed by record id.
+ *
+ * With `onFailure`, a record `present` throws on is handed to it and left out,
+ * and the rest are still presented: one record the store let through damaged
+ * must not cost every card (review of #164). Left out is not "no
+ * presentation" — a card with none reads "Not enough to say", a verdict the
+ * check-in never had — so the caller has to show the failure as one. The
+ * record still counts as history for the ones after it, as it did when they
+ * were scored: leaving it out would change their verdicts, not just hide its
+ * own. Without `onFailure` the throw propagates, as it always did.
  */
-export function presentAll(records: readonly SessionRecord[]): Map<string, Presentation> {
+export function presentAll(
+  records: readonly SessionRecord[],
+  onFailure?: (record: SessionRecord, error: unknown) => void,
+): Map<string, Presentation> {
   const byTime = [...records].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
   const before = new Map<string, SessionRecord[]>()
   const shown = new Map<string, Presentation>()
   for (const record of byTime) {
     const prior = before.get(record.personId) ?? []
-    const presentation = present(record, prior)
+    let presentation: Presentation | null = null
+    try {
+      presentation = present(record, prior)
+    } catch (error) {
+      if (onFailure === undefined) throw error
+      onFailure(record, error)
+    }
     if (presentation !== null) shown.set(record.id, presentation)
     before.set(record.personId, [...prior, record])
   }
