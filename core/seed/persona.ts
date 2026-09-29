@@ -142,7 +142,9 @@ export function seedDemoHistory(
       answers: {
         mood: pick(MOOD, r()),
         sleep: pick(SLEEP, r()),
-        eatenToday: r() > 0.1,
+        // The question asked now (KV-16), from the same draw as the old
+        // `eatenToday: r() > 0.1`, so the fortnight is the same days.
+        skippedMeal: r() <= 0.1,
         painReported: r() > 0.85,
       },
     })

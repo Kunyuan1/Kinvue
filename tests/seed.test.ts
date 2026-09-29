@@ -161,8 +161,8 @@ describe('the seeded demo history', () => {
   it('never scores a day as elevated', () => {
     // The property the demo actually needs, and the one `persona.ts` now
     // claims. The stronger reading of the old comment — that no rule fires at
-    // all — is false. Four rules fire across the fortnight: `not-eaten` (the
-    // 1-in-10 `eatenToday` draw), `low-mood` (MOOD's `low`), `poor-sleep`
+    // all — is false. Four rules fire across the fortnight: `skipped-meal` (the
+    // 1-in-10 `skippedMeal` draw, `not-eaten` on a fortnight seeded before KV-16), `low-mood` (MOOD's `low`), `poor-sleep`
     // (SLEEP's `poorly`, shown but barely weighed — KV-91), and
     // `pulse-elevated`, from the vitals jitter alone clearing `Z_FIRES_AT`
     // against a short, steady baseline. Rules firing is what makes the demo
@@ -332,13 +332,13 @@ describe('the seeded demo history', () => {
     ])
     expect(
       seeded.map(({ answers: a }) =>
-        [a.sleep, a.mood, a.eatenToday ? 'ate' : 'not-eaten', a.painReported ? 'pain' : '']
+        [a.sleep, a.mood, a.skippedMeal === true ? 'skipped-meal' : 'ate', a.painReported ? 'pain' : '']
           .filter(Boolean)
           .join(' '),
       ),
     ).toEqual([
-      'well good not-eaten',
-      'ok ok not-eaten',
+      'well good skipped-meal',
+      'ok ok skipped-meal',
       'poorly good ate',
       'ok ok ate',
       'well good ate',

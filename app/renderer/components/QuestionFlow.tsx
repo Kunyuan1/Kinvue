@@ -145,15 +145,21 @@ export default function QuestionFlow({
       )}
 
       {step === 2 && (
-        <Question title="Have you eaten today?">
-          <Choice chosen={draft.eatenToday === true} onClick={() => answer({ eatenToday: true })}>
-            Yes
+        // Asked about a meal skipped, not whether they have eaten "today": at
+        // 8am "not yet" was breakfast still to come, and it counted the same as
+        // a missed day (KV-16). This means the same at any hour.
+        <Question title="Have you skipped any meals since yesterday?">
+          <Choice
+            chosen={draft.skippedMeal === false}
+            onClick={() => answer({ skippedMeal: false })}
+          >
+            No
           </Choice>
           <Choice
-            chosen={draft.eatenToday === false}
-            onClick={() => answer({ eatenToday: false })}
+            chosen={draft.skippedMeal === true}
+            onClick={() => answer({ skippedMeal: true })}
           >
-            Not yet
+            Yes
           </Choice>
         </Question>
       )}

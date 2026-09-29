@@ -396,7 +396,7 @@ export const painReported: Rule = {
  * intended: a real drop plus a bad night is a better amber than the drop alone.
  *
  * What it may not do is add an answers-only flag. Without pain the answer rules
- * reach 0.5 at most (`notEaten` + `lowMood`), so under 0.1 it cannot, and KV-10
+ * reach 0.5 at most (`skippedMeal` + `lowMood`), so under 0.1 it cannot, and KV-10
  * decided which answer combinations may flag. Two tests pin it: the answer
  * combinations that flag, and that it tips only a day already within 0.05.
  */
@@ -414,10 +414,35 @@ export const poorSleep: Rule = {
   },
 }
 
+/**
+ * A meal skipped since the day before (KV-16). The question it answers means
+ * the same whenever it is asked: "have you eaten today?" answered "not yet" at
+ * 8am was breakfast not yet had, and weighed 0.30 like a missed day. Weighed as
+ * `notEaten` was, so KV-10's answer combinations that may flag are unchanged.
+ */
+export const skippedMeal: Rule = {
+  id: 'skipped-meal',
+  evaluate({ session }) {
+    if (session.answers.skippedMeal !== true) return null
+    return {
+      id: 'skipped-meal',
+      title: 'Skipped a meal',
+      explanation: 'At the check-in they reported skipping a meal since the day before.',
+      severity: 0.3,
+    }
+  },
+}
+
+/**
+ * "Not yet" to the question asked before KV-16, on a record written then — a
+ * stored verdict stands (KV-138), and a seeded day is scored by today's rules
+ * (KV-103), so this still has to read one. Fires only on an explicit `false`:
+ * a record written since has no `eatenToday` at all, and absent is not "no".
+ */
 export const notEaten: Rule = {
   id: 'not-eaten',
   evaluate({ session }) {
-    if (session.answers.eatenToday) return null
+    if (session.answers.eatenToday !== false) return null
     return {
       id: 'not-eaten',
       title: 'Had not eaten yet',
@@ -450,6 +475,7 @@ export const ALL_RULES: readonly Rule[] = [
   poorSleepWithPain,
   poorSleep,
   painReported,
+  skippedMeal,
   notEaten,
   lowMood,
 ]

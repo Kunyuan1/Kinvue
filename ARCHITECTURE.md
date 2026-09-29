@@ -471,7 +471,7 @@ that *failed*, where scoring the answers and calling the day `normal` would miss
 was measured. This is about a capture that *worked* and saw nothing unusual.
 
 Six of the thirty-six answer combinations do it today, and every one includes pain; five
-of the six are pain with nothing eaten. A person in pain who has not eaten is having a day
+of the six are pain with a meal skipped. A person in pain who is not eating is having a day
 worth a look whatever their pulse was, and the camera cannot see either. `elevated` means
 "worth a look", not "something is wrong with their body", so a flag that rests on what they
 said rather than on what was measured stays inside both lines the product does not cross:
@@ -505,7 +505,7 @@ before this rule existed. Making an answer visible by giving it a rule also give
 which is the wrong tool for the job.
 
 **So every card now shows all four answers, apart from the rules** (KV-110): *"Answers:
-mood all right · sleep badly · eaten yes · pain no"*. The answers are shown whatever they
+mood all right · sleep badly · meals none skipped · pain no"*. The answers are shown whatever they
 were; the fired rules below them say what counted. They are labels, not sentences: sentences
 repeated the rule titles word for word on the cards that matter, and "they said" put words in
 the mouth of seeded data nobody spoke. The values are the person's own choices from the
@@ -516,7 +516,7 @@ words for reads "not recorded" rather than vanishing. `describeAnswers` in
 That leaves `poor-sleep` without the job it was added for. **It keeps its 0.05 on the case
 above, not on visibility**: a bad night tips a camera day already within 0.05 of the
 threshold, and cannot add an answers-only flag. `rules.ts` says so beside the weight. If that
-case stops holding, the rule can go without hiding anything. `low-mood` and `not-eaten` never
+case stops holding, the rule can go without hiding anything. `low-mood` and the meal rule never
 had visibility as their reason: they were scoring rules from the start, and KV-10 decided
 which answer combinations they may flag.
 
@@ -533,6 +533,32 @@ own is the other half of the same balance; #9 answered only the direction, so th
 question belongs with #22.
 
 ---
+
+## Why the meal question asks about a skipped meal
+
+Decided in KV-16. The question was *"Have you eaten today?"*, and "Not yet" fired
+`not-eaten` at 0.30, the second-heaviest answer rule. At 8am "not yet" is breakfast still to
+come; at 4pm it is a day without food. The rule could not tell them apart, so a morning
+check-in carried a standing weight that had nothing to do with the person's day.
+
+Two ways out were on the ticket: have the rule read the local hour and hold off before a
+cutoff, or change the question so its answer means the same whenever it is asked. **The
+question changed**: *"Have you skipped any meals since yesterday?"* A "no" at 8am and a "no"
+at 4pm are the same fact, the rule stays a one-line read of an answer, and there is no
+cutoff hour, which would have been one more tuned constant for #22 to defend. The context
+sits where the person answering can see it rather than inside the scorer.
+
+- **A new field, not a new meaning for the old one.** New check-ins store `skippedMeal`, and
+  `skipped-meal` fires on `true`. A record written before keeps `eatenToday`, and `not-eaten`
+  still reads it: stored verdicts stand (KV-138) and a seeded day is scored by today's rules
+  (KV-103). "Not yet" is not an answer to the new question, so nothing is converted.
+  `not-eaten` fires only on an explicit `false`: absent is not "no".
+- **Weighed the same, 0.30**, so KV-10's six answer combinations that flag are the same six,
+  and the test that pins them says so.
+- **The card labels each record by the question it was asked**: "meals skipped" or "meals
+  none skipped" from KV-16 on, "eaten yes" or "eaten not yet" before it.
+- The process boundary requires `skippedMeal`: a check-in carrying only the old answer is
+  rejected, not quietly converted.
 
 ## Why Electron, and where the camera runs
 

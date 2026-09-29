@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import {
   classifyCaptureError,
   type CaptureFailure,
@@ -214,6 +214,30 @@ describe('CaptureScreen says which failure it was', () => {
   it('shows nothing at all when there is no failure', () => {
     renderCapture(null)
     expect(screen.queryByText(/not set up yet/i)).toBeNull()
+  })
+})
+
+describe('QuestionFlow asks about a skipped meal (KV-16)', () => {
+  const answerAll = (meal: 'No' | 'Yes'): ReturnType<typeof vi.fn> => {
+    const onDone = vi.fn()
+    render(<QuestionFlow failure={null} onDone={onDone} onCancel={noop} submitting={false} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Good' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Well' }))
+    expect(screen.getByText('Have you skipped any meals since yesterday?')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: meal }))
+    fireEvent.click(screen.getByRole('button', { name: 'No' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Finish' }))
+    return onDone
+  }
+
+  it('stores "Yes" as a skipped meal and "No" as none, never the old answer', () => {
+    const skipped = answerAll('Yes')
+    expect(skipped).toHaveBeenCalledWith(
+      expect.objectContaining({ skippedMeal: true, painReported: false }),
+    )
+    expect(skipped.mock.calls[0]?.[0]).not.toHaveProperty('eatenToday')
+    cleanup()
+    expect(answerAll('No')).toHaveBeenCalledWith(expect.objectContaining({ skippedMeal: false }))
   })
 })
 

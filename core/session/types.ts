@@ -81,7 +81,19 @@ export type SleepAnswer = 'well' | 'ok' | 'poorly'
 export interface CheckInAnswers {
   mood: MoodAnswer
   sleep: SleepAnswer
-  eatenToday: boolean
+  /**
+   * Whether they skipped a meal since the day before (KV-16). Asked from KV-16
+   * on, and required on every check-in written since: `core/session/validate.ts`
+   * rejects one without it. Absent on an older record, which has `eatenToday`.
+   */
+  skippedMeal?: boolean
+  /**
+   * "Have you eaten today?", as asked before KV-16, and only ever on a record
+   * written then. Never written now: at 8am its "not yet" was an ordinary
+   * morning, not a missed meal, and it weighed the same as one at 4pm. Kept,
+   * not converted — "not yet" is not an answer to the new question.
+   */
+  eatenToday?: boolean
   painReported: boolean
   /** Free text, only collected when painReported is true. */
   painNote?: string

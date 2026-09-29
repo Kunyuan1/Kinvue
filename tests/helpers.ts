@@ -3,7 +3,7 @@ import type { CheckInAnswers, SessionRecord, Vitals } from '@core/session/types'
 const GOOD_ANSWERS: CheckInAnswers = {
   mood: 'good',
   sleep: 'well',
-  eatenToday: true,
+  skippedMeal: false,
   painReported: false,
 }
 

@@ -5,8 +5,8 @@ import type { CheckInAnswers, MoodAnswer, SleepAnswer } from './types'
  * refusing to, and saying what a finished set was (`describeAnswers`).
  *
  * A question nobody answered is not an answer, and it is certainly not a "no".
- * `CheckInAnswers` has no room for "not asked" — `eatenToday: false` means the
- * person said they had not eaten, and `not-eaten` fires a rule on it. So the
+ * `CheckInAnswers` has no room for "not asked" — `skippedMeal: true` means the
+ * person said they had skipped a meal, and `skipped-meal` fires a rule on it. So the
  * flow either collects all four or produces nothing, and this is where that is
  * decided rather than in the markup.
  */
@@ -15,13 +15,13 @@ import type { CheckInAnswers, MoodAnswer, SleepAnswer } from './types'
 export interface AnswerDraft {
   mood?: MoodAnswer
   sleep?: SleepAnswer
-  eatenToday?: boolean
+  skippedMeal?: boolean
   painReported?: boolean
   painNote?: string
 }
 
 /** The four questions, in the order they are asked. */
-export const ANSWER_STEPS = ['mood', 'sleep', 'eatenToday', 'painReported'] as const
+export const ANSWER_STEPS = ['mood', 'sleep', 'skippedMeal', 'painReported'] as const
 
 /** How many of the four have been answered. */
 export function answeredCount(draft: AnswerDraft): number {
@@ -36,11 +36,11 @@ export function answeredCount(draft: AnswerDraft): number {
  * process boundary. Whitespace someone typed and deleted is not a note.
  */
 export function draftToAnswers(draft: AnswerDraft): CheckInAnswers | null {
-  const { mood, sleep, eatenToday, painReported, painNote } = draft
+  const { mood, sleep, skippedMeal, painReported, painNote } = draft
   if (mood === undefined || sleep === undefined) return null
-  if (eatenToday === undefined || painReported === undefined) return null
+  if (skippedMeal === undefined || painReported === undefined) return null
 
-  const answers: CheckInAnswers = { mood, sleep, eatenToday, painReported }
+  const answers: CheckInAnswers = { mood, sleep, skippedMeal, painReported }
 
   // Only ever kept alongside the pain it describes; a note without pain is
   // rejected downstream, and guessing which half was meant would invent one.
@@ -77,14 +77,19 @@ const yesNo = (value: unknown, yes: string, no: string): string =>
 const LABEL: Record<(typeof ANSWER_STEPS)[number], (answers: CheckInAnswers) => string> = {
   mood: (a) => `mood ${word(MOOD, a.mood)}`,
   sleep: (a) => `sleep ${word(SLEEP, a.sleep)}`,
-  eatenToday: (a) => `eaten ${yesNo(a.eatenToday, 'yes', 'not yet')}`,
+  // The question the record was asked (KV-16): an older one keeps its own words.
+  skippedMeal: (a) =>
+    a.skippedMeal === undefined && a.eatenToday !== undefined
+      ? `eaten ${yesNo(a.eatenToday, 'yes', 'not yet')}`
+      : `meals ${yesNo(a.skippedMeal, 'skipped', 'none skipped')}`,
   painReported: (a) => `pain ${yesNo(a.painReported, 'yes', 'no')}`,
 }
 
 /**
  * The four answers as a compact record, one label per question, in the order
- * they are asked (KV-110): "mood low", "sleep badly", "eaten not yet",
- * "pain yes".
+ * they are asked (KV-110): "mood low", "sleep badly", "meals skipped",
+ * "pain yes". A record from before KV-16 says "eaten yes" or "eaten not yet",
+ * which is what it was asked.
  *
  * Shown on every card, whatever the answers were. Before this a card showed an
  * answer only when a rule fired on it, so a card with no sleep line could mean
@@ -98,7 +103,7 @@ const LABEL: Record<(typeof ANSWER_STEPS)[number], (answers: CheckInAnswers) => 
  * caregiver read one fact two or three times, and "they said" put words in
  * the mouth of seeded demo data nobody spoke. A label is neither a rule nor a
  * quotation. The values are the person's own choices from the questions —
- * "all right", "badly", "not yet" — with no "today": the card's date says
+ * "all right", "badly", "skipped" — with no "today": the card's date says
  * when (KV-93). The pain note, when there is one, is shown on its own and
  * unedited; this only says whether there was pain.
  *

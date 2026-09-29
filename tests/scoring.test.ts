@@ -58,11 +58,11 @@ describe('scoreSession', () => {
 
   it('still shows answer-based rules while the baseline is building', () => {
     const assessment = scoreSession(
-      session({ answers: { eatenToday: false } }),
+      session({ answers: { skippedMeal: true } }),
       history(MIN_BASELINE_SESSIONS - 1),
     )
     expect(assessment.flag).toBe('insufficient-signal')
-    expect(ids(assessment)).toContain('not-eaten')
+    expect(ids(assessment)).toContain('skipped-meal')
   })
 
   it('does not score a capture the SDK reported with low confidence', () => {
@@ -110,9 +110,35 @@ describe('scoreSession', () => {
   })
 
   it('reports fired rules even on a normal day', () => {
-    const assessment = scoreSession(session({ answers: { eatenToday: false } }), history(5))
+    const assessment = scoreSession(session({ answers: { skippedMeal: true } }), history(5))
     expect(assessment.flag).toBe('normal')
-    expect(ids(assessment)).toEqual(['not-eaten'])
+    expect(ids(assessment)).toEqual(['skipped-meal'])
+  })
+
+  it('reads a record from before KV-16 by the question it was asked', () => {
+    // "Not yet" to "have you eaten today?" still fires, and weighs what it did.
+    const before = scoreSession(
+      session({ answers: { eatenToday: false, skippedMeal: undefined } }),
+      history(5),
+    )
+    expect(before.firedRules).toEqual([
+      expect.objectContaining({ id: 'not-eaten', title: 'Had not eaten yet', severity: 0.3 }),
+    ])
+    const ate = scoreSession(
+      session({ answers: { eatenToday: true, skippedMeal: undefined } }),
+      history(5),
+    )
+    expect(ate.firedRules).toEqual([])
+  })
+
+  it('never reads a new record’s missing eaten-today answer as "not yet" (KV-16)', () => {
+    // Missing is not zero: a check-in written since KV-16 has no `eatenToday`,
+    // and `not-eaten` fired on anything falsy before this change.
+    for (const skippedMeal of [false, true]) {
+      const a = scoreSession(session({ answers: { skippedMeal } }), history(5))
+      expect(ids(a)).not.toContain('not-eaten')
+      expect(ids(a).includes('skipped-meal')).toBe(skippedMeal)
+    }
   })
 
   it('does not double-count pain when poor sleep already pairs with it', () => {
@@ -152,25 +178,27 @@ describe('scoreSession', () => {
     const flagged: string[] = []
     for (const sleep of ['well', 'ok', 'poorly'] as const)
       for (const mood of ['good', 'ok', 'low'] as const)
-        for (const eatenToday of [true, false])
+        for (const skippedMeal of [false, true])
           for (const painReported of [false, true]) {
             const a = scoreSession(
-              session({ answers: { sleep, mood, eatenToday, painReported } }),
+              session({ answers: { sleep, mood, skippedMeal, painReported } }),
               history(14),
             )
-            const ate = eatenToday ? 'ate' : 'not-eaten'
+            // Taken with `not-eaten` before KV-16; `skipped-meal` weighs the
+            // same, so the list is the same days under its new name.
+            const ate = skippedMeal ? 'skipped-meal' : 'ate'
             const pain = painReported ? ' pain' : ''
             if (a.flag === 'elevated') flagged.push(`${sleep} ${mood} ${ate}${pain}`)
           }
 
     expect(flagged.sort()).toEqual(
       [
-        'ok low not-eaten pain',
-        'poorly good not-eaten pain',
+        'ok low skipped-meal pain',
+        'poorly good skipped-meal pain',
         'poorly low ate pain',
-        'poorly low not-eaten pain',
-        'poorly ok not-eaten pain',
-        'well low not-eaten pain',
+        'poorly low skipped-meal pain',
+        'poorly ok skipped-meal pain',
+        'well low skipped-meal pain',
       ].sort(),
     )
   })
@@ -223,12 +251,14 @@ describe('scoreSession', () => {
       scoreSession(
         session({
           vitals,
-          answers: { sleep: 'poorly', painReported: true, eatenToday: false, mood: 'low' },
+          answers: { sleep: 'poorly', painReported: true, skippedMeal: true, mood: 'low' },
         }),
         history(5),
       ),
       scoreSession(session({ answers: { sleep: 'poorly' } }), history(5)),
       scoreSession(session({ answers: { painReported: true } }), history(5)),
+      // A record from before KV-16, which the old question's rule still reads.
+      scoreSession(session({ answers: { eatenToday: false, skippedMeal: undefined } }), history(5)),
       scoreSession(session({ vitals: { pulseRateBpm: 95 } }), varied),
       // The low side (KV-9), against the same flat history.
       scoreSession(session({ vitals: { pulseRateBpm: 40, breathingRateBrpm: 6 } }), history(5)),
@@ -260,7 +290,7 @@ describe('scoreSession', () => {
       scoreSession(session(), history(5)),
       scoreSession(session({ answers: { mood: 'low' } }), history(5)),
       scoreSession(
-        session({ answers: { eatenToday: false, painReported: true, mood: 'low' } }),
+        session({ answers: { skippedMeal: true, painReported: true, mood: 'low' } }),
         history(5),
       ),
       scoreSession(session(), history(MIN_BASELINE_SESSIONS - 1)),
@@ -275,15 +305,15 @@ describe('scoreSession', () => {
     expect(new Set(summaries).size).toBe(summaries.length)
     for (const summary of summaries) expect(summary).not.toMatch(RELATIVE_TIME)
     // The headline quotes the top rule's title, so the title has to read as a
-    // clause: "had not eaten yet" keeps the question's scope; "had not eaten" did not.
-    expect(summaries[2]).toBe('Different from their usual — had not eaten yet.')
+    // clause: "skipped a meal" keeps the question's scope (KV-16).
+    expect(summaries[2]).toBe('Different from their usual — skipped a meal.')
   })
 
   it('orders fired rules by severity, strongest first', () => {
     const assessment = scoreSession(
       session({
         vitals: { hrvRmssdMs: 15 },
-        answers: { mood: 'low', eatenToday: false },
+        answers: { mood: 'low', skippedMeal: true },
       }),
       history(5),
     )
@@ -464,11 +494,11 @@ describe('scoreSession', () => {
     // The sentence has always claimed the answer rules are what still ran.
     // Until KV-71 every rule ran; now the claim is true.
     const assessment = scoreSession(
-      session({ vitals: { breathingRateBrpm: 16 }, answers: { eatenToday: false } }),
+      session({ vitals: { breathingRateBrpm: 16 }, answers: { skippedMeal: true } }),
       history(1),
     )
 
-    expect(assessment.firedRules.map((r) => r.id)).toEqual(['not-eaten'])
+    expect(assessment.firedRules.map((r) => r.id)).toEqual(['skipped-meal'])
   })
 
   it('starts comparing on the check-in that makes the baseline mature', () => {
@@ -536,7 +566,7 @@ describe('scoreSession', () => {
   })
 
   it('does not let a one-reading usual push a day to elevated', () => {
-    // The severity is not cosmetic: 0.333 alongside not-eaten's 0.3 clears
+    // The severity is not cosmetic: 0.333 alongside skipped-meal's 0.3 clears
     // ELEVATED_SEVERITY_THRESHOLD, so a usual built from one morning could
     // decide the verdict.
     const past = [
@@ -553,12 +583,12 @@ describe('scoreSession', () => {
       }),
     ]
     const assessment = scoreSession(
-      session({ vitals: { breathingRateBrpm: 16 }, answers: { eatenToday: false } }),
+      session({ vitals: { breathingRateBrpm: 16 }, answers: { skippedMeal: true } }),
       past,
     )
 
     expect(assessment.flag).not.toBe('elevated')
-    expect(ids(assessment)).toEqual(['not-eaten'])
+    expect(ids(assessment)).toEqual(['skipped-meal'])
     // Not `normal` either, since KV-87: breathing was measured and never
     // compared, so a green verdict would claim a check that did not happen.
     expect(assessment.flag).toBe('insufficient-signal')
@@ -823,10 +853,10 @@ describe('seededBaselineDisclosure', () => {
 
   it('says nothing when only answer-based rules fired under a thin baseline', () => {
     const assessment = scoreSession(
-      session({ answers: { eatenToday: false } }),
+      session({ answers: { skippedMeal: true } }),
       seededHistory(2),
     )
-    expect(assessment.firedRules.map((r) => r.id)).toEqual(['not-eaten'])
+    expect(assessment.firedRules.map((r) => r.id)).toEqual(['skipped-meal'])
     expect(seededBaselineDisclosure(assessment)).toBeNull()
   })
 
@@ -1004,7 +1034,7 @@ describe('a metric measured but never compared (KV-87)', () => {
     const assessment = scoreSession(
       session({
         vitals: { pulseRateBpm: 101.5 },
-        answers: { sleep: 'poorly', painReported: true, eatenToday: false },
+        answers: { sleep: 'poorly', painReported: true, skippedMeal: true },
       }),
       thinPulse(),
     )
@@ -1336,7 +1366,7 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
 
   it('writes an answer rule in its current words, and keeps its severity', () => {
     const old = {
-      ...session({ answers: { eatenToday: false } }),
+      ...session({ answers: { eatenToday: false, skippedMeal: undefined } }),
       assessment: stored({
         firedRules: [
           { id: 'not-eaten', title: 'Has not eaten today', explanation: 'They have not eaten today.', severity: 0.3 },
@@ -1387,7 +1417,7 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
     // Every stored form KV-93 changed, on cards that drift, withhold and
     // compare, so the sweep covers summary, rules and the new sentence alike.
     const pastPulse = [72, 78, 69, 81, 75].map((pulse, i) => at(`p-${i}`, i + 1, { vitals: { pulseRateBpm: pulse } }))
-    const answers = { painReported: true, sleep: 'poorly', mood: 'low', eatenToday: false } as const
+    const answers = { painReported: true, sleep: 'poorly', mood: 'low', eatenToday: false, skippedMeal: undefined } as const
     const olds = [
       stored({
         firedRules: [

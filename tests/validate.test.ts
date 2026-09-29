@@ -6,7 +6,7 @@ import {
   parsePersonId,
 } from '@core/session/validate'
 
-const VALID = { mood: 'ok', sleep: 'well', eatenToday: true, painReported: false }
+const VALID = { mood: 'ok', sleep: 'well', skippedMeal: false, painReported: false }
 
 describe('parseCheckInAnswers', () => {
   it('accepts well-formed answers', () => {
@@ -24,8 +24,10 @@ describe('parseCheckInAnswers', () => {
     ['an array', []],
     ['an unknown mood', { ...VALID, mood: 'great' }],
     ['an unknown sleep answer', { ...VALID, sleep: 'badly' }],
-    ['a missing answer', { mood: 'ok', sleep: 'well', eatenToday: true }],
-    ['a truthy string in place of a boolean', { ...VALID, eatenToday: 'yes' }],
+    ['a missing answer', { mood: 'ok', sleep: 'well', skippedMeal: false }],
+    ['a truthy string in place of a boolean', { ...VALID, skippedMeal: 'yes' }],
+    // KV-16: the question asked before is not an answer to the one asked now.
+    ['only the old eaten-today answer', { mood: 'ok', sleep: 'well', eatenToday: true, painReported: false }],
     ['a non-string pain note', { ...VALID, painReported: true, painNote: 3 }],
     ['a pain note without pain reported', { ...VALID, painNote: 'left knee' }],
     ['an empty pain note', { ...VALID, painReported: true, painNote: '' }],
@@ -38,9 +40,13 @@ describe('parseCheckInAnswers', () => {
     expect(parseCheckInAnswers(input)).toBeNull()
   })
 
+  it('does not carry an old eaten-today answer into a new check-in (KV-16)', () => {
+    expect(parseCheckInAnswers({ ...VALID, eatenToday: false })).toEqual(VALID)
+  })
+
   it('does not treat a missing answer as false', () => {
-    // Missing is not zero: an absent eatenToday must not read as "has not eaten".
-    const { eatenToday: _omitted, ...rest } = VALID
+    // Missing is not zero: an absent skippedMeal must not read as either answer.
+    const { skippedMeal: _omitted, ...rest } = VALID
     expect(parseCheckInAnswers(rest)).toBeNull()
   })
 
