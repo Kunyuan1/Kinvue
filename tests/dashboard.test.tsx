@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import App from '@renderer/App'
+import SectionBoundary from '@renderer/components/SectionBoundary'
 import {
   NewerStoreError,
   UnreachableStoreError,
@@ -11,6 +12,76 @@ import type { SessionRecord } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
 import { history, session } from './helpers'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
+
+/**
+ * A card, or the chart, that can be made to throw while drawing (KV-163).
+ *
+ * Both delegate to the real component, so every other test here draws them
+ * as they are. A throw of our own, rather than a record crafted to break one:
+ * whatever breaks one today gets fixed, as `knownZone` fixed the last one, and
+ * the test would quietly stop exercising anything.
+ */
+const drawControl = vi.hoisted(() => ({
+  cardThrowsFor: null as string | null,
+  chartThrows: false,
+  presentThrows: false,
+  captureThrows: false,
+  questionsThrow: false,
+}))
+
+// The capture and question screens, as stand-ins: the real capture screen
+// subscribes to the preload's capture events, which this bridge does not stub,
+// and `failure-screens.test.tsx` draws both for real. Here only whether they
+// throw matters (review of #164).
+vi.mock('@renderer/components/CaptureScreen', () => ({
+  default: () => {
+    if (drawControl.captureThrows) throw new Error('capture screen failed to draw')
+    return <p>in front of the camera</p>
+  },
+}))
+
+vi.mock('@renderer/components/QuestionFlow', () => ({
+  default: () => {
+    if (drawControl.questionsThrow) throw new Error('questions failed to draw')
+    return <p>the questions</p>
+  },
+}))
+
+// A throw in the screen's own code: `presentAll` mocked to throw outright,
+// above every section, whatever it is handed.
+vi.mock('@core/scoring', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/scoring')>()
+  return {
+    ...actual,
+    presentAll: (...args: Parameters<typeof actual.presentAll>) => {
+      if (drawControl.presentThrows) throw new Error('scoring failed while drawing')
+      return actual.presentAll(...args)
+    },
+  }
+})
+
+// Rendered as elements, not called: a call would run the real component's
+// hooks on the wrapper's fiber, and the first conditional hook in either would
+// break every test here with an error pointing at the mock (review of #164).
+vi.mock('@renderer/components/SessionCard', async (importOriginal) => {
+  const { default: Real } = await importOriginal<typeof import('@renderer/components/SessionCard')>()
+  return {
+    default: (props: Parameters<typeof Real>[0]) => {
+      if (props.session.id === drawControl.cardThrowsFor) throw new Error('card failed to draw')
+      return <Real {...props} />
+    },
+  }
+})
+
+vi.mock('@renderer/components/TrendChart', async (importOriginal) => {
+  const { default: Real } = await importOriginal<typeof import('@renderer/components/TrendChart')>()
+  return {
+    default: (props: Parameters<typeof Real>[0]) => {
+      if (drawControl.chartThrows) throw new Error('chart failed to draw')
+      return <Real {...props} />
+    },
+  }
+})
 
 /**
  * What the dashboard's error box says, from the call sites that decide it
@@ -43,6 +114,11 @@ beforeEach(() => {
       cancelCapture: vi.fn(() => Promise.resolve()),
     },
   })
+  drawControl.cardThrowsFor = null
+  drawControl.chartThrows = false
+  drawControl.presentThrows = false
+  drawControl.captureThrows = false
+  drawControl.questionsThrow = false
   // The dashboard logs the original of anything it will not show.
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
 })
@@ -667,5 +743,166 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     render(<App />)
     await screen.findByText('Not enough to say')
     expect(screen.queryByRole('button', { name: 'Pulse' })).toBeNull()
+  })
+})
+
+describe('one section that cannot be drawn (KV-163)', () => {
+  const three = (): SessionRecord[] =>
+    [
+      ...history(3),
+      session({ id: 'latest', capturedAt: '2026-10-01T09:00:00.000Z', vitals: { pulseRateBpm: 80 } }),
+    ].map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+  const cards = (): Element[] => Array.from(document.querySelectorAll('article'))
+
+  it('leaves a sentence where that card was, and the other cards and the chart drawn', async () => {
+    drawControl.cardThrowsFor = 'h-1'
+    listSessions.mockResolvedValue(three())
+    render(<App />)
+
+    expect(
+      await screen.findByText('This check-in could not be shown. It is still saved, unchanged.'),
+    ).toBeTruthy()
+    expect(cards().length).toBe(3)
+    expect(screen.getByText('Pulse, bpm, over the last 4 check-ins.')).toBeTruthy()
+    // For the developer, in the console; never on the screen.
+    expect(console.error).toHaveBeenCalledWith(
+      'A dashboard section could not be drawn.',
+      expect.objectContaining({ message: 'card failed to draw' }),
+      expect.anything(),
+    )
+    expect(document.body.textContent).not.toMatch(/failed to draw|Error/)
+  })
+
+  it('keeps every card when the chart is the part that fails', async () => {
+    drawControl.chartThrows = true
+    listSessions.mockResolvedValue(three())
+    render(<App />)
+
+    expect(await screen.findByText(/^The trend could not be drawn\./)).toBeTruthy()
+    expect(cards().length).toBe(4)
+    expect(screen.queryByRole('button', { name: 'Pulse' })).toBeNull()
+  })
+
+  it("says so in a sentence when the screen's own code throws, and offers another try", async () => {
+    drawControl.presentThrows = true
+    listSessions.mockResolvedValue(three())
+    render(<App />)
+
+    const sentence = await screen.findByText(
+      'Kinvue could not show this screen. Nothing saved has been changed.',
+    )
+    // Still the page's landmark, so it can be found (review of #164).
+    expect(screen.getByRole('main').contains(sentence)).toBe(true)
+    expect(console.error).toHaveBeenCalledWith(
+      'A dashboard section could not be drawn.',
+      expect.objectContaining({ message: 'scoring failed while drawing' }),
+      expect.anything(),
+    )
+    expect(document.body.textContent).not.toMatch(/failed while drawing|Error/)
+    // Whatever it caught, a capture may be running: it is abandoned.
+    expect(window.kinvue.cancelCapture).toHaveBeenCalled()
+
+    // A throw that has cleared: "Try again" draws the screen from nothing.
+    drawControl.presentThrows = false
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    expect(await screen.findByText('Pulse, bpm, over the last 4 check-ins.')).toBeTruthy()
+    expect(cards().length).toBe(4)
+  })
+
+  it("fails one card, not the screen, for a record that cannot be presented (review of #164)", async () => {
+    // A real one, not a mock: a stored assessment the store let through without
+    // its fired rules, which `present` cannot read.
+    const records = three()
+    const damaged = records[1]!
+    damaged.assessment = { flag: 'normal', summary: 'x' } as unknown as SessionRecord['assessment']
+    listSessions.mockResolvedValue(records)
+    render(<App />)
+
+    expect(
+      await screen.findByText('This check-in could not be shown. It is still saved, unchanged.'),
+    ).toBeTruthy()
+    expect(cards().length).toBe(3)
+    expect(screen.queryByText(/^Kinvue could not show this screen/)).toBeNull()
+    expect(console.error).toHaveBeenCalledWith(
+      `Check-in ${damaged.id} could not be presented.`,
+      expect.any(TypeError),
+    )
+  })
+
+  describe('while a reading or the questions are on screen (review of #164)', () => {
+    const vitals = session().vitals
+    const startReading = async (capture: () => Promise<unknown>): Promise<void> => {
+      Object.assign(window.kinvue, { capture: vi.fn(capture) })
+      listSessions.mockResolvedValue(three())
+      render(<App />)
+      fireEvent.click(await screen.findByRole('button', { name: 'Take a reading' }))
+    }
+
+    it('stops the camera when the capture screen cannot be drawn', async () => {
+      drawControl.captureThrows = true
+      // A capture that would run to its ceiling if nothing stopped it.
+      await startReading(() => new Promise(() => undefined))
+
+      expect(
+        await screen.findByText(/^The camera screen could not be shown, so the camera was stopped/),
+      ).toBeTruthy()
+      expect(window.kinvue.cancelCapture).toHaveBeenCalled()
+      expect(screen.getByRole('button', { name: 'Take a reading' })).toBeTruthy()
+      expect(screen.queryByText(/^Kinvue could not show this screen/)).toBeNull()
+    })
+
+    it('keeps the reading when the questions cannot be drawn', async () => {
+      drawControl.questionsThrow = true
+      await startReading(() => Promise.resolve({ captureId: 'c-1', vitals }))
+
+      expect(
+        await screen.findByText(/^The questions could not be shown\. The reading is kept below/),
+      ).toBeTruthy()
+      // Back on the dashboard, with the reading still offered for answering.
+      expect(screen.getByRole('button', { name: 'Answer the questions anyway' })).toBeTruthy()
+      expect(screen.queryByText(/^Kinvue could not show this screen/)).toBeNull()
+    })
+  })
+
+  it('tries a failed section again when what it is drawn from changes', () => {
+    const Draw = ({ ok }: { ok: boolean }): React.JSX.Element => {
+      if (!ok) throw new Error('bad data')
+      return <p>drawn</p>
+    }
+    const at = (key: number, ok: boolean): React.JSX.Element => (
+      <SectionBoundary fallback="could not be shown" className="" resetKey={key}>
+        <Draw ok={ok} />
+      </SectionBoundary>
+    )
+    const { rerender } = render(at(1, false))
+    expect(screen.getByText('could not be shown')).toBeTruthy()
+    // The same data again: not retried, even though it would draw now.
+    rerender(at(1, true))
+    expect(screen.getByText('could not be shown')).toBeTruthy()
+    // New data: tried again.
+    rerender(at(2, true))
+    expect(screen.getByText('drawn')).toBeTruthy()
+  })
+
+  it('does not retry data that arrived with its new key and threw (review of #164)', () => {
+    // The common case: a reload brings the new key and the record that breaks
+    // the section in one commit. Comparing against the previous props saw a
+    // key change, reset, and drew the same data a second time.
+    const Draw = ({ ok }: { ok: boolean }): React.JSX.Element => {
+      if (!ok) throw new Error('bad data')
+      return <p>drawn</p>
+    }
+    const at = (key: number, ok: boolean): React.JSX.Element => (
+      <SectionBoundary fallback="could not be shown" className="" resetKey={key}>
+        <Draw ok={ok} />
+      </SectionBoundary>
+    )
+    const { rerender } = render(at(1, true))
+    rerender(at(2, false))
+    expect(screen.getByText('could not be shown')).toBeTruthy()
+    const logged = vi
+      .mocked(console.error)
+      .mock.calls.filter(([first]) => first === 'A dashboard section could not be drawn.')
+    expect(logged.length).toBe(1)
   })
 })

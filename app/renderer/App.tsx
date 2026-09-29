@@ -11,8 +11,10 @@ import {
   type DashboardFailure,
   type SubmitFailure,
 } from '@core/capture/failure'
+import { CARD_BOX, CHART_BOX } from './components/boxes'
 import CaptureScreen from './components/CaptureScreen'
 import QuestionFlow from './components/QuestionFlow'
+import SectionBoundary from './components/SectionBoundary'
 import SessionCard from './components/SessionCard'
 import TrendChart from './components/TrendChart'
 import { dashboardErrorText } from './dashboardError'
@@ -103,11 +105,70 @@ function ReadingSummary({
  * every string on this screen is addressed to whoever looks after them, which
  * is the framing the whole product hangs on. Keep it that way.
  *
- * SCAFFOLD (KV-4): the loop closes here — a capture leads into the four
- * questions, and answering them stores a scored session that appears in the
- * list below. What is still missing is the trend view (KV-4).
+ * The loop closes here: a capture leads into the four questions, answering
+ * them stores a scored session that appears in the list below, and the trend
+ * above the list draws one metric over the baseline window (KV-4).
  */
 export default function App(): React.JSX.Element {
+  // Each press of "Try again" draws the screen from nothing: a new key for the
+  // boundary and a fresh `Dashboard`, which loads the history again.
+  const [attempt, setAttempt] = useState(0)
+
+  // The last resort (KV-163). Everything that reads a record is contained
+  // closer in — each card, the chart, the baseline lines, the capture and the
+  // questions — so this is for a throw in the screen's own code. It covers the
+  // screens the cared-for person reads too, so the sentence names no one.
+  //
+  // Whatever it catches, a capture may be running: the camera would stay on,
+  // with the Stop button gone, until its ceiling (review of #164). So it is
+  // abandoned — asking when none is running does nothing. And the way out is
+  // "Try again", not a restart: a throw that happens every time happens after
+  // a restart too, and the inner boundaries keep a record that always throws
+  // from ever reaching here.
+  return (
+    <SectionBoundary
+      as="main"
+      fallback="Kinvue could not show this screen. Nothing saved has been changed."
+      className="mx-auto max-w-3xl px-6 py-10"
+      resetKey={attempt}
+      onFailure={() => {
+        void window.kinvue.cancelCapture().catch(() => {
+          // Nothing to add: the screen already says it could not be shown.
+        })
+      }}
+      onRetry={() => setAttempt((n) => n + 1)}
+    >
+      <Dashboard key={attempt} />
+    </SectionBoundary>
+  )
+}
+
+/**
+ * Where their usual stands, while it is still learning (KV-17) and once it
+ * reaches far back (KV-154). Its own section: both read every record, and a
+ * line about the baseline that cannot be worked out must not cost the page
+ * (review of #164). Null lines draw nothing — no check-ins, or nothing to say.
+ */
+function BaselineStatus({ sessions }: { sessions: SessionRecord[] }): React.JSX.Element {
+  const learning = useMemo(
+    () => learningStatus(sessions, DEMO_PERSON_ID, DEMO_PERSON_NAME),
+    [sessions],
+  )
+  // Measured to when the check-ins last changed, which is when this page last
+  // had anything new.
+  const reach = useMemo(
+    () => usualReachStatus(sessions, DEMO_PERSON_ID, DEMO_PERSON_NAME, new Date()),
+    [sessions],
+  )
+  return (
+    <>
+      {learning !== null && <p className="mt-3 text-sm">{learning}</p>}
+      {reach !== null && <p className="mt-3 text-sm">{reach}</p>}
+    </>
+  )
+}
+
+function Dashboard(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null)
   // The sentence, and which failure it is: an unreadable history is the one
   // that offers a way out (KV-98), so the box needs to know which it is showing.
@@ -246,21 +307,22 @@ export default function App(): React.JSX.Element {
   // rules (KV-103) — both inside `presentAll`. It rescores the whole history,
   // so it runs when the check-ins change, not on every render: the capture
   // screen's countdown alone re-renders once a second.
-  const shown = useMemo(() => presentAll(sessions ?? []), [sessions])
+  //
+  // A record that cannot be presented is its own card's failure, not the
+  // page's (review of #164): this runs above every card's boundary, so a throw
+  // here once took the whole screen, and "Start a new history" — the one way
+  // out of a store the app cannot handle — with it. Its card says it could not
+  // be shown; it is never drawn with no presentation, which reads "Not enough
+  // to say".
+  const [shown, unshown] = useMemo(() => {
+    const failed = new Set<string>()
+    const map = presentAll(sessions ?? [], (record, e) => {
+      console.error(`Check-in ${record.id} could not be presented.`, e)
+      failed.add(record.id)
+    })
+    return [map, failed] as const
+  }, [sessions])
   const newest = useMemo(() => [...(sessions ?? [])].reverse(), [sessions])
-  // Where the baseline is now, while it is still learning (KV-17). Null for a
-  // person with no check-ins, where the seed prompt is the whole page.
-  const learning = useMemo(
-    () => learningStatus(sessions ?? [], DEMO_PERSON_ID, DEMO_PERSON_NAME),
-    [sessions],
-  )
-  // Once comparisons have started: how far back the usual reaches, when that
-  // is far (KV-154) — said here once, not on every card. Measured to when the
-  // check-ins last changed, which is when this page last had anything new.
-  const reach = useMemo(
-    () => usualReachStatus(sessions ?? [], DEMO_PERSON_ID, DEMO_PERSON_NAME, new Date()),
-    [sessions],
-  )
 
   /**
    * Started here, on the press, rather than inside the capture screen. Opening
@@ -359,11 +421,27 @@ export default function App(): React.JSX.Element {
   if (capturing) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-10">
-        <CaptureScreen
-          failure={captureFailure}
-          onCancel={stopCapture}
-          captureSeconds={captureSeconds}
-        />
+        {/* A capture screen that cannot be drawn takes its Stop button with it,
+            and unmounting it does not stop the camera — only `stopCapture`
+            does (review of #164). So the failure stops it, as a press would,
+            and the dashboard says what happened. */}
+        <SectionBoundary
+          fallback="The camera screen could not be shown."
+          className=""
+          onFailure={() => {
+            stopCapture()
+            setNotice(
+              'The camera screen could not be shown, so the camera was stopped and nothing ' +
+                'was recorded. Taking the reading again is worth a try.',
+            )
+          }}
+        >
+          <CaptureScreen
+            failure={captureFailure}
+            onCancel={stopCapture}
+            captureSeconds={captureSeconds}
+          />
+        </SectionBoundary>
       </main>
     )
   }
@@ -371,22 +449,41 @@ export default function App(): React.JSX.Element {
   if (answering !== null) {
     return (
       <main className="mx-auto max-w-3xl px-6 py-10">
-        <QuestionFlow
-          onDone={submit}
-          onCancel={() => {
-            // Nothing is stored, which is the honest outcome of a check-in
-            // someone chose not to finish. But main holds that reading as
-            // submittable for another fifteen minutes, so it goes back to the
-            // dashboard rather than becoming unreachable — "Not now" sits
-            // under the answer buttons on a screen built for an unsteady hand,
-            // and a mis-tap there should not cost a good 30-second reading.
+        {/* The reading main holds stays submittable for fifteen minutes, and
+            questions that cannot be drawn must not make it unreachable — the
+            loss "Not now" below goes out of its way to prevent (review of
+            #164). It goes back to the dashboard, where "Answer the questions
+            anyway" offers it again. */}
+        <SectionBoundary
+          fallback="The questions could not be shown."
+          className=""
+          onFailure={() => {
             setReading(answering)
             setAnswering(null)
             setSubmitFailure(null)
+            setNotice(
+              'The questions could not be shown. The reading is kept below, and answering ' +
+                'them again is worth a try.',
+            )
           }}
-          submitting={submitting}
-          failure={submitFailure}
-        />
+        >
+          <QuestionFlow
+            onDone={submit}
+            onCancel={() => {
+              // Nothing is stored, which is the honest outcome of a check-in
+              // someone chose not to finish. But main holds that reading as
+              // submittable for another fifteen minutes, so it goes back to the
+              // dashboard rather than becoming unreachable — "Not now" sits
+              // under the answer buttons on a screen built for an unsteady hand,
+              // and a mis-tap there should not cost a good 30-second reading.
+              setReading(answering)
+              setAnswering(null)
+              setSubmitFailure(null)
+            }}
+            submitting={submitting}
+            failure={submitFailure}
+          />
+        </SectionBoundary>
       </main>
     )
   }
@@ -399,8 +496,15 @@ export default function App(): React.JSX.Element {
           A daily look at whether today is different from {DEMO_PERSON_NAME}&rsquo;s own
           usual. Not a diagnosis, and not an emergency alert.
         </p>
-        {learning !== null && <p className="mt-3 text-sm">{learning}</p>}
-        {reach !== null && <p className="mt-3 text-sm">{reach}</p>}
+        {sessions !== null && (
+          <SectionBoundary
+            fallback="Where their usual stands could not be shown."
+            className="mt-3"
+            resetKey={sessions}
+          >
+            <BaselineStatus sessions={sessions} />
+          </SectionBoundary>
+        )}
       </header>
 
       <div className="mb-8 flex items-center gap-3">
@@ -472,17 +576,32 @@ export default function App(): React.JSX.Element {
         </div>
       )}
 
+      {/* Each section contained on its own (KV-163): one that cannot be drawn
+          leaves a sentence in its place, not an empty window. */}
       {sessions !== null && sessions.length > 0 && (
-        <TrendChart records={sessions} personId={DEMO_PERSON_ID} />
+        <SectionBoundary
+          fallback={
+            'The trend could not be drawn. ' +
+            'The check-ins themselves are still saved, and listed below.'
+          }
+          className={CHART_BOX}
+          resetKey={sessions}
+        >
+          <TrendChart records={sessions} personId={DEMO_PERSON_ID} />
+        </SectionBoundary>
       )}
 
       <div className="space-y-4">
         {newest.map((session) => (
-          <SessionCard
+          <SectionBoundary
             key={session.id}
-            session={session}
-            presentation={shown.get(session.id) ?? null}
-          />
+            fallback="This check-in could not be shown. It is still saved, unchanged."
+            className={CARD_BOX}
+            resetKey={session}
+            alreadyFailed={unshown.has(session.id)}
+          >
+            <SessionCard session={session} presentation={shown.get(session.id) ?? null} />
+          </SectionBoundary>
         ))}
       </div>
     </main>

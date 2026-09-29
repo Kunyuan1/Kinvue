@@ -1683,6 +1683,24 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
     // A real check-in with no verdict is still nothing to show.
     expect(presentAll([{ ...at('real', 20), assessment: undefined }]).get('real')).toBeUndefined()
   })
+
+  it('hands over a record it cannot present and presents the rest, given somewhere to say so (review of #164)', () => {
+    // A stored verdict without its fired rules: `present` cannot read it.
+    const damaged = {
+      ...at('damaged', 10),
+      assessment: { flag: 'normal', summary: 'x' } as unknown as SessionRecord['assessment'],
+    }
+    const after = { ...at('after', 20), assessment: scoreSession(at('after', 20), history(5)) }
+    const records = [...history(5), damaged, after]
+
+    const failed: string[] = []
+    const shown = presentAll(records, (record) => failed.push(record.id))
+    expect(failed).toEqual(['damaged'])
+    expect(shown.has('damaged')).toBe(false)
+    expect(shown.get('after')?.summary).toBeDefined()
+    // With nowhere to say so, it throws, as it always did.
+    expect(() => presentAll(records)).toThrow(TypeError)
+  })
 })
 
 describe('learningStatus: where the baseline is now (KV-17)', () => {

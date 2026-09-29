@@ -12,6 +12,7 @@ import {
 } from '@core/trend'
 import { METRIC_NAME, READING_LABEL, READING_UNIT, readingText } from '@core/scoring'
 import { knownZone } from '@core/session/time'
+import { CHART_BOX } from './boxes'
 
 /**
  * One metric over the baseline window, the latest check-in marked and their
@@ -296,7 +297,7 @@ export default function TrendChart({
   const withYear = spansYears(trend.points)
   const measuredPoints = trend.points.length - trend.seededPoints
   return (
-    <section className="mb-8 rounded-xl border border-(--color-line) bg-(--color-raised) p-5">
+    <section className={CHART_BOX}>
       <div className="mb-3 flex gap-2" role="group" aria-label="Metric">
         {TREND_METRICS.map((m) => (
           <button
