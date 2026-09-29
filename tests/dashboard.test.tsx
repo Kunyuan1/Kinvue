@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import App from '@renderer/App'
+import SectionBoundary from '@renderer/components/SectionBoundary'
 import {
   NewerStoreError,
   UnreachableStoreError,
@@ -23,7 +24,20 @@ import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
 const drawControl = vi.hoisted(() => ({
   cardThrowsFor: null as string | null,
   chartThrows: false,
+  presentThrows: false,
 }))
+
+// The page's own render: `presentAll` reads every record, above any section.
+vi.mock('@core/scoring', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@core/scoring')>()
+  return {
+    ...actual,
+    presentAll: (...args: Parameters<typeof actual.presentAll>) => {
+      if (drawControl.presentThrows) throw new Error('scoring failed while drawing')
+      return actual.presentAll(...args)
+    },
+  }
+})
 
 vi.mock('@renderer/components/SessionCard', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@renderer/components/SessionCard')>()
@@ -78,6 +92,7 @@ beforeEach(() => {
   })
   drawControl.cardThrowsFor = null
   drawControl.chartThrows = false
+  drawControl.presentThrows = false
   // The dashboard logs the original of anything it will not show.
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
 })
@@ -740,5 +755,41 @@ describe('one section that cannot be drawn (KV-163)', () => {
     expect(await screen.findByText(/^The trend could not be drawn\./)).toBeTruthy()
     expect(cards().length).toBe(4)
     expect(screen.queryByRole('button', { name: 'Pulse' })).toBeNull()
+  })
+
+  it("says so in a sentence when the page's own render throws, not an empty window", async () => {
+    drawControl.presentThrows = true
+    listSessions.mockResolvedValue(three())
+    render(<App />)
+
+    expect(
+      await screen.findByText(/^Kinvue could not show this screen\. Nothing saved has been changed\./),
+    ).toBeTruthy()
+    expect(console.error).toHaveBeenCalledWith(
+      'A dashboard section could not be drawn.',
+      expect.objectContaining({ message: 'scoring failed while drawing' }),
+      expect.anything(),
+    )
+    expect(document.body.textContent).not.toMatch(/failed while drawing|Error/)
+  })
+
+  it('tries a failed section again when what it is drawn from changes', () => {
+    const Draw = ({ ok }: { ok: boolean }): React.JSX.Element => {
+      if (!ok) throw new Error('bad data')
+      return <p>drawn</p>
+    }
+    const at = (key: number, ok: boolean): React.JSX.Element => (
+      <SectionBoundary fallback="could not be shown" className="" resetKey={key}>
+        <Draw ok={ok} />
+      </SectionBoundary>
+    )
+    const { rerender } = render(at(1, false))
+    expect(screen.getByText('could not be shown')).toBeTruthy()
+    // The same data again: not retried, even though it would draw now.
+    rerender(at(1, true))
+    expect(screen.getByText('could not be shown')).toBeTruthy()
+    // New data: tried again.
+    rerender(at(2, true))
+    expect(screen.getByText('drawn')).toBeTruthy()
   })
 })

@@ -104,11 +104,31 @@ function ReadingSummary({
  * every string on this screen is addressed to whoever looks after them, which
  * is the framing the whole product hangs on. Keep it that way.
  *
- * SCAFFOLD (KV-4): the loop closes here — a capture leads into the four
- * questions, and answering them stores a scored session that appears in the
- * list below. What is still missing is the trend view (KV-4).
+ * The loop closes here: a capture leads into the four questions, answering
+ * them stores a scored session that appears in the list below, and the trend
+ * above the list draws one metric over the baseline window (KV-4).
  */
 export default function App(): React.JSX.Element {
+  // The last resort (KV-163). The chart and each card are contained on their
+  // own, but the page's own render reads every record too — `presentAll`
+  // rescores the whole history — and a throw there would otherwise leave an
+  // empty window. It covers the capture and the questions as well, which the
+  // cared-for person reads, so the sentence names no one. Nothing to reset it:
+  // everything on the page was drawn from what just threw.
+  return (
+    <SectionBoundary
+      fallback={
+        'Kinvue could not show this screen. Nothing saved has been changed. ' +
+        'Closing Kinvue and opening it again is worth a try.'
+      }
+      className="mx-auto max-w-3xl px-6 py-10"
+    >
+      <Dashboard />
+    </SectionBoundary>
+  )
+}
+
+function Dashboard(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null)
   // The sentence, and which failure it is: an unreadable history is the one
   // that offers a way out (KV-98), so the box needs to know which it is showing.
@@ -482,6 +502,7 @@ export default function App(): React.JSX.Element {
             'The check-ins themselves are still saved, and listed below.'
           }
           className="mb-8 rounded-xl border border-(--color-line) bg-(--color-raised) p-5"
+          resetKey={sessions}
         >
           <TrendChart records={sessions} personId={DEMO_PERSON_ID} />
         </SectionBoundary>
@@ -493,6 +514,7 @@ export default function App(): React.JSX.Element {
             key={session.id}
             fallback="This check-in could not be shown. It is still saved, unchanged."
             className="rounded-xl border border-(--color-line) bg-(--color-raised) p-5"
+            resetKey={session}
           >
             <SessionCard session={session} presentation={shown.get(session.id) ?? null} />
           </SectionBoundary>

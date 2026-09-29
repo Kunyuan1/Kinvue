@@ -14,9 +14,11 @@ import { Component, type ErrorInfo, type ReactNode } from 'react'
  * be shown, and that nothing stored was lost. The error itself goes to the
  * console for whoever is developing.
  *
- * It stays failed until the dashboard is drawn afresh — leaving for a reading
- * and coming back does that — rather than retrying on every render the same
- * data that just threw.
+ * It stays failed while `resetKey` stays the same, rather than retrying the
+ * data that just threw on every render, and tries again when it changes: a
+ * reload of the check-ins is new data. Keyed here rather than left to the page
+ * being unmounted and drawn afresh, which today every reload happens to do —
+ * an invariant in another file, and one the next way of refreshing would break.
  */
 export default class SectionBoundary extends Component<
   {
@@ -24,6 +26,8 @@ export default class SectionBoundary extends Component<
     fallback: string
     /** The section's own box, so the gap sits where the section was. */
     className: string
+    /** What the section is drawn from; a new one is worth another try. */
+    resetKey?: unknown
     children: ReactNode
   },
   { failed: boolean }
@@ -36,6 +40,12 @@ export default class SectionBoundary extends Component<
 
   override componentDidCatch(error: Error, info: ErrorInfo): void {
     console.error('A dashboard section could not be drawn.', error, info.componentStack)
+  }
+
+  override componentDidUpdate(previous: Readonly<{ resetKey?: unknown }>): void {
+    if (this.state.failed && previous.resetKey !== this.props.resetKey) {
+      this.setState({ failed: false })
+    }
   }
 
   override render(): ReactNode {
