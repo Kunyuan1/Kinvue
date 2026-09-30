@@ -1,6 +1,15 @@
 import { randomUUID } from "node:crypto";
 import { join, resolve } from "node:path";
-import { app, BrowserWindow, dialog, ipcMain, nativeImage } from "electron";
+import { pathToFileURL } from "node:url";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  nativeImage,
+  session,
+  type IpcMainInvokeEvent,
+} from "electron";
 import { scoreSession } from "@core/scoring";
 import { createJsonSessionStore } from "@core/session/store";
 import { createCheckIn } from "@core/session/checkin";
@@ -19,6 +28,7 @@ import {
 import { loadDotEnv } from "./env";
 import { captureVitals } from "./vitals";
 import { ERR_ABORTED, loadFailureMessage, showWhenReady } from "./window-show";
+import { appPage, isAppUrl, isTrustedSender } from "./security";
 import { toCaptureReply, type CaptureReply } from "../shared/capture-reply";
 
 /**
@@ -50,6 +60,62 @@ if (!app.isPackaged) {
  * The API key in particular never crosses into the renderer.
  */
 
+/**
+ * The Electron security baseline (KV-29). Each item is in ARCHITECTURE.md with
+ * what it covers and why the rest of Electron's checklist is done or does not
+ * apply.
+ *
+ * Kinvue's own page, the one place the window may be and the only frame IPC
+ * answers: the dev server in development, the built `index.html` otherwise —
+ * the same choice `createWindow` makes when it loads it.
+ */
+const page = appPage(
+  process.env.ELECTRON_RENDERER_URL,
+  pathToFileURL(join(__dirname, "../renderer/index.html")).href,
+);
+
+// Every renderer sandboxed, this window's and any other that ever exists: the
+// preload needs only `contextBridge` and `ipcRenderer`, which a sandboxed
+// preload keeps. Before `ready`, as Electron requires.
+app.enableSandbox();
+
+// Whatever web contents exist, created now or later: the window stays on
+// Kinvue's own page, opens nothing new, and embeds nothing. A redirect is a
+// navigation too. Nothing here navigates or opens windows on purpose, so a
+// refusal is only ever something going wrong.
+app.on("web-contents-created", (_event, contents) => {
+  contents.on("will-navigate", (details) => {
+    if (!isAppUrl(details.url, page)) details.preventDefault();
+  });
+  contents.on("will-redirect", (details) => {
+    if (!isAppUrl(details.url, page)) details.preventDefault();
+  });
+  contents.setWindowOpenHandler(() => ({ action: "deny" }));
+  contents.on("will-attach-webview", (event) => event.preventDefault());
+});
+
+/**
+ * `ipcMain.handle`, answered only for Kinvue's own page. Every handler goes
+ * through this; `tests/security.test.ts` fails if one is registered directly.
+ * The renderer holds no key and no history, and reaches the camera, the key's
+ * use and the store only through these calls, so a frame that is not ours —
+ * a subframe, or a window that navigated away — is refused before any of it.
+ */
+function handle(
+  channel: string,
+  listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
+): void {
+  ipcMain.handle(channel, (event, ...args: unknown[]) => {
+    const frame = event.senderFrame;
+    const sender =
+      frame === null ? null : { url: frame.url, isMainFrame: frame.parent === null };
+    if (!isTrustedSender(sender, page)) {
+      throw new Error(`${channel} refused: the call did not come from Kinvue's own page.`);
+    }
+    return listener(event, ...args);
+  });
+}
+
 // Under Electron's userData, so real check-ins live outside the repo. The
 // repo's .gitignore also covers sessions/ for anyone who points this at ./.
 const storePath = (): string =>
@@ -66,7 +132,7 @@ function createWindow(): BrowserWindow {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   });
 
@@ -120,7 +186,7 @@ function registerIpc(): void {
     timeZone: deviceTimeZone,
   });
 
-  ipcMain.handle(
+  handle(
     "sessions:list",
     async (_e, personId: unknown): Promise<SessionRecord[]> => {
       const id = parsePersonId(personId);
@@ -134,14 +200,14 @@ function registerIpc(): void {
   // once that lock is taken — see `in-flight.ts` for why the order matters.
   const inFlight = createInFlightCapture();
 
-  ipcMain.handle("checkin:cancel", (): void => {
+  handle("checkin:cancel", (): void => {
     inFlight.abort();
   });
 
   // The renderer counts down and promises a length in its own words, and both
   // have to be the length main will actually run (#63). One number, asked for
   // rather than duplicated.
-  ipcMain.handle("capture:seconds", (): number => captureSeconds(process.env));
+  handle("capture:seconds", (): number => captureSeconds(process.env));
 
   // Said once, at startup, rather than per capture: a setting that was not
   // honoured is a fact about this run, and the only other evidence of it is a
@@ -149,7 +215,7 @@ function registerIpc(): void {
   const lengthNotice = captureLengthLogLine(resolveCaptureSeconds(process.env));
   if (lengthNotice !== null) console.warn(lengthNotice);
 
-  ipcMain.handle(
+  handle(
     "checkin:capture",
     async (event, personId: unknown): Promise<CaptureReply> => {
       const id = parsePersonId(personId);
@@ -251,7 +317,7 @@ function registerIpc(): void {
     },
   );
 
-  ipcMain.handle(
+  handle(
     "checkin:submit",
     async (
       _e,
@@ -272,13 +338,13 @@ function registerIpc(): void {
 
   // KV-98. Only ever on a press, and the store re-checks before it moves
   // anything: a history it can read is left where it is and null comes back.
-  ipcMain.handle(
+  handle(
     "sessions:startNewHistory",
     async (): Promise<string | null> => await store.startNewHistory(),
   );
 
   // KV-8. Opt-in, and every record it writes is marked `seeded: true`.
-  ipcMain.handle("demo:seed", async (): Promise<number> => {
+  handle("demo:seed", async (): Promise<number> => {
     const existing = await store.list(DEMO_PERSON_ID);
     if (existing.length > 0) return 0;
     const seeded = seedDemoHistory();
@@ -298,6 +364,14 @@ void app.whenReady().then(() => {
         "SmartSpectra API key can be read.",
     );
   }
+
+  // No permission is ever granted: the camera runs here, in main, through the
+  // SDK, and the self-view reaches the page as pictures over IPC, so the page
+  // needs no camera, microphone, location or anything else (KV-29).
+  session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
+    callback(false),
+  );
+  session.defaultSession.setPermissionCheckHandler(() => false);
 
   registerIpc();
   createWindow();
