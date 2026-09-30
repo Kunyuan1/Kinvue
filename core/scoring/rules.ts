@@ -198,10 +198,11 @@ export interface UsualRange {
  * `HRV_DROP_FIRES_AT` below the usual upward, since nothing fires above it.
  *
  * Built here from the rules' own constants, beside them, so the range the
- * chart draws is the one the verdict was reached on and cannot drift from it:
- * a point inside it is a reading no comparison rule fired on, and a card
- * saying "different from their usual" has its point outside. The boundary
- * itself fires, as the rules' `<` comparisons say.
+ * chart draws is the one the latest check-in's verdict was reached on and
+ * cannot drift from it: that point is inside exactly when no comparison rule
+ * fired on it. Only that point — every other day was scored against its own
+ * history, whose usual and spread were not these, and the chart says so
+ * (`trendNotes`). The boundary itself fires, as the rules' `<` comparisons say.
  */
 export function usualRangeOf(metric: ComparedMetric, usual: Stat): UsualRange {
   if (metric === 'hrv') return { low: usual.mean * (1 - HRV_DROP_FIRES_AT), high: null }

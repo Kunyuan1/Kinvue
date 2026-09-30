@@ -454,8 +454,13 @@ against, with that check-in marked and the usual it was compared with drawn behi
   them": the amber-versus-red argument, made in pixels. The band is where a reading falls
   with no comparison rule firing, built by `usualRangeOf` in `rules.ts` from the rules' own
   constants: the usual ± 2 of the floored spread for pulse and breathing, and for HRV, whose
-  only rule is a drop, from 25% below the usual upward. A point inside it is one the verdict
-  found usual, and a card saying "different from their usual" has its point outside. The
+  only rule is a drop, from 25% below the usual upward. It is the range the **latest**
+  check-in was compared with: that point is inside exactly when no comparison rule fired on
+  it. Every other day was scored against the check-ins before its own day, when the usual
+  and its spread were different, so its card can disagree with where it sits (seen on the
+  demo: a day marked "above usual" inside today's band). The chart says so in a note rather
+  than drawing a band per day, which would be noise, or leaving the contradiction to be
+  found. The
   axis always reaches the whole band; before there is a usual it uses the same construction
   around the points with the rules' smallest scale, so a baseline still being learned is not
   drawn louder than a mature one. Ticks are never finer than the whole units every reading

@@ -11,6 +11,7 @@ import {
   usualRangeLabel,
 } from '@core/trend'
 import type { SessionRecord } from '@core/session/types'
+import { DEMO_PERSON_ID, seedDemoHistory, withSeededVerdicts } from '@core/seed/persona'
 import { history, seededHistory, session } from './helpers'
 
 /** Words that say when relative to now (KV-93); the chart is drawn for "the latest". */
@@ -322,5 +323,31 @@ describe('how far the chart reaches, and their usual range on it (KV-165)', () =
     expect(usualRangeLabel(trend)).toMatch(/^their usual range, \d+ ms and up$/)
     const { hi } = trendScale(trend)
     expect(hi).toBeGreaterThanOrEqual(trend.usual! + (trend.usual! - range.low))
+  })
+
+  it('says the band is the latest’s, because an older card can disagree with it (seen on the demo)', () => {
+    // The seeded demo: a day whose own card said "above usual" sits inside the
+    // band the latest check-in was compared with, since the spread has grown.
+    const demo = withSeededVerdicts(seedDemoHistory(undefined, new Date('2026-09-30T12:00:00.000Z')))
+    const trend = trendOf(demo, DEMO_PERSON_ID, 'pulse')!
+    const { low, high } = trend.usualRange!
+    const disagrees = demo.filter((r) => {
+      const fired = r.assessment?.firedRules.some((f) => f.id === 'pulse-elevated' || f.id === 'pulse-low')
+      const v = r.vitals.pulseRateBpm
+      return fired === true && v !== null && v > low && v < high! && !trend.points.find((p) => p.id === r.id)?.latest
+    })
+    expect(disagrees.length).toBeGreaterThan(0)
+    expect(trendNotes(trend)).toContain(
+      'The line and band are their usual as of the latest check-in. Each other day was ' +
+        'compared with the check-ins before it, so its card can say otherwise.',
+    )
+  })
+
+  it('says nothing of the kind over a lone point, or with no band', () => {
+    const lone = trendOf([latest()], P, 'pulse')!
+    const learning = trendOf([...history(1), latest()], P, 'pulse')!
+    for (const t of [lone, learning]) {
+      expect(trendNotes(t).some((n) => n.startsWith('The line and band'))).toBe(false)
+    }
   })
 })

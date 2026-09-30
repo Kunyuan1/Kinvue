@@ -347,6 +347,17 @@ export function trendNotes(trend: Trend): string[] {
   if (!trend.latestMeasured) {
     notes.push(`${capitalise(name)} was not measured at the latest check-in.`)
   }
+  // The line and band are the usual the latest was compared with; every other
+  // point was scored against the check-ins before its own day, when the usual
+  // and its spread were not these. Seen on the demo: a day whose card said
+  // "above usual" sat inside today's band (KV-165, on screen). Said once, here,
+  // rather than left for the caregiver to find as a contradiction.
+  if (trend.usualRange !== null && trend.points.length > 1) {
+    notes.push(
+      'The line and band are their usual as of the latest check-in. Each other day was ' +
+        'compared with the check-ins before it, so its card can say otherwise.',
+    )
+  }
   if (trend.seededPoints > 0) {
     notes.push(
       trend.seededPoints === trend.points.length
