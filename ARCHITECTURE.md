@@ -1254,8 +1254,8 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
   across people. That is opt-in, asked for separately from sharing with a caregiver —
   approving a viewer (KV-31) is not consent to it, and that decision did not consider it —
   and its own consent must be designed, and clear #35, before any session is used for it.
-- **`core/` stays framework-free**, so that it can be imported by more than one app if
-  #34 chooses a TypeScript client. `core/session/store.ts` is already the exception — it
+- **`core/` stays framework-free**, so that it can be imported by more than one app — and
+  it is, since #34 chose a client built on it (KV-34). `core/session/store.ts` is already the exception — it
   imports `node:fs` — and #38 decides where it lives when the repo is split. (#15, #38)
 
 ### What leaves the device (KV-32)
@@ -1471,8 +1471,8 @@ ruled out.
 - **A relay to run** (#46): small and nearly stateless — store, forward, expire — but still
   backups, monitoring, a breach plan and an owner.
 - **Key handling that has to be right**, which is why it uses recommended libraries only and
-  is reviewed before #39 carries real data. It weighs on #34: a native client keeps keys in
-  the phone's secure storage, which a web app does less well.
+  is reviewed before #39 carries real data. It is why #34 chose a native shell: keys sit in
+  the phone's secure storage, and the code that holds them ships signed in the app (KV-34).
 - **No forward secrecy.** Sealed boxes seal to a viewer's long-lived key, so someone who
   archived envelopes from the relay and later takes that viewer's phone and key can read all
   of them (T5). The short retention narrows what an honest relay holds, not what an attacker
@@ -1486,6 +1486,40 @@ ruled out.
   "too early to compare" until it has enough.
 - #36's T4 remains in part: the relay still sees when envelopes arrive and who is paired
   with whom; sending on a schedule rather than at capture time is noted, not required.
+
+### The caregiver's client (KV-34)
+
+Decided 2026-10-01. **The caregiver's client is the dashboard's own React code, built on
+`core/` and the existing dashboard components, shipped inside a native shell (Capacitor)
+for iPhone and Android.**
+
+Three facts decided it more than any general comparison:
+
+- **The components are already portable.** `SessionCard`, `TrendChart`, `SectionBoundary`
+  and `boxes.ts` are plain React for the browser, with no Electron in them, and `core/`
+  imports nothing from Node except `core/session/store.ts`, which a viewer does not use.
+  That is where the product's care lives — the not-flagged band and its notes (KV-165), the
+  sections that fail alone (KV-163), the cards that never rescore (KV-32). A caregiver's
+  chart should be *the* chart, not a second drawing of it that can drift from the first.
+- **A web app served live would weaken KV-33.** Whoever controls the server that sends the
+  page can send code that reads the viewer's keys — the standing weakness of end-to-end
+  encryption in a browser. Code shipped signed inside an app cannot be swapped like that.
+- **The phone does what the web does badly here:** a native push for the daily summary
+  (#43), where a web app on an iPhone gets one only once added to the home screen, and the
+  phone's own secure storage (Keychain, Keystore) for the viewer's keys (KV-33, #36's T5).
+
+**Options not taken.** An **installable web app** shares the reuse and avoids app stores,
+but ships its key-holding code from a server and has weaker push and key storage. **React
+Native** keeps native push and storage and reuses `core/`, but redraws the chart and the
+card — a second implementation of the most carefully worded screens. **Fully native** apps
+reuse nothing and mean two codebases.
+
+**What it costs.** App store accounts and review: Apple at $99 a year, Google $25 once,
+with the extra scrutiny health-adjacent apps get — privacy labels, and no medical claims,
+which the product's "not a diagnosis" framing already keeps. Trust in the shell and its
+plugins, a supply-chain point under #36's T9. A webview, less native in feel than React
+Native. And the shared components move to a `ui` package beside `core/` when the repo is
+split (#38): `core`, `ui`, the desktop app, the caregiver app, and the relay.
 
 ### What must hold before real check-ins are stored
 
@@ -1513,12 +1547,12 @@ three hold:
 
 ### What is deliberately still open
 
-Each of these is a real decision with its own ticket, and each must be closed and written
-into this file before remote code is written:
+One decision is left, and like the others it must be closed and written into this file
+before remote code is written. Unlike them, it is not one this project can answer for
+itself: it needs qualified legal advice.
 
 | Question | Ticket |
 |---|---|
-| What the caregiver's client is | #34 |
 | What legal and regulatory obligations sending health data brings — and whether a guardian or power of attorney may consent for someone who cannot (KV-31 left this open) | #35 |
 
 End-to-end encryption is decided (KV-33, above). It does not keep the privacy guarantees
@@ -1555,11 +1589,11 @@ to check a card against. Integrity is protected as deliberately as confidentiali
 | T2 | Someone at the check-in device acts with its authority: approves their own phone, revokes the viewer who might notice, and — removal being silent — leaves that viewer told only that sharing ended | **A household member who is the danger**, at a shared computer | Approval and revocation need only presence at the device, so until there is a lock on the sharing screen, separate from the check-in itself, the model assumes the device is the person's (#31's first limit). The recovery card's mass revocation needs no presence at all, which is why its use is delayed and announced (T14). | #40 | **Gap → #40** |
 | T3 | The relay's contents read in a breach, or by its operator | Outside attacker; the operator | End-to-end encryption: each envelope sealed per viewer, so the relay holds nothing it can read; the pairing code derived from all four public keys, so a key substituted at pairing is caught — without it the seal protects nothing (KV-33). Retention limits and operator access are policy, not controls, against this actor. No forward secrecy: envelopes archived now are readable by whoever later takes a viewer's key (T5). Encrypted, restore-tested backups; logs with no health data. | #33, #39, #40, #46 | Decided; #39, #40 to build, #46 to operate |
 | T4 | The relay infers behaviour from metadata it must hold even under end-to-end encryption: when check-ins arrive, who shares with whom, and **when each viewer fetched** — the access history #31 takes from it | The operator; whoever breaches it | Ciphertext kept until fetched, at most 14 days; delivery records for #31's 30-day access window only, then deleted; no analytics (KV-33). **These limits are enforced by the relay, which is this row's adversary**: an operator who kept more is undetectable from either device. Arrival timing and the pairing graph remain visible — a limit; sending on a schedule rather than at capture time is noted, not required. | #33, #39 | Decided as policy; a limit against the operator |
-| T5 | A caregiver's phone is lost or stolen with shared check-ins on it | Whoever finds it | The client locks behind the phone's own authentication; the person can revoke that viewer from the check-in device (#45). A device offline after revocation keeps its copy until it connects — a limit. With no forward secrecy (KV-33), the phone's key also opens any envelopes an attacker archived from the relay. | #34, #45 | Open on #34 |
+| T5 | A caregiver's phone is lost or stolen with shared check-ins on it | Whoever finds it | The client locks behind the phone's own authentication, and its keys are held in the phone's Keychain or Keystore (KV-34); the person can revoke that viewer from the check-in device (#45). A device offline after revocation keeps its copy until it connects — a limit. With no forward secrecy (KV-33), the phone's key also opens any envelopes an attacker archived from the relay. | #34, #42, #45 | Decided; #42 to build |
 | T6 | The daily summary leaks on a lock screen, or through the push provider | Bystanders; Apple's or Google's push service | The push carries no health data, only "your summary is ready"; the content is fetched and composed on the device (#33). | #43 | **Gap → #43** |
 | T7 | Data on the check-in device itself: `sessions.json` is plain JSON, readable by anyone with that operating-system account, its backups (File History, Time Machine, a sync client), or malware running as it | Others on the computer; malware; a backup service | **Today**, only the operating system's account boundary, on Windows, macOS and Linux alike. #175 decides whether the store is encrypted at rest (for example with Electron's `safeStorage`, backed by each platform's own keychain) and what that protects against — not malware running as the same user. | #175 | **Gap → #175** |
 | T8 | The renderer is compromised (a bug, a malicious dependency) and reaches the camera, the key's use or the history | Malicious code in the page | Sandbox, one page, IPC answered only for it, every handler through one checked wrapper, enforced by lint (KV-29). | #29 | Done |
-| T9 | A malicious release reaches installs through the update channel or a dependency | Supply-chain attacker | **Today:** Electron and the SDK pinned exactly, each bump alone and launched before merge (KV-131, KV-145). **Not yet:** signed installers and signed updates, which wait on there being an installer and an update channel (#19); and which dependencies may run install scripts (#147). | #19, #147 | Partly done; open on #19, #147 |
+| T9 | A malicious release reaches installs through the update channel or a dependency | Supply-chain attacker | **Today:** Electron and the SDK pinned exactly, each bump alone and launched before merge (KV-131, KV-145). **Not yet:** signed installers and signed updates, which wait on there being an installer and an update channel (#19); which dependencies may run install scripts (#147); and the caregiver app's native shell and its plugins, which are code on the phone holding the viewer's keys (KV-34). | #19, #42, #147 | Partly done; open on #19, #42, #147 |
 | T10 | **The SDK's own traffic reveals the routine:** the licence meter carries each session's times and per-metric datapoint counts to the vendor, today, whatever Kinvue builds | The SDK vendor; whoever breaches it | Not mitigable in the app: a capture cannot run without it (KV-65). Established from the runtime's own schema, not by decrypting the traffic; *when* each report is sent is only partly known, but a report carrying the session's times says when the check-in happened whenever it arrives. `README.md` says so. Whether a third party receiving it is acceptable, and what users must be told, is a legal question. | #35 | **Accepted, disclosed; → #35** |
 | T11 | The pain note, the most personal field, reaches people the person did not mean it for | Any viewer | Off by default; turned on per viewer by the person; the note field says who will read it as they type (KV-32). | #31, #37, #40 | Decided |
 | T12 | Data the person deleted, or withdrew, survives elsewhere | Any copy holder | Deletion travels as a tombstone; a revoked viewer's app deletes its copy on next contact, and one that never reconnects keeps it — a limit; partial deletion is tested as a flow because it looks like success. | #21, #45 | Planned |
