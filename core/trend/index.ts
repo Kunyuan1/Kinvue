@@ -11,6 +11,8 @@ import {
   READING_LABEL,
   READING_UNIT,
   readingText,
+  flaggedIn,
+  narrowestRangeAround,
   usualRangeOf,
   type UsualRange,
 } from '../scoring'
@@ -74,9 +76,9 @@ export interface Trend {
    */
   usual: number | null
   /**
-   * Their usual range around that usual: where a reading falls with no
-   * comparison rule firing (`usualRangeOf`, KV-165). Null exactly when `usual`
-   * is: a range is drawn only around a usual the rules would quote.
+   * Where a reading falls with no comparison rule firing, around that usual
+   * (`usualRangeOf`, KV-165). Null when `usual` is — a band is drawn only
+   * around a usual the rules would quote — and where the rules would not run.
    */
   usualRange: UsualRange | null
   /** Readings of this metric behind that usual, whether or not it is one yet. */
@@ -106,6 +108,15 @@ export interface Trend {
    * first should be told (review of #162).
    */
   refusedSince: number
+  /**
+   * Points other than the latest whose own day's comparison says otherwise
+   * than the band: flagged then and inside it now, or the reverse. Each day was
+   * compared with the check-ins before it, when the usual and its spread were
+   * not the latest's, so its card can disagree with where it sits (review of
+   * #168). Counted from the same rules, so the note under the chart is a fact
+   * about this chart rather than a standing caveat. 0 with no band.
+   */
+  disagreeing: number
 }
 
 /**
@@ -146,6 +157,21 @@ export function trendOf(
         ]
   })
 
+  // Each earlier point against its own day's usual, as its card was scored,
+  // and against the latest's band, as it is drawn.
+  const band = canBeCalledUsual(stat) ? usualRangeOf(metric, stat) : null
+  const disagreeing =
+    band === null
+      ? 0
+      : window.filter((r) => {
+          const value = read(r.vitals)
+          if (value === null) return false
+          const own = USUAL[metric](computeBaseline(theirs.filter((o) => o.capturedAt < r.capturedAt)))
+          const ownRange = canBeCalledUsual(own) ? usualRangeOf(metric, own) : null
+          const flaggedThen = ownRange !== null && flaggedIn(ownRange, value)
+          return flaggedThen !== flaggedIn(band, value)
+        }).length
+
   const first = points[0]
   const refusedAt = (r: SessionRecord): boolean => unusableReason(r.vitals) !== null
   // The stretch the chart spans: from its first point to the latest, so a
@@ -166,7 +192,7 @@ export function trendOf(
     metric,
     points,
     usual: canBeCalledUsual(stat) ? stat.mean : null,
-    usualRange: canBeCalledUsual(stat) ? usualRangeOf(metric, stat) : null,
+    usualRange: band,
     usualReadings: stat?.n ?? 0,
     latestMeasured: read(latest.vitals) !== null,
     seededPoints: points.filter((p) => p.seeded).length,
@@ -175,6 +201,7 @@ export function trendOf(
     ).length,
     refused: theirs.filter((r) => refusedAt(r) && inStretch(r)).length,
     refusedSince: theirs.filter((r) => refusedAt(r) && r.capturedAt > latest.capturedAt).length,
+    disagreeing,
   }
 }
 
@@ -185,15 +212,24 @@ export function trendOf(
  * round number instead left breathing (14–19) with one tick and an HRV of 24
  * under the lowest (KV-4, seen on screen). Here, not in the renderer, so the
  * caregiver's client draws the same axis.
+ *
+ * Three to five is the aim. When no step gives that, the most that still
+ * gives three or more — six or seven — rather than two: a range where step 2
+ * gave six jumped straight to step 5 and two ticks, which was the demo's own
+ * pulse axis ([70, 75] where it had been [68 … 76]) and about one plausible
+ * pulse baseline in twelve (review of #168).
  */
 export function axisTicks(lo: number, hi: number, minStep = 0): number[] {
   if (!(hi > lo)) return [lo]
   // `minStep`: no finer than the values are quoted (KV-165).
   const mag = Math.max(minStep, 10 ** Math.floor(Math.log10((hi - lo) / 5)))
+  const steps = [1, 2, 5, 10, 20].map((m) => m * mag)
+  const count = (s: number): number => Math.floor(hi / s) - Math.ceil(lo / s) + 1
   const step =
-    [1, 2, 5, 10, 20]
-      .map((m) => m * mag)
-      .find((s) => Math.floor(hi / s) - Math.ceil(lo / s) + 1 <= 5) ?? 20 * mag
+    steps.find((s) => count(s) >= 3 && count(s) <= 5) ??
+    [...steps].reverse().find((s) => count(s) >= 3) ??
+    steps.find((s) => count(s) <= 5) ??
+    20 * mag
   const ticks: number[] = []
   for (let i = Math.ceil(lo / step); i * step <= hi; i++) ticks.push(Number((i * step).toFixed(10)))
   return ticks
@@ -226,21 +262,29 @@ export interface TrendScale {
  * around a usual of 72, where nothing fires until about 3 bpm out — filled the
  * plot top to bottom: a mountain range above a card saying "A normal day for
  * them". That is the amber-versus-red argument made in pixels. So the axis is
- * never narrower than their usual range, the band the rules measure against:
+ * never narrower than the band, where the rules flag nothing:
  * a change is drawn as large as the rules find it, not as large as the window
- * happens to be. Before there is a usual, the same construction around the
- * points' own mean, with the rules' smallest scale (`MIN_SD_FRACTION_OF_MEAN`),
- * so a building baseline is not drawn louder than a mature one. HRV's range
- * has no top, so it reaches as far above the usual as below it.
+ * happens to be. Before there is a usual, `narrowestRangeAround` the points'
+ * own mean, so a building baseline is not drawn louder than a mature one: for
+ * pulse and breathing the rules' smallest spread, about ±4%; for HRV, whose
+ * rule is a fraction of the usual already, ±25%. HRV's range has no top, so it
+ * reaches as far above the centre as below it.
+ *
+ * Null for a trend with no points, where there is nothing to scale: an HRV
+ * never measured once gave an axis from -1.5 to 1.5 ms (review of #168). Said
+ * here rather than left to the renderer's own check, since the caregiver's
+ * client draws from this and inherits no such check.
  *
  * Here, not in the renderer, as `axisTicks` is: the caregiver's client draws
  * the same picture.
  */
-export function trendScale(trend: Trend): TrendScale {
+export function trendScale(trend: Trend): TrendScale | null {
+  if (trend.points.length === 0) return null
   const values = [...trend.points.map((p) => p.value), ...(trend.usual === null ? [] : [trend.usual])]
-  const centre = trend.usual ?? values.reduce((sum, v) => sum + v, 0) / Math.max(1, values.length)
-  const range = trend.usualRange ?? usualRangeOf(trend.metric, { mean: centre, sd: 0, n: 0 })
-  const reach = [...values, range.low, range.high ?? centre + (centre - range.low)]
+  const centre = trend.usual ?? values.reduce((sum, v) => sum + v, 0) / values.length
+  const range = trend.usualRange ?? narrowestRangeAround(trend.metric, centre)
+  const reach =
+    range === null ? values : [...values, range.low, range.high ?? centre + (centre - range.low)]
   let lo = Math.min(...reach)
   let hi = Math.max(...reach)
   const pad = (hi - lo) * 0.15
@@ -255,16 +299,31 @@ export function trendScale(trend: Trend): TrendScale {
 }
 
 /**
- * "their usual range, 68–76 bpm", or for HRV "their usual range, 26 ms and
- * up" — the band's label, rounded as every reading is. Null with no range.
+ * The band's label: "pulse not flagged between 67 and 75 bpm", or for HRV
+ * "HRV not flagged at 26 ms or above". Null with no band (review of #168).
+ *
+ * **Not "usual".** The line beside it already spends that word on the mean,
+ * and spending it again on the span reads as a contradiction rather than a
+ * distinction — the argument `NO_SPREAD_TO_REPORT` makes for the cards. And
+ * for HRV it would be false: nothing fires above the band's floor, so an HRV
+ * of 500 is inside it, and "usual" would claim evidence the app does not have.
+ * "Not flagged" is exactly what the band is.
+ *
+ * **Rounded inward**, not by `readingText`: rounded to nearest, an edge lands
+ * on the wrong side of the rule as often as the right one, and the demo's key
+ * named 76 bpm as inside while a card said 76 was above usual. Inward, every
+ * number it names is one no rule fires on; the drawn band may be a hair wider
+ * than the words, never the other way.
  */
-export function usualRangeLabel(trend: Trend): string | null {
+export function bandLabel(trend: Trend): string | null {
   const range = trend.usualRange
   if (range === null) return null
+  const name = METRIC_NAME[trend.metric]
   const unit = READING_UNIT[trend.metric]
+  const low = Math.ceil(range.low)
   return range.high === null
-    ? `their usual range, ${readingText(range.low)} ${unit} and up`
-    : `their usual range, ${readingText(range.low)}–${readingText(range.high)} ${unit}`
+    ? `${name} not flagged at ${low} ${unit} or above`
+    : `${name} not flagged between ${low} and ${Math.floor(range.high)} ${unit}`
 }
 
 const capitalise = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
@@ -347,15 +406,20 @@ export function trendNotes(trend: Trend): string[] {
   if (!trend.latestMeasured) {
     notes.push(`${capitalise(name)} was not measured at the latest check-in.`)
   }
-  // The line and band are the usual the latest was compared with; every other
-  // point was scored against the check-ins before its own day, when the usual
-  // and its spread were not these. Seen on the demo: a day whose card said
-  // "above usual" sat inside today's band (KV-165, on screen). Said once, here,
-  // rather than left for the caregiver to find as a contradiction.
-  if (trend.usualRange !== null && trend.points.length > 1) {
+  // The line and band are the latest's; every other point was scored against
+  // the check-ins before its own day. Seen on the demo: a day whose card said
+  // "above usual" sat inside today's band (KV-165, on screen). Said only when a
+  // day on this chart actually disagrees, with the count, like every note here
+  // (review of #168). Considered and not taken: always saying it, as a sentence
+  // learned once rather than one that comes and goes — but a standing caveat
+  // on every mature chart says nothing about this one.
+  if (trend.disagreeing > 0) {
     notes.push(
-      'The line and band are their usual as of the latest check-in. Each other day was ' +
-        'compared with the check-ins before it, so its card can say otherwise.',
+      trend.disagreeing === 1
+        ? 'The line and band are as of the latest check-in. 1 other day was compared with the ' +
+            'check-ins before it, and its card says otherwise.'
+        : `The line and band are as of the latest check-in. ${trend.disagreeing} other days ` +
+            'were compared with the check-ins before them, and their cards say otherwise.',
     )
   }
   if (trend.seededPoints > 0) {

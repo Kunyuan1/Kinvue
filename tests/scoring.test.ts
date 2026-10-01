@@ -18,7 +18,7 @@ import {
 } from '@core/scoring'
 import { DEMO_PERSON_ID, seedDemoHistory, withSeededVerdicts } from '@core/seed/persona'
 import type { Assessment, SessionRecord } from '@core/session/types'
-import { ALL_RULES, BASELINE_RULE_IDS, usualRangeOf } from '@core/scoring'
+import { ALL_RULES, BASELINE_RULE_IDS, narrowestRangeAround, usualRangeOf } from '@core/scoring'
 import { computeBaseline } from '@core/baseline'
 import { history, seededHistory, session, sessionBeforeKV16 } from './helpers'
 
@@ -1980,7 +1980,7 @@ describe('usualRangeOf: where a reading can fall with no comparison rule firing 
     const past = [72, 78, 69, 81, 75].map((pulse, i) =>
       session({ id: `p-${i}`, capturedAt: `2026-09-0${i + 1}T09:00:00.000Z`, vitals: { pulseRateBpm: pulse } }),
     )
-    const { low, high } = usualRangeOf('pulse', computeBaseline(past).pulseRateBpm!)
+    const { low, high } = usualRangeOf('pulse', computeBaseline(past).pulseRateBpm!)!
     expect(fired({ pulseRateBpm: low + EPS }, past)).toEqual([])
     expect(fired({ pulseRateBpm: high! - EPS }, past)).toEqual([])
     expect(fired({ pulseRateBpm: low - EPS }, past)).toEqual(['pulse-low'])
@@ -1989,7 +1989,7 @@ describe('usualRangeOf: where a reading can fall with no comparison rule firing 
 
   it('agrees with the breathing rules on a flat history, where the floor is the spread', () => {
     const past = history(5)
-    const { low, high } = usualRangeOf('breathing', computeBaseline(past).breathingRateBrpm!)
+    const { low, high } = usualRangeOf('breathing', computeBaseline(past).breathingRateBrpm!)!
     expect(fired({ breathingRateBrpm: low + EPS }, past)).toEqual([])
     expect(fired({ breathingRateBrpm: high! - EPS }, past)).toEqual([])
     expect(fired({ breathingRateBrpm: low - EPS }, past)).toEqual(['breathing-low'])
@@ -1998,10 +1998,22 @@ describe('usualRangeOf: where a reading can fall with no comparison rule firing 
 
   it('has no top for HRV, whose only rule is a drop', () => {
     const past = history(5)
-    const range = usualRangeOf('hrv', computeBaseline(past).hrvRmssdMs!)
+    const range = usualRangeOf('hrv', computeBaseline(past).hrvRmssdMs!)!
     expect(range.high).toBeNull()
     expect(fired({ hrvRmssdMs: range.low + EPS }, past)).toEqual([])
     expect(fired({ hrvRmssdMs: range.low - EPS }, past)).toEqual(['hrv-drop'])
     expect(fired({ hrvRmssdMs: 500 }, past)).toEqual([])
+  })
+
+  it('gives no range where the rules would not run, so a band never claims what nothing checked (review of #168)', () => {
+    // A usual of zero passes `canBeCalledUsual` — a reading of 0 is not missing —
+    // but `zRule` declines a spread of zero and `hrvDrop` a usual of zero.
+    const zero = { mean: 0, sd: 0, n: 3 }
+    expect(usualRangeOf('pulse', zero)).toBeNull()
+    expect(usualRangeOf('breathing', zero)).toBeNull()
+    expect(usualRangeOf('hrv', zero)).toBeNull()
+    // The fallback before a usual is the rules' narrowest scale, named as such.
+    expect(narrowestRangeAround('pulse', 70)).toEqual({ low: 70 - 2 * 1.4, high: 70 + 2 * 1.4 })
+    expect(narrowestRangeAround('hrv', 40)).toEqual({ low: 30, high: null })
   })
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { BASELINE_WINDOW_SESSIONS, computeBaseline } from '@core/baseline'
-import { scoreSession } from '@core/scoring'
+import { BASELINE_RULE_IDS, flaggedIn, scoreSession } from '@core/scoring'
 import {
   axisTicks,
   trendNotes,
@@ -8,7 +8,7 @@ import {
   trendScale,
   trendTitle,
   usualLabel,
-  usualRangeLabel,
+  bandLabel,
 } from '@core/trend'
 import type { SessionRecord } from '@core/session/types'
 import { DEMO_PERSON_ID, seedDemoHistory, withSeededVerdicts } from '@core/seed/persona'
@@ -151,6 +151,26 @@ describe('axisTicks: round values to read a point against (KV-4)', () => {
     expect(axisTicks(21.9, 40.1)).toEqual([25, 30, 35, 40])
   })
 
+  it('never gives fewer than three on the demo pulse axis, which once had two (review of #168)', () => {
+    const demo = withSeededVerdicts(seedDemoHistory(undefined, new Date('2026-09-30T12:00:00.000Z')))
+    const { ticks } = trendScale(trendOf(demo, DEMO_PERSON_ID, 'pulse')!)!
+    expect(ticks.length).toBeGreaterThanOrEqual(3)
+    // The axis that once came out [70, 75]: six at step 2 beats two at step 5.
+    expect(axisTicks(65.51, 76.86, 1)).toEqual([66, 68, 70, 72, 74, 76])
+  })
+
+  it('gives at least three whole-number ticks, and at most seven, across plausible pulse baselines', () => {
+    // The sweep that found one baseline in twelve on two ticks.
+    for (let mean = 55; mean <= 100; mean += 0.7) {
+      for (let sd = 1.2; sd <= 5; sd += 0.13) {
+        const lo = mean - 2 * sd - 1.5
+        const hi = mean + 2 * sd + 1.5
+        const n = axisTicks(lo, hi, 1).length
+        expect(n >= 3 && n <= 7, `${lo.toFixed(2)}–${hi.toFixed(2)}: ${n}`).toBe(true)
+      }
+    }
+  })
+
   it('never gives more than five, at any scale', () => {
     for (const [lo, hi] of [[0, 1], [60, 110], [0.2, 0.9], [0, 1000], [71.5, 72.5]] as const) {
       const ticks = axisTicks(lo, hi)
@@ -274,7 +294,7 @@ describe('what the chart spans, and says about it (review of #162)', () => {
   })
 })
 
-describe('how far the chart reaches, and their usual range on it (KV-165)', () => {
+describe('how far the chart reaches, and the not-flagged band on it (KV-165)', () => {
   const pulses = (values: number[]): SessionRecord[] =>
     values.map((pulse, i) =>
       session({ id: `p-${i}`, capturedAt: new Date(Date.UTC(2026, 8, i + 1, 9)).toISOString(), vitals: { pulseRateBpm: pulse } }),
@@ -284,7 +304,7 @@ describe('how far the chart reaches, and their usual range on it (KV-165)', () =
     // 71–74 around a usual of 72, where nothing fires: once a mountain range.
     const trend = trendOf([...pulses([71, 72, 73, 72, 74, 71, 73]), latest({ vitals: { pulseRateBpm: 72 } })], P, 'pulse')!
     expect(trend.usualRange).not.toBeNull()
-    const { lo, hi } = trendScale(trend)
+    const { lo, hi } = trendScale(trend)!
     const values = trend.points.map((p) => p.value)
     expect((Math.max(...values) - Math.min(...values)) / (hi - lo)).toBeLessThan(0.5)
   })
@@ -292,26 +312,26 @@ describe('how far the chart reaches, and their usual range on it (KV-165)', () =
   it('always reaches their whole usual range, so a point outside it is drawn outside it', () => {
     const trend = trendOf([...pulses([72, 78, 69, 81, 75]), latest({ vitals: { pulseRateBpm: 95 } })], P, 'pulse')!
     const { low, high } = trend.usualRange!
-    const { lo, hi } = trendScale(trend)
+    const { lo, hi } = trendScale(trend)!
     expect(lo).toBeLessThanOrEqual(low)
     expect(hi).toBeGreaterThanOrEqual(high!)
     expect(95).toBeGreaterThan(high!)
-    expect(usualRangeLabel(trend)).toMatch(/^their usual range, \d+–\d+ bpm$/)
+    expect(bandLabel(trend)).toMatch(/^pulse not flagged between \d+ and \d+ bpm$/)
   })
 
   it('draws no range without a usual, and still does not shout while it is learning', () => {
     const trend = trendOf([...pulses([71, 74]), latest({ vitals: { pulseRateBpm: 72 } })], P, 'pulse')!
     expect(trend.usual).toBeNull()
     expect(trend.usualRange).toBeNull()
-    expect(usualRangeLabel(trend)).toBeNull()
-    const { lo, hi } = trendScale(trend)
+    expect(bandLabel(trend)).toBeNull()
+    const { lo, hi } = trendScale(trend)!
     expect(3 / (hi - lo)).toBeLessThan(0.6)
   })
 
   it('never ticks finer than the whole units readings are quoted in', () => {
     // A lone breathing reading of 13 drew 12.5 and 13.5 (seen testing #167).
     const trend = trendOf([latest({ vitals: { breathingRateBrpm: 13 } })], P, 'breathing')!
-    const { ticks } = trendScale(trend)
+    const { ticks } = trendScale(trend)!
     expect(ticks.length).toBeGreaterThanOrEqual(3)
     for (const t of ticks) expect(Number.isInteger(t), `${t}`).toBe(true)
   })
@@ -320,27 +340,42 @@ describe('how far the chart reaches, and their usual range on it (KV-165)', () =
     const trend = trendOf([...history(5), latest()], P, 'hrv')!
     const range = trend.usualRange!
     expect(range.high).toBeNull()
-    expect(usualRangeLabel(trend)).toMatch(/^their usual range, \d+ ms and up$/)
-    const { hi } = trendScale(trend)
+    expect(bandLabel(trend)).toMatch(/^HRV not flagged at \d+ ms or above$/)
+    const { hi } = trendScale(trend)!
     expect(hi).toBeGreaterThanOrEqual(trend.usual! + (trend.usual! - range.low))
   })
 
-  it('says the band is the latest’s, because an older card can disagree with it (seen on the demo)', () => {
+  it('counts the days whose own card disagrees with the band, as their verdicts say (seen on the demo)', () => {
     // The seeded demo: a day whose own card said "above usual" sits inside the
     // band the latest check-in was compared with, since the spread has grown.
+    // Counted here from the verdicts themselves, independently of `trendOf`.
     const demo = withSeededVerdicts(seedDemoHistory(undefined, new Date('2026-09-30T12:00:00.000Z')))
     const trend = trendOf(demo, DEMO_PERSON_ID, 'pulse')!
-    const { low, high } = trend.usualRange!
-    const disagrees = demo.filter((r) => {
-      const fired = r.assessment?.firedRules.some((f) => f.id === 'pulse-elevated' || f.id === 'pulse-low')
-      const v = r.vitals.pulseRateBpm
-      return fired === true && v !== null && v > low && v < high! && !trend.points.find((p) => p.id === r.id)?.latest
-    })
-    expect(disagrees.length).toBeGreaterThan(0)
+    const band = trend.usualRange!
+    const fromVerdicts = trend.points.filter((p) => {
+      if (p.latest) return false
+      const record = demo.find((r) => r.id === p.id)!
+      const flaggedThen =
+        record.assessment?.firedRules.some((f) => f.id === 'pulse-elevated' || f.id === 'pulse-low') === true
+      return flaggedThen !== flaggedIn(band, p.value)
+    }).length
+    expect(fromVerdicts).toBeGreaterThan(0)
+    expect(trend.disagreeing).toBe(fromVerdicts)
     expect(trendNotes(trend)).toContain(
-      'The line and band are their usual as of the latest check-in. Each other day was ' +
-        'compared with the check-ins before it, so its card can say otherwise.',
+      fromVerdicts === 1
+        ? 'The line and band are as of the latest check-in. 1 other day was compared with the ' +
+            'check-ins before it, and its card says otherwise.'
+        : `The line and band are as of the latest check-in. ${fromVerdicts} other days ` +
+            'were compared with the check-ins before them, and their cards say otherwise.',
     )
+  })
+
+  it('says nothing of the kind when no card on the chart disagrees (review of #168)', () => {
+    // A steady history: every day inside its own range and today's alike.
+    const steady = trendOf([...history(6), latest()], P, 'pulse')!
+    expect(steady.usualRange).not.toBeNull()
+    expect(steady.disagreeing).toBe(0)
+    expect(trendNotes(steady).some((n) => n.startsWith('The line and band'))).toBe(false)
   })
 
   it('says nothing of the kind over a lone point, or with no band', () => {
@@ -349,5 +384,36 @@ describe('how far the chart reaches, and their usual range on it (KV-165)', () =
     for (const t of [lone, learning]) {
       expect(trendNotes(t).some((n) => n.startsWith('The line and band'))).toBe(false)
     }
+  })
+
+  it('names only numbers no rule fires on, rounded inward (review of #168)', () => {
+    // On the demo, rounded to nearest, the key named 76 bpm, 13 and 17 br/min and
+    // 25 ms — each of which fires a rule against the same history.
+    const COMPARISON = new Set<string>(BASELINE_RULE_IDS)
+    const demo = withSeededVerdicts(seedDemoHistory(undefined, new Date('2026-09-30T12:00:00.000Z')))
+    const latest = [...demo].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt)).at(-1)!
+    const before = demo.filter((r) => r.capturedAt < latest.capturedAt)
+    const field = { pulse: 'pulseRateBpm', breathing: 'breathingRateBrpm', hrv: 'hrvRmssdMs' } as const
+    for (const metric of ['pulse', 'breathing', 'hrv'] as const) {
+      const trend = trendOf(demo, DEMO_PERSON_ID, metric)!
+      const label = bandLabel(trend)!
+      const named = (label.match(/\d+/g) ?? []).map(Number)
+      expect(named.length, label).toBe(trend.usualRange!.high === null ? 1 : 2)
+      for (const value of named) {
+        const probe = { ...session({ vitals: { [field[metric]]: value } }), personId: DEMO_PERSON_ID }
+        const fired = scoreSession(probe, before).firedRules.filter((r) => COMPARISON.has(r.id))
+        expect(fired.map((r) => r.id), `${label}: ${value}`).toEqual([])
+        // And inside what is drawn.
+        expect(value).toBeGreaterThanOrEqual(trend.usualRange!.low)
+        if (trend.usualRange!.high !== null) expect(value).toBeLessThanOrEqual(trend.usualRange!.high)
+      }
+      expect(label).not.toMatch(/usual/)
+    }
+  })
+
+  it('has no scale for a metric with no points, rather than an axis below zero (review of #168)', () => {
+    const trend = trendOf([...history(3, { hrvRmssdMs: null }), latest({ vitals: { hrvRmssdMs: null } })], P, 'hrv')!
+    expect(trend.points).toEqual([])
+    expect(trendScale(trend)).toBeNull()
   })
 })

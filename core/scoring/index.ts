@@ -16,6 +16,8 @@ export {
   BASELINE_RULE_IDS,
   canBeCalledUsual,
   uncomparedMetrics,
+  flaggedIn,
+  narrowestRangeAround,
   usualRangeOf,
   type UsualRange,
 } from './rules'
