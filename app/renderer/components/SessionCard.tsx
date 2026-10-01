@@ -127,9 +127,11 @@ export default function SessionCard({
         of discretion: a caregiver deciding whether to drive over is better
         served by "left hip, since yesterday" than by a rule that says pain was
         reported. It is never summarised, never paraphrased, and never used as
-        a rule input — whether it may ever leave the device is KV-32. Its line
-        breaks are kept for the same reason: collapsing them would be a silent
-        edit in the one place nothing should be edited.
+        a rule input. It leaves the device only to a viewer the person has
+        turned it on for, off by default (KV-32: ARCHITECTURE.md, "What leaves
+        the device"); a change that shares this card must read that first. Its
+        line breaks are kept for the same reason: collapsing them would be a
+        silent edit in the one place nothing should be edited.
       */}
       {session.answers.painNote !== undefined && (
         <p className="mt-4 border-t border-(--color-line) pt-4 text-sm whitespace-pre-wrap">

@@ -897,8 +897,8 @@ a cancelled load of `model_id=phasic-bp-inference`, followed by "Model load fail
 licence check gates measurement, and a model is loaded through a secure loader as each
 capture starts — which is most likely what the per-capture 2 MB is. The log does not say
 which of the two alone would have stopped the capture; it does show both in the path. For
-the app that changes nothing, since either way a capture needs the network. For #32 and #36
-it means two obstacles to offline use rather than one: a model that is not kept between
+the app that changes nothing, since either way a capture needs the network. For #36 it
+means two obstacles to offline use rather than one: a model that is not kept between
 captures, and an authorization that is never offline by design. `kProcessingFailed` (8)
 still says nothing about the network, which is why the app decides from `net.isOnline()`
 rather than from it (KV-104) — and on this run it named the connection correctly.
@@ -953,8 +953,9 @@ times and per-metric datapoint counts, and the capture cannot run offline. *When
 reports is only partly known: a complete `UsageStatistics` carries the session's end time,
 so it can only be sent at or after the end, and what the connections opened every five and
 fifteen seconds *during* a capture carry — quota polls, incremental syncs, keepalives — is not
-established. Phase 4 and 5 plan around all of this, so it belongs in #32 and #36 rather
-than being discovered when sync is designed.
+established. Phase 4 and 5 plan around all of this, so it belongs in #36 rather than
+being discovered when sync is designed. (#32 decided what Kinvue itself sends to a viewer,
+under *What leaves the device*; the SDK's own traffic was never in its gift.)
 
 Intercepting the TLS with a proxy has not been tried, and whether the native runtime would
 accept a proxy's certificate is unknown. It is the direct test of the gap above — what the
@@ -1256,11 +1257,82 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
   #34 chooses a TypeScript client. `core/session/store.ts` is already the exception — it
   imports `node:fs` — and #38 decides where it lives when the repo is split. (#15, #38)
 
+### What leaves the device (KV-32)
+
+Decided 2026-10-01. This governs what Kinvue itself sends to a viewer — the share payload.
+What the SDK sends on its own during a capture (the licence meter and the model load,
+above) is a separate matter, and stays with #36.
+
+**A viewer's device receives the records the dashboard is built from, not a view composed
+for it.** A view composed on the check-in device would be frozen in the words of the day it
+was sent, and could not draw the trend (#4, #165), which needs the readings behind the usual.
+The ticket's ladder of five rungs (verdict, sentences, vitals, answers, note) does not
+survive that: its second rung already shares the numbers, since every explanation quotes
+them.
+
+**What the viewer composes, and what it does not** (review of #173). Not every word on a
+card is composed when shown: a comparison rule's explanation and the summary are stored
+text, written when the check-in was scored, and they travel inside `assessment`. What is
+composed when shown is what the check-in device composes too — the answer rules re-worded
+from the answers (KV-138), the readings, the answers row. The viewer composes **each card
+from its own record and never rescores it.** Rescoring needs the whole history, which a
+viewer does not hold: tried with a viewer's share, the oldest shared card gained "Scored
+again now, it would read 'Too early to compare' (0 of 3 usable check-ins)" — true of the
+viewer's records, false of the person. So what is computed over the whole history stays on
+the check-in device: the drift line under a card, and the header lines for a usual still
+being learned (KV-17) or reaching far back (KV-154). The counts a card itself quotes —
+seeded, refused, the span of its usual — are stored in its `assessment` (KV-53, KV-100,
+KV-154), and travel with it.
+
+So the rule is **what the dashboard shows, and nothing it does not**. The shared record is
+its own type, so a field it does not carry is absent rather than set to something that
+means another thing:
+
+| Field | Leaves | Why |
+|---|---|---|
+| `id` | Yes | An opaque UUID; updates and removals (#45) travel by it. |
+| `personId` | **Replaced** | The local id can read like a name. The share's own opaque id is written into `personId` on the way out — `presentAll` groups and `trendOf` filters by it, so it cannot simply be dropped. |
+| `capturedAt`, `timeZone` | Yes | A viewer elsewhere needs *their* day (#28). The zone names a region; that is the cost. |
+| `vitals.pulseRateBpm`, `.breathingRateBrpm`, `.hrvRmssdMs` | Yes | The card's readings and the chart. |
+| `vitals.hrvSdnnMs` | **No** | Nothing reads it — no rule, no screen. Absent from the shared type; a viewer's device that needs a `Vitals` may supply `null`, which nothing reads either. |
+| `vitals.confidence`, `.stable`, `.durationSec` | Yes | Quality, not personal: without them a viewer's device cannot tell "not enough to say" from a reading. |
+| `answers.mood`, `.sleep`, `.painReported` | Yes | On every card (KV-110), and the answer rules are worded from them. |
+| `answers.skippedMeal`, or `.eatenToday` on a real record from before KV-16 | Yes | Whichever the record carries — the same answer, asked two ways. |
+| `answers.painNote` | **Only with consent, per viewer** | Below. |
+| `assessment.flag`, `.summary`, `.firedRules` (each rule's `id`, `title`, `explanation`, `severity`) | Yes | The verdict and the words it was given in. Severity orders the rules and is never shown as a score (#42). |
+| `assessment.baselineSessions`, `.baselineSeededSessions`, `.baselineRefusedSessions`, `.baselineSpan`, `.uncomparedMetrics`, `.withheld` | Yes | The counts and reasons the card quotes, stored so the viewer need not recompute them. |
+| `seeded`, and seeded records | **Never** | Demo data about nobody, with ids that repeat across installs. |
+
+`assessment` is classified field by field, like the rest: five tickets have each added a
+field to it (KV-53, KV-87, KV-100, KV-138, KV-154), and a sixth must not leave by default.
+
+- **One policy, except the pain note.** What the cared-for person agrees to has to fit on
+  one screen (#31): *they see what this dashboard shows — the readings, your answers and
+  what the app made of them.* A per-field menu would be consent nobody can follow.
+- **The pain note is off by default, and turned on by the person for a viewer.** It is the
+  only text in their own words, and the case for sharing it (KV-2: "left hip, since
+  yesterday" serves a caregiver deciding whether to drive over) is strongest exactly when
+  the caregiver is far away — which is why it is a choice and not a rule either way. When
+  it is on for anyone, the note field says who will read it, as they type.
+- **A new viewer gets every check-in from the earliest one behind the current usual
+  onward** — refused captures included, since the chart's and the cards' caveats are counted
+  from them (KV-12, KV-100), and a viewer shown fewer would be more confident than the
+  check-in device. Not the whole history: agreeing today must not share months nobody
+  agreed to share. The usual counts 14 usable check-ins, not 14 days, so for someone who
+  checks in twice a week that reaches back about seven weeks; **the person is shown the
+  actual date it reaches back to** when they approve, not "about a fortnight".
+- **A demo install's real check-ins lose their seeded usual on the way out.** A real card
+  scored against seeded days arrives with its stored verdict and seeded disclosure, but the
+  viewer's chart, holding no seeded records, may have no usual to draw beside it — the card
+  quoting a usual the chart cannot. Demo installs are not meant for sharing; #37 decides
+  whether such a card is shared at all.
+- Whatever leaves goes the way #33 decides; nothing here assumes the relay can read it.
+
 ### What must hold before real check-ins are stored
 
 Each is owned by a Phase 1 ticket that has to land before the check-in flow (#2) stores
-real sessions, because a record written without them cannot be repaired afterwards. Two
-hold today; the third does not:
+real sessions, because a record written without them cannot be repaired afterwards. All
+three hold:
 
 - **Records are never edited in place, and have globally unique ids.** Both hold.
   Sessions are only ever appended, which is the property sync needs, and an id is a UUID
@@ -1272,10 +1344,13 @@ hold today; the third does not:
 - **Vitals originate in the main process and nowhere else.** This holds: `submit` takes
   the id of a capture main is holding, never the numbers. The rule, and what else that
   held capture is pinned to, is under *Why the API key lives in the main process*. (#25)
-- **Every record knows its local time zone.** This does not hold yet — no record has one.
-  `capturedAt` is UTC; a caregiver in another zone needs the cared-for person's *today*,
-  and a UTC timestamp recorded without its zone can never be placed on the right local
-  day afterwards. (#28)
+- **Every record knows its local time zone.** This holds since #28: each check-in stores
+  the zone it was taken in. `capturedAt` is UTC; a caregiver in another zone needs the
+  cared-for person's *today*, and a UTC timestamp recorded without its zone can never be
+  placed on the right local day afterwards. Records from before #28 have none: they are
+  displayed in the reader's zone, and have no local day at all (`localDateOf` answers
+  null). An empty or unknown zone is displayed the same way, indistinguishable from none —
+  which matters once records arrive from another device (#166).
 
 ### What is deliberately still open
 
@@ -1285,7 +1360,6 @@ into this file before remote code is written:
 | Question | Ticket |
 |---|---|
 | Who consents, and how is access withdrawn — including for someone who cannot consent | #31 |
-| What leaves the device: verdict, explanation, vitals, answers, the pain note | #32 |
 | Can the server read what it carries, and how are keys managed and recovered | #33 |
 | What the caregiver's client is | #34 |
 | What legal and regulatory obligations sending health data brings | #35 |
