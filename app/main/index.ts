@@ -28,7 +28,7 @@ import {
 import { loadDotEnv } from "./env";
 import { captureVitals } from "./vitals";
 import { ERR_ABORTED, loadFailureMessage, showWhenReady } from "./window-show";
-import { appPage, isAppUrl, isTrustedSender } from "./security";
+import { isAppUrl, isTrustedSender, resolveAppPage } from "./security";
 import { toCaptureReply, type CaptureReply } from "../shared/capture-reply";
 
 /**
@@ -66,10 +66,13 @@ if (!app.isPackaged) {
  * apply.
  *
  * Kinvue's own page, the one place the window may be and the only frame IPC
- * answers: the dev server in development, the built `index.html` otherwise —
- * the same choice `createWindow` makes when it loads it.
+ * answers: the dev server in development, the built `index.html` otherwise.
+ * `createWindow` loads `page.url` itself, so what is loaded and what is
+ * checked are one string. A dev address that is not one is reported once the
+ * app is ready, like a `.env` that cannot be read, rather than throwing here
+ * with no window to say why (review of #169).
  */
-const page = appPage(
+const { page, problem: pageProblem } = resolveAppPage(
   process.env.ELECTRON_RENDERER_URL,
   pathToFileURL(join(__dirname, "../renderer/index.html")).href,
 );
@@ -81,10 +84,15 @@ app.enableSandbox();
 
 // Whatever web contents exist, created now or later: the window stays on
 // Kinvue's own page, opens nothing new, and embeds nothing. A redirect is a
-// navigation too. Nothing here navigates or opens windows on purpose, so a
-// refusal is only ever something going wrong.
+// navigation too, and so is a subframe's: `will-navigate` is the main frame's
+// alone, and a subframe is the cheapest way to reach another page without
+// disturbing it (review of #169). Nothing here navigates or opens windows on
+// purpose, so a refusal is only ever something going wrong.
 app.on("web-contents-created", (_event, contents) => {
   contents.on("will-navigate", (details) => {
+    if (!isAppUrl(details.url, page)) details.preventDefault();
+  });
+  contents.on("will-frame-navigate", (details) => {
     if (!isAppUrl(details.url, page)) details.preventDefault();
   });
   contents.on("will-redirect", (details) => {
@@ -105,10 +113,16 @@ function handle(
   channel: string,
   listener: (event: IpcMainInvokeEvent, ...args: unknown[]) => unknown,
 ): void {
+  // The one registration the IPC guard allows: this is the check (KV-29).
+  // eslint-disable-next-line no-restricted-syntax
   ipcMain.handle(channel, (event, ...args: unknown[]) => {
+    // The main frame by identity, as Electron advises, not inferred from
+    // having no parent — which is true of any web contents' main frame.
     const frame = event.senderFrame;
     const sender =
-      frame === null ? null : { url: frame.url, isMainFrame: frame.parent === null };
+      frame === null
+        ? null
+        : { url: frame.url, isMainFrame: frame === event.sender.mainFrame };
     if (!isTrustedSender(sender, page)) {
       throw new Error(`${channel} refused: the call did not come from Kinvue's own page.`);
     }
@@ -158,10 +172,9 @@ function createWindow(): BrowserWindow {
 
   // A page that cannot load says so, rather than leaving an empty window with
   // no message (KV-139 review) — the way a `.env` that cannot be read does.
-  const devUrl = process.env.ELECTRON_RENDERER_URL;
-  const loading = devUrl
-    ? window.loadURL(devUrl)
-    : window.loadFile(join(__dirname, "../renderer/index.html"));
+  // The resolved page's own URL, not `loadFile`: the checks compare against
+  // exactly this string, so the two cannot be built differently (review of #169).
+  const loading = window.loadURL(page.url);
   loading.catch((err: unknown) => {
     const message = loadFailureMessage(err);
     if (message !== null && !window.isDestroyed()) {
@@ -365,9 +378,15 @@ void app.whenReady().then(() => {
     );
   }
 
+  if (pageProblem !== null) {
+    dialog.showErrorBox("Kinvue could not use its dev server address", pageProblem);
+  }
+
   // No permission is ever granted: the camera runs here, in main, through the
   // SDK, and the self-view reaches the page as pictures over IPC, so the page
-  // needs no camera, microphone, location or anything else (KV-29).
+  // needs no camera, microphone, location or anything else (KV-29). The
+  // default session only: a partitioned session made later starts with no
+  // handlers at all, and must be given these too.
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) =>
     callback(false),
   );

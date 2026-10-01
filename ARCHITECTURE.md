@@ -798,9 +798,22 @@ code or call out to a remote origin.
 
 **The Electron security baseline** (KV-29), before the app is packaged (#19) or networked
 (Phase 5). The trust boundary is one decision, in `app/main/security.ts`, with no
-Electron import so the plain suite tests it: *Kinvue's own page* is the dev server's
-origin in development and the built `index.html`'s path otherwise, and it is the only
-place the window may be and the only frame IPC is answered for. Verified in the running
+Electron import so the plain suite tests it: *Kinvue's own page* is the built
+`index.html`'s path on this machine (a `file:` URL with no host), and in development the
+dev server's `http(s)` origin. It is the only place the window may be and the only frame
+IPC is answered for, and the window loads exactly the URL it is checked against. A dev
+address that is not `http(s)` or a local file falls back to the built page and says so,
+rather than matching on an opaque origin, which once made every URL without one "ours"
+(review of #169).
+
+**The dev boundary is deliberately looser.** It matches the whole dev-server origin, so
+every path electron-vite serves is "ours", Vite's `/@fs/` route to files on disk included.
+That is accepted because it is a developer's own machine running a developer's own server,
+and nothing is packaged from it; the built app, which is what anyone else runs, is pinned to
+one file. #19 replaces `file://` with a custom protocol, and the dev branch is worth
+re-reading then.
+
+Verified in the running
 app, dev and built, by driving the page over a debugging port: the sandboxed preload
 loads and IPC is answered; `require` and `process` are undefined; `window.open` returns
 null; camera access is refused; and a page sent to another origin stays where it was.
@@ -809,10 +822,10 @@ Electron's security checklist, item by item:
 
 | # | Item | Here |
 |---|---|---|
-| 1 | Only load secure content | Done: only the local page. There is no remote content to load. |
+| 1 | Only load secure content | Done: only the local page. There is no remote content to load. In development that page is a plain-`http` local origin, the looser case above. |
 | 2 | No Node integration for remote content | Done: `nodeIntegration: false`. |
 | 3 | Context isolation | Done: `contextIsolation: true`. |
-| 4 | Process sandboxing | Done: `sandbox: true`, and `app.enableSandbox()` for any renderer that ever exists. The preload needs only `contextBridge` and `ipcRenderer`, and bundles the rest. |
+| 4 | Process sandboxing | Done: `sandbox: true`, and `app.enableSandbox()` for any renderer that ever exists. The preload needs only `contextBridge` and `ipcRenderer`, and bundles the rest. A lint rule holds the window's security options to literals across `app/main/`, and `tests/security.test.ts` checks both are there, from the syntax tree. |
 | 5 | Handle permission requests | Done: every request and every check is refused. The camera runs in main through the SDK, and the self-view reaches the page as pictures over IPC. |
 | 6 | Keep `webSecurity` | Done: never turned off. |
 | 7 | Content Security Policy | Done: `default-src 'self'` in `index.html`. `style-src` allows inline styles, which the charts' positioning uses. |
@@ -821,11 +834,11 @@ Electron's security checklist, item by item:
 | 10 | No `enableBlinkFeatures` | Done: never set. |
 | 11 | `<webview>` without `allowpopups` | Not applicable: no `<webview>`, and `will-attach-webview` refuses one. |
 | 12 | Verify `<webview>` options | Not applicable, as 11: none may be attached. |
-| 13 | Limit navigation | Done: `will-navigate` and `will-redirect` refuse anything not Kinvue's own page. |
+| 13 | Limit navigation | Done: `will-navigate` (the main frame), `will-frame-navigate` (any frame) and `will-redirect` refuse anything not Kinvue's own page. A subframe is also refused by IPC and held by the CSP. |
 | 14 | Limit new windows | Done: `setWindowOpenHandler` denies all. |
 | 15 | No `shell.openExternal` on untrusted content | Done: not used. A future link out must pass a fixed allowlist, not a URL from the page. |
 | 16 | A current Electron | Done: pinned exactly, and each bump arrives alone and is launched before merge (KV-131; "How much to check before merging an Electron bump", KV-145). |
-| 17 | Validate the IPC sender | Done: every handler is registered through `handle()`, which answers only the main frame of Kinvue's own page. `tests/security.test.ts` fails if a handler is registered directly. |
+| 17 | Validate the IPC sender | Done: every handler is registered through `handle()`, which answers only the main frame (by identity, `event.sender.mainFrame`) of Kinvue's own page. A lint rule over all of `app/main/` refuses any other use of `ipcMain` (`handle`, `handleOnce`, `on`, `once`, a renamed import, `electron.ipcMain`), and `tests/lint-main.test.ts` checks it still fires. |
 | 18 | Avoid `file://`, prefer a custom protocol | **Not done: #19.** The built page is `file://`, and the navigation and sender checks pin it to one exact path. A custom protocol changes how the built app loads its own files, so it belongs with packaging, which owns that. |
 | 19 | Electron fuses | **Not done: #19.** Fuses are flipped on the packaged binary, and there is none yet. |
 | 20 | Do not expose Electron APIs to untrusted content | Done: the preload exposes named calls only (above), never `ipcRenderer` itself. |

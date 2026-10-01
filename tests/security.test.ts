@@ -1,20 +1,73 @@
 import { readFileSync } from 'node:fs'
+import ts from 'typescript'
+import { pathToFileURL } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { appPage, isAppUrl, isTrustedSender } from '../app/main/security'
+import { isAppUrl, isTrustedSender, resolveAppPage } from '../app/main/security'
 
 /**
  * The window's trust boundary (KV-29): the one page the window may be at, and
  * the only frame the main process answers. Built both ways the app runs.
  */
-const DEV = appPage('http://localhost:5173', 'file:///C:/app/out/renderer/index.html')
-const BUILT = appPage(undefined, 'file:///C:/Program%20Files/Kinvue/out/renderer/index.html')
+const BUILT_URL = 'file:///C:/Program%20Files/Kinvue/out/renderer/index.html'
+const DEV = resolveAppPage('http://localhost:5173', 'file:///C:/app/out/renderer/index.html').page
+const BUILT = resolveAppPage(undefined, BUILT_URL).page
 
-describe('appPage', () => {
+describe('resolveAppPage', () => {
   it('is the dev server when electron-vite names one, and the built file otherwise', () => {
-    expect(DEV).toEqual({ kind: 'dev', origin: 'http://localhost:5173' })
-    expect(BUILT).toEqual({ kind: 'file', pathname: '/C:/Program%20Files/Kinvue/out/renderer/index.html' })
+    expect(DEV).toEqual({ kind: 'dev', origin: 'http://localhost:5173', url: 'http://localhost:5173/' })
+    expect(BUILT).toEqual({
+      kind: 'file',
+      pathname: '/C:/Program%20Files/Kinvue/out/renderer/index.html',
+      url: BUILT_URL,
+    })
     // An empty variable is not a dev server.
-    expect(appPage('', 'file:///C:/app/index.html').kind).toBe('file')
+    expect(resolveAppPage('', BUILT_URL)).toEqual({ page: BUILT, problem: null })
+  })
+
+  it('never matches by an opaque origin, which made every page without one ours (review of #169)', () => {
+    // A file: dev URL is a file page, matched by its path like the built one.
+    const fileDev = resolveAppPage('file:///C:/app/out/renderer/index.html', BUILT_URL)
+    expect(fileDev).toEqual({
+      page: { kind: 'file', pathname: '/C:/app/out/renderer/index.html', url: 'file:///C:/app/out/renderer/index.html' },
+      problem: null,
+    })
+    for (const url of ['javascript:alert(1)', 'data:text/html,x', 'about:blank', 'file:///C:/Windows/win.ini']) {
+      expect(isAppUrl(url, fileDev.page), url).toBe(false)
+    }
+    // Anything else falls back to the built page, and says why.
+    for (const devUrl of ['data:text/html,x', 'about:blank', 'javascript:alert(1)', 'file://host/C:/x.html']) {
+      const resolved = resolveAppPage(devUrl, BUILT_URL)
+      expect(resolved.page, devUrl).toEqual(BUILT)
+      expect(resolved.problem, devUrl).toMatch(/must be an http\(s\) or local file URL/)
+    }
+  })
+
+  it('reports an address that is not one, rather than throwing before there is a window (review of #169)', () => {
+    // `localhost:5173` parses — as the scheme `localhost:` — so it is refused for
+    // its scheme; a string that does not parse at all is refused for that.
+    expect(resolveAppPage('localhost:5173', BUILT_URL).problem).toMatch(/must be an http\(s\) or local file URL/)
+    expect(resolveAppPage('not a url', BUILT_URL)).toEqual({
+      page: BUILT,
+      problem: expect.stringMatching(/is not a URL/),
+    })
+  })
+
+  it('loads exactly the URL it checks, whatever the install path holds (review of #169)', () => {
+    // The built app compares every navigation and IPC call against this page;
+    // if the URL it loads and the URL it checks disagree by one character, it
+    // refuses its own page. `createWindow` loads `page.url`, so they are one
+    // string — pinned here with a space and a non-ASCII segment in the path.
+    const paths = [
+      pathToFileURL(String.raw`C:\Program Files\Kinvue\out\renderer\index.html`, { windows: true }).href,
+      pathToFileURL(String.raw`C:\Users\Zoë Müller\AppData\Local\Kinvue\out\renderer\index.html`, { windows: true }).href,
+      pathToFileURL('/Applications/Kinvue Café.app/Contents/Resources/out/renderer/index.html', { windows: false }).href,
+    ]
+    for (const href of paths) {
+      const { page } = resolveAppPage(undefined, href)
+      expect(isAppUrl(page.url, page), page.url).toBe(true)
+      // And the same URL as Chromium commits it, which normalises it again.
+      expect(isAppUrl(new URL(page.url).href, page), page.url).toBe(true)
+    }
   })
 })
 
@@ -26,6 +79,8 @@ describe('isAppUrl', () => {
     for (const url of [
       'file:///C:/Program%20Files/Kinvue/out/renderer/index.html',
       'file:///C:/Program%20Files/Kinvue/out/renderer/index.html#cards',
+      // `localhost` is how a file URL says "this machine"; it normalises to no host.
+      'file://localhost/C:/Program%20Files/Kinvue/out/renderer/index.html',
     ]) {
       expect(isAppUrl(url, BUILT), url).toBe(true)
     }
@@ -45,6 +100,10 @@ describe('isAppUrl', () => {
       expect(isAppUrl(url, DEV), url).toBe(false)
     }
     for (const url of [
+      // Our path on someone else's host (review of #169): every case above
+      // varied the scheme, port, origin or path, and none named a file host.
+      'file://attacker.example/C:/Program%20Files/Kinvue/out/renderer/index.html',
+      'file://198.51.100.5/C:/Program%20Files/Kinvue/out/renderer/index.html',
       'file:///C:/Program%20Files/Kinvue/out/renderer/other.html',
       'file:///C:/Windows/System32/drivers/etc/hosts',
       'http://localhost:5173',
@@ -65,21 +124,40 @@ describe('isTrustedSender', () => {
   })
 })
 
-describe('the main process holds to it', () => {
-  // Read as text, like the lint-boundary tests: `index.ts` imports Electron and
-  // cannot load in the plain suite. What matters is that the next handler
-  // cannot be added past the check, and the sandbox cannot quietly go off.
-  const main = readFileSync('app/main/index.ts', 'utf8')
+describe('the main process turns the sandbox on', () => {
+  // What may not be done is `tests/lint-main.test.ts`'s: no IPC past the sender
+  // check, and no security option as anything but a literal, across app/main.
+  // A lint rule cannot say what must be *there*, so this does — read from the
+  // syntax tree, not the text, so a comment saying `sandbox: true` does not
+  // count (review of #169). `index.ts` imports Electron and cannot be loaded here.
+  const source = ts.createSourceFile(
+    'index.ts',
+    readFileSync('app/main/index.ts', 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+  )
+  const nodes: ts.Node[] = []
+  const walk = (node: ts.Node): void => {
+    nodes.push(node)
+    ts.forEachChild(node, walk)
+  }
+  walk(source)
 
-  it('registers every IPC handler through the sender check', () => {
-    // One `ipcMain.handle(` — the one inside `handle`, which checks the sender.
-    expect(main.match(/ipcMain\.handle\(/g)?.length).toBe(1)
-    expect(main).not.toMatch(/ipcMain\.on\(/)
+  it('calls app.enableSandbox() at the top level, before anything is ready', () => {
+    const calls = source.statements.filter(
+      (s) =>
+        ts.isExpressionStatement(s) &&
+        ts.isCallExpression(s.expression) &&
+        s.expression.expression.getText(source) === 'app.enableSandbox',
+    )
+    expect(calls).toHaveLength(1)
   })
 
-  it('keeps the renderer sandboxed', () => {
-    expect(main).toMatch(/sandbox: true/)
-    expect(main).not.toMatch(/sandbox: false/)
-    expect(main).toMatch(/app\.enableSandbox\(\)/)
+  it('creates the window with sandbox: true', () => {
+    const sandbox = nodes.filter(
+      (n): n is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(n) && n.name.getText(source) === 'sandbox',
+    )
+    expect(sandbox.map((p) => p.initializer.kind)).toEqual([ts.SyntaxKind.TrueKeyword])
   })
 })
