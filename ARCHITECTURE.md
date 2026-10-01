@@ -1239,7 +1239,7 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
 - **Consent comes before anything leaves the device.** Who has access is visible on the
   check-in device, and access can be revoked from it. Remote visibility of someone's daily
   physiology without consent is surveillance, however well meant. It is the person's own
-  consent; a path for someone who cannot give it waits on legal advice (#31, #35). See
+  consent; a path for someone who cannot give it waits on legal advice (#35). See
   *Who sees it, and how it is taken back* below.
 - **What leaves the device is decided in one place** — a single tested function in
   `core/`, with every field of a session explicitly classified. Sync code sends what it
@@ -1251,8 +1251,9 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
 - **No secondary use without its own consent.** The data exists for that person's care:
   no analytics on it, and no aggregation across people. The one planned exception is
   calibrating the rule thresholds (#22), which pools caregiver-confirmed outcomes (#47)
-  across people. That is opt-in, asked for separately from sharing with a caregiver, and
-  must clear #31 and #35 before any session is used for it.
+  across people. That is opt-in, asked for separately from sharing with a caregiver —
+  approving a viewer (KV-31) is not consent to it, and that decision did not consider it —
+  and its own consent must be designed, and clear #35, before any session is used for it.
 - **`core/` stays framework-free**, so that it can be imported by more than one app if
   #34 chooses a TypeScript client. `core/session/store.ts` is already the exception — it
   imports `node:fs` — and #38 decides where it lives when the repo is split. (#15, #38)
@@ -1332,39 +1333,64 @@ field to it (KV-53, KV-87, KV-100, KV-138, KV-154), and a sixth must not leave b
 
 Decided 2026-10-01. Remote access shares an older adult's physiology with other people;
 whether that is care or surveillance depends almost entirely on who agreed to it and
-whether they can take it back. So every control sits with the cared-for person, at their
-own device.
+whether they can take it back. So every control over **remote viewers** sits with the
+cared-for person, at their own device. Whoever reads the dashboard *at* that device is not
+a remote viewer, is on no list and cannot be revoked; that is the device's own boundary
+(#175), not this model's (review of #174).
 
 - **The person approves each viewer, on the check-in device.** A viewer cannot add
   themselves: pairing starts on the check-in device, with a code shown there, so approving
-  someone means being at your own device to do it. There is no approval from a viewer's
+  someone means being at their own device to do it. There is no approval from a viewer's
   phone, by link, or by default.
 - **Nothing is shared until they do.** Each approval says, on one screen, what that viewer
   will see: *the readings, your answers and what the app made of them* (KV-32); whether
   the pain note is on for them; and the date their history will reach back to.
-- **The person can see who has access, what they get, since when, and when each last
-  looked.** "Last looked" is the strongest check against quiet watching — not who *can*
-  look, but who *does* — and it means each viewer's app reports when it was opened, back
-  through the relay (#33). The list is also offered unprompted, periodically: a list
-  nobody revisits protects nobody.
+- **The person can see who has access, what they get, since when, and when each has been
+  looking.** Not who *can* look but who *does* — and how often, since a viewer opening the
+  dashboard forty times a day and one who glanced once this month are different things: so
+  a short recent history of each viewer's looks, not one timestamp. It is taken from what
+  the relay delivered to each viewer, **not reported by the viewer's own app**, which a
+  viewer who is the danger could silence or alter. Two costs, said plainly: the relay then
+  holds when each viewer fetched, which #36's T4 wants kept small, and #33 weighs the two;
+  and reading a copy already on the viewer's phone, offline, is not seen at all. The list
+  is also offered unprompted, periodically: a list nobody revisits protects nobody.
 - **Revocation is on the check-in device, immediate, and needs nobody's sign-off.** The
   removed viewer receives nothing new from that moment, and their app deletes the
-  check-ins it holds the next time it connects, with keys rotated as #33 decides. Said
-  honestly in the app: deleting a copy cannot unsee what was seen. (#45 implements it.)
+  check-ins it holds the next time it connects, with keys rotated as #33 decides. **A
+  viewer's device that never reconnects keeps its copy** — key rotation protects only what
+  had not yet been delivered. Said honestly in the app: removing access stops what comes
+  next and deletes what it can reach, and cannot unsee what was seen. (#45 implements it.)
 - **A removed viewer is told only that sharing has ended** — no date, no reason, no prompt
   to ask. It will be noticed anyway; what is avoided is a notification that reads as an
-  event to react to, which matters most when the viewer is the danger (#36).
+  event to react to, which matters when the viewer is remote and the danger (#36).
 - **Viewers cannot see each other.** Who else has access is the person's business.
 - **Only the person's own consent, for now.** Dementia and cognitive decline are common in
   exactly the people this is for. Whether a guardian or power of attorney may approve
   viewers, and what that looks like, is a legal question (#35), and it is not guessed at
   here: until it is answered, someone who cannot agree at their own device is not shared
   with anyone. **Deliberately unsupported**, not overlooked.
-- **What software cannot do.** Consent given under pressure — a viewer standing beside the
-  person while they approve — cannot be told apart from consent freely given. The defences
-  are that approval and revocation both happen at the person's own device, that they can
-  always see who is watching and when, and that removal is silent; #36 tests them against
-  a viewer who is the danger.
+
+**What this model cannot do** (review of #174), stated as limits rather than listed as
+defences:
+
+- **Someone at the device has the device's authority.** Approval and revocation need only
+  presence at the check-in device, so a household member who is the danger can approve
+  their own phone, revoke the one viewer who might notice, and — removal being silent by
+  design — leave that viewer told only that sharing ended. The two choices that protect the
+  person from a remote viewer, presence-only authority and silent removal, turn against
+  them when the danger is in the room. The mitigation is a lock on the sharing screen,
+  separate from the check-in itself (#40; #36's T2), and until it exists the model assumes
+  the device is the person's.
+- **Consent given under pressure** — a viewer standing beside the person while they approve
+  — cannot be told apart from consent freely given.
+- **A lost check-in device ends every revocation.** Authority sits on that one device, so
+  if it is lost, broken, wiped or replaced, no share can be ended and the person cannot see
+  who still holds their check-ins. How access is recovered, or ended, without it is #33's
+  to decide, with lost-device recovery.
+
+What remains as defence: the person can see who looks and how often, from a record the
+viewer cannot alter; a remote viewer can be removed at once, silently; and viewers cannot
+see each other. #36 tests them.
 
 ### What must hold before real check-ins are stored
 
@@ -1399,7 +1425,7 @@ into this file before remote code is written:
 |---|---|
 | Can the server read what it carries, and how are keys managed and recovered | #33 |
 | What the caregiver's client is | #34 |
-| What legal and regulatory obligations sending health data brings | #35 |
+| What legal and regulatory obligations sending health data brings — and whether a guardian or power of attorney may consent for someone who cannot (KV-31 left this open) | #35 |
 | What is being protected, from whom — including a viewer who is the danger | #36 |
 
 End-to-end encryption, so the relay cannot read what it carries, is the preferred
