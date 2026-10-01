@@ -1256,11 +1256,53 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
   #34 chooses a TypeScript client. `core/session/store.ts` is already the exception — it
   imports `node:fs` — and #38 decides where it lives when the repo is split. (#15, #38)
 
+### What leaves the device (KV-32)
+
+Decided 2026-10-01. **A viewer's device receives the facts the dashboard is built from, and
+composes the same view from them with the same `core/` code.** Not finished sentences:
+since KV-138 a card's words are composed when shown, from the stored verdict and the
+record, so a view composed on the check-in device would be frozen in the words of the day
+it was sent. And a viewer cannot be given less than the record and still see the trend
+(#4, #165), which needs the readings behind the usual. The ticket's ladder of five rungs
+(verdict, sentences, vitals, answers, note) does not survive that: its second rung
+already shares the numbers, since every explanation quotes them.
+
+So the rule is **what the dashboard shows, and nothing it does not**:
+
+| Field | Leaves | Why |
+|---|---|---|
+| `id` | Yes | An opaque UUID; updates and removals (#45) travel by it. |
+| `personId` | **No** | The local id can read like a name. The share carries its own opaque id. |
+| `capturedAt`, `timeZone` | Yes | A viewer elsewhere needs *their* day (#28). The zone names a region; that is the cost. |
+| Pulse, breathing, HRV (RMSSD) | Yes | The card's readings and the chart. |
+| `hrvSdnnMs` | **No** | Nothing reads it — no rule, no screen. Not needed, so not sent. |
+| `confidence`, `stable`, `durationSec` | Yes | Quality, not personal: without them a viewer's device cannot tell "not enough to say" from a reading. |
+| Mood, sleep, meals, pain (yes/no) | Yes | On every card (KV-110), and the answer rules are worded from them. |
+| `assessment` | Yes | The verdict as scored is the fact the card shows (KV-138). |
+| `painNote` | **Only with consent, per viewer** | Below. |
+| Seeded records | **Never** | Demo data about nobody, with ids that repeat across installs. |
+
+- **One policy, except the pain note.** What the cared-for person agrees to has to fit on
+  one screen (#31): *they see what this dashboard shows — the readings, your answers and
+  what the app made of them.* A per-field menu would be consent nobody can follow.
+- **The pain note is off by default, and turned on by the person for a viewer.** It is the
+  only text in their own words, and the case for sharing it (KV-2: "left hip, since
+  yesterday" serves a caregiver deciding whether to drive over) is strongest exactly when
+  the caregiver is far away — which is why it is a choice and not a rule either way. When
+  it is on for anyone, the note field says who will read it, as they type.
+- **A new viewer gets check-ins from approval onward, plus the ones behind the current
+  usual** — about the last fortnight — so "their usual" and the chart mean something from
+  the first day. Not the whole history: agreeing today must not share months nobody agreed
+  to share. The person is told this when they approve.
+- **The policy is code.** #37's function implements it, with every `SessionRecord` field
+  classified so that a new field cannot be added without deciding this for it.
+  Whatever leaves goes the way #33 decides; nothing here assumes the relay can read it.
+
 ### What must hold before real check-ins are stored
 
 Each is owned by a Phase 1 ticket that has to land before the check-in flow (#2) stores
-real sessions, because a record written without them cannot be repaired afterwards. Two
-hold today; the third does not:
+real sessions, because a record written without them cannot be repaired afterwards. All
+three hold:
 
 - **Records are never edited in place, and have globally unique ids.** Both hold.
   Sessions are only ever appended, which is the property sync needs, and an id is a UUID
@@ -1272,10 +1314,11 @@ hold today; the third does not:
 - **Vitals originate in the main process and nowhere else.** This holds: `submit` takes
   the id of a capture main is holding, never the numbers. The rule, and what else that
   held capture is pinned to, is under *Why the API key lives in the main process*. (#25)
-- **Every record knows its local time zone.** This does not hold yet — no record has one.
-  `capturedAt` is UTC; a caregiver in another zone needs the cared-for person's *today*,
-  and a UTC timestamp recorded without its zone can never be placed on the right local
-  day afterwards. (#28)
+- **Every record knows its local time zone.** This holds since #28: each check-in stores
+  the zone it was taken in. `capturedAt` is UTC; a caregiver in another zone needs the
+  cared-for person's *today*, and a UTC timestamp recorded without its zone can never be
+  placed on the right local day afterwards. Records from before #28 have none, and are
+  shown in the reader's zone.
 
 ### What is deliberately still open
 
@@ -1285,7 +1328,6 @@ into this file before remote code is written:
 | Question | Ticket |
 |---|---|
 | Who consents, and how is access withdrawn — including for someone who cannot consent | #31 |
-| What leaves the device: verdict, explanation, vitals, answers, the pain note | #32 |
 | Can the server read what it carries, and how are keys managed and recovered | #33 |
 | What the caregiver's client is | #34 |
 | What legal and regulatory obligations sending health data brings | #35 |
