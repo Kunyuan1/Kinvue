@@ -557,6 +557,49 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     expect(screen.getByRole('button', { name: 'Breathing' }).getAttribute('aria-pressed')).toBe('true')
   })
 
+  it('draws the not-flagged band behind the points, keyed, once there is a usual (KV-165)', async () => {
+    listSessions.mockResolvedValue(scored([...history(5), latest({ vitals: { pulseRateBpm: 80 } })]))
+    render(<App />)
+
+    expect(await screen.findByText(/^pulse not flagged between \d+ and \d+ bpm$/)).toBeTruthy()
+    expect(document.querySelectorAll('section svg[role="img"] rect[data-usual-range]').length).toBe(1)
+    const label = document.querySelector('section svg[role="img"]')?.getAttribute('aria-label') ?? ''
+    expect(label).toMatch(/Band: pulse not flagged between \d+ and \d+ bpm\./)
+  })
+
+  it('draws the band the right way up, edged, and HRV’s to the top of the plot (review of #168)', async () => {
+    listSessions.mockResolvedValue(scored([...history(5), latest({ vitals: { pulseRateBpm: 80 } })]))
+    render(<App />)
+    await screen.findByText(/^pulse not flagged between/)
+    const geometry = (): { top: number; bottom: number; edges: number[] } => {
+      const rect = document.querySelector('section svg[role="img"] rect[data-usual-range]')!
+      const top = Number(rect.getAttribute('y'))
+      const height = Number(rect.getAttribute('height'))
+      // A swapped low and high draws a negative or zero height.
+      expect(height).toBeGreaterThan(0)
+      const edges = Array.from(document.querySelectorAll('section svg[role="img"] line[data-band-edge]'))
+        .map((l) => Number(l.getAttribute('y1')))
+        .sort((a, b) => a - b)
+      return { top, bottom: top + height, edges }
+    }
+    const pulse = geometry()
+    expect(pulse.edges).toEqual([pulse.top, pulse.bottom])
+
+    fireEvent.click(screen.getByRole('button', { name: 'HRV' }))
+    await screen.findByText(/^HRV not flagged at \d+ ms or above$/)
+    const hrv = geometry()
+    expect(hrv.top).toBe(16) // the plot's top: HRV's band has no ceiling
+    expect(hrv.edges).toEqual([hrv.bottom])
+  })
+
+  it('draws no range while the usual is still being learned (KV-165)', async () => {
+    listSessions.mockResolvedValue(scored([...history(1), latest()]))
+    render(<App />)
+    await screen.findByText(/^No usual for pulse yet/)
+    expect(document.querySelector('rect[data-usual-range]')).toBeNull()
+    expect(screen.queryByText(/not flagged/)).toBeNull()
+  })
+
   it('says on the chart when there is no usual yet, and draws no line (#17)', async () => {
     listSessions.mockResolvedValue(scored([...history(1), latest()]))
     render(<App />)
@@ -595,7 +638,7 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     vi.spyOn(svg!, 'getBoundingClientRect').mockReturnValue({
       left: 0, top: 0, width: 640, height: 180, right: 640, bottom: 180, x: 0, y: 0, toJSON: () => ({}),
     })
-    fireEvent.pointerMove(svg!.querySelector('rect')!, { clientX: 630 })
+    fireEvent.pointerMove(svg!.querySelector('rect[data-pointer-area]')!, { clientX: 630 })
     const readout = screen.getByRole('tooltip')
     expect(readout.getAttribute('aria-live')).toBeNull()
     expect(screen.queryByRole('status')).toBeNull()
@@ -611,7 +654,7 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     vi.spyOn(svg!, 'getBoundingClientRect').mockReturnValue({
       left: 0, top: 0, width: 640, height: 180, right: 640, bottom: 180, x: 0, y: 0, toJSON: () => ({}),
     })
-    fireEvent.pointerMove(svg!.querySelector('rect')!, { clientX: 630 })
+    fireEvent.pointerMove(svg!.querySelector('rect[data-pointer-area]')!, { clientX: 630 })
     expect(screen.getByRole('tooltip')).toBeTruthy()
 
     // As from the keyboard: the pointer never leaves the plot.

@@ -184,6 +184,59 @@ const spreadOf = (usual: Stat): Spread => {
   return usual.sd < floor ? { sd: floor, floored: true } : { sd: usual.sd, floored: false }
 }
 
+/** Where a reading can fall without a comparison rule firing on it. */
+export interface UsualRange {
+  low: number
+  /** Null when no rule fires above the usual: HRV's only rule is a drop. */
+  high: number | null
+}
+
+/**
+ * Their usual range for a metric: where a reading can fall without a
+ * comparison rule firing on it (KV-165). Pulse and breathing, the usual
+ * ± `Z_FIRES_AT` of the same floored spread `zRule` divides by; HRV, from
+ * `HRV_DROP_FIRES_AT` below the usual upward, since nothing fires above it.
+ *
+ * Built here from the rules' own constants, beside them, so the range the
+ * chart draws is the one the latest check-in's verdict was reached on and
+ * cannot drift from it: that point is inside exactly when no comparison rule
+ * fired on it. Only that point — every other day was scored against its own
+ * history, whose usual and spread were not these, and the chart says so
+ * (`trendNotes`). The boundary itself fires, as the rules' `<` comparisons say.
+ */
+export function usualRangeOf(metric: ComparedMetric, usual: Stat): UsualRange | null {
+  // Null exactly where the rules decline to run, so there is never a band
+  // inside which nothing could fire because nothing ran (review of #168):
+  // `hrvDrop` skips a usual of zero or below, and `zRule` a spread of zero.
+  if (metric === 'hrv') {
+    return usual.mean <= 0 ? null : { low: usual.mean * (1 - HRV_DROP_FIRES_AT), high: null }
+  }
+  const { sd } = spreadOf(usual)
+  if (sd <= 0) return null
+  return { low: usual.mean - Z_FIRES_AT * sd, high: usual.mean + Z_FIRES_AT * sd }
+}
+
+/**
+ * Whether a reading would be flagged against a range: on or beyond an edge,
+ * since the rules fire at the boundary (`z >= Z_FIRES_AT`, a drop of
+ * `HRV_DROP_FIRES_AT` or more). Beside `usualRangeOf` so the chart's count of
+ * disagreeing days uses the rules' own boundary (review of #168).
+ */
+export const flaggedIn = (range: UsualRange, value: number): boolean =>
+  value <= range.low || (range.high !== null && value >= range.high)
+
+/**
+ * The narrowest range the rules could measure around `centre`, for drawing a
+ * chart before there is a usual to draw: `usualRangeOf` at the smallest spread
+ * they ever use. For pulse and breathing that is `MIN_SD_FRACTION_OF_MEAN`,
+ * about ±4% of the centre; HRV's rule is already a fraction of the usual, so
+ * it is the same ±25% as a real one. Never a verdict and never a band — named
+ * so a made-up spread is not mistaken for a measured one (review of #168).
+ */
+export function narrowestRangeAround(metric: ComparedMetric, centre: number): UsualRange | null {
+  return usualRangeOf(metric, { mean: centre, sd: 0, n: 0 })
+}
+
 /** Decimal places for a quoted spread. See `howFarOut` for why it is not 0. */
 const SPREAD_DP = 1
 

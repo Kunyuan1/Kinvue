@@ -448,6 +448,31 @@ against, with that check-in marked and the usual it was compared with drawn behi
   and kept: the line is a fact about their history, not a comparison the chart is making,
   and the note under it says the latest was not measured — a missing reading is not drawn as
   one near the usual.
+- **A band where nothing is flagged is drawn, and the scale never shrinks inside it**
+  (KV-165). Scaled to the window alone, a calm fortnight (pulse 71 to 74 around 72, where
+  nothing fires until about 3 bpm out) filled the plot top to bottom under a card saying "A
+  normal day for them": the amber-versus-red argument, made in pixels. The band is where a
+  reading falls with no comparison rule firing, built by `usualRangeOf` in `rules.ts` from
+  the rules' own constants: the usual ± 2 of the floored spread for pulse and breathing, and
+  for HRV, whose only rule is a drop, from 25% below the usual upward. There is none where
+  the rules would not run.
+  - **Labelled for what it is, not "usual"** (review of #168): *"pulse not flagged between
+    67 and 75 bpm"*, *"HRV not flagged at 26 ms or above"*. The line already spends "usual"
+    on the mean, and for HRV "usual" would call 500 ms typical. The numbers are rounded
+    inward, so every one named fires nothing; rounded to nearest, the demo's key named 76 bpm
+    while a card called 76 above usual.
+  - **It is the latest's.** The latest point is inside exactly when no comparison rule fired
+    on it. Every other day was scored against the check-ins before its own day, so its card
+    can disagree with where it sits (seen on the demo). A note says so, with the count, only
+    when a day on the chart actually disagrees; drawing a band per day would be noise.
+  - **Quiet, with edges that can be seen.** The fill is background; its dashed
+    `--color-muted` edges carry the contrast (over 6:1, where the fill alone was 1.12:1).
+  - **The axis always reaches the whole band.** Before there is a usual it uses
+    `narrowestRangeAround` the points (±4% for pulse and breathing, ±25% for HRV), so a
+    baseline still being learned is not drawn louder than a mature one. Ticks are whole
+    units, three to five where a step gives that, otherwise as many as keep three or more.
+  - It is worked out from the same history as the usual line, so it does not settle #94,
+    which is about the card's words and waits on a real card.
 - **Severity is not plotted.** The flag is not a number; the metric is.
 - **Placed by date**, so a gap in the check-ins shows as one (KV-154's stale usual, drawn).
 - **Shaped in `core/trend`, sentences included**, because the caregiver's own client (#42)

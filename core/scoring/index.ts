@@ -11,7 +11,16 @@ import type {
 import { unusableReason, type UnusableReason } from '../session/usable'
 import { ALL_RULES, BASELINE_RULE_IDS, round, uncomparedMetrics, type Rule } from './rules'
 
-export { ALL_RULES, BASELINE_RULE_IDS, canBeCalledUsual, uncomparedMetrics } from './rules'
+export {
+  ALL_RULES,
+  BASELINE_RULE_IDS,
+  canBeCalledUsual,
+  uncomparedMetrics,
+  flaggedIn,
+  narrowestRangeAround,
+  usualRangeOf,
+  type UsualRange,
+} from './rules'
 export type { Rule, RuleContext } from './rules'
 
 /**

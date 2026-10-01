@@ -1,13 +1,15 @@
 import { useMemo, useState } from 'react'
 import type { ComparedMetric, SessionRecord } from '@core/session/types'
 import {
-  axisTicks,
   TREND_METRICS,
   trendNotes,
   trendOf,
+  trendScale,
   trendTitle,
   usualLabel,
+  bandLabel,
   type Trend,
+  type TrendScale,
   type TrendPoint,
 } from '@core/trend'
 import { METRIC_NAME, READING_LABEL, READING_UNIT, readingText } from '@core/scoring'
@@ -67,7 +69,7 @@ function dayOf(point: TrendPoint, withYear: boolean): string {
   })
 }
 
-function Plot({ trend }: { trend: Trend }): React.JSX.Element {
+function Plot({ trend, scale }: { trend: Trend; scale: TrendScale }): React.JSX.Element {
   const [hovered, setHovered] = useState<number | null>(null)
   const unit = READING_UNIT[trend.metric]
   const points = trend.points
@@ -76,11 +78,8 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
   const times = points.map((p) => Date.parse(p.capturedAt))
   const t0 = Math.min(...times)
   const t1 = Math.max(...times)
-  const values = [...points.map((p) => p.value), ...(trend.usual === null ? [] : [trend.usual])]
-  const spread = Math.max(...values) - Math.min(...values)
-  const pad = spread === 0 ? Math.max(1, Math.abs(values[0] ?? 1) * 0.1) : spread * 0.15
-  const lo = Math.min(...values) - pad
-  const hi = Math.max(...values) + pad
+  // Never narrower than the band, so a calm run is drawn calm (KV-165).
+  const { lo, hi, ticks } = scale
 
   const x = (t: number): number =>
     t1 === t0 ? PAD.left + PLOT_W / 2 : PAD.left + ((t - t0) / (t1 - t0)) * PLOT_W
@@ -91,8 +90,9 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
     cy: y(p.value),
   }))
   const path = xy.map(({ cx, cy }, i) => `${i === 0 ? 'M' : 'L'}${cx},${cy}`).join(' ')
-  const ticks = axisTicks(lo, hi)
   const label = usualLabel(trend)
+  const rangeLabel = bandLabel(trend)
+  const range = trend.usualRange
   const first = xy[0]
   const last = xy[xy.length - 1]
   const focus = hovered === null ? null : (xy[hovered] ?? null)
@@ -115,8 +115,48 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
         viewBox={`0 0 ${W} ${H}`}
         className="h-auto w-full"
         role="img"
-        aria-label={`${trendTitle(trend)}${label === null ? '' : ` Line: ${label}.`}`}
+        aria-label={
+          `${trendTitle(trend)}${label === null ? '' : ` Line: ${label}.`}` +
+          `${rangeLabel === null ? '' : ` Band: ${rangeLabel}.`}`
+        }
       >
+        {/* Where no comparison rule fires (KV-165): the latest check-in's
+            point is inside exactly when none fired on it. The fill is quiet
+            on purpose, so the band reads as background and not as where an
+            alarm starts. Its edges carry the contrast (review of #168): the
+            fill alone was 1.12:1 against the card, and the dashed edges in
+            --color-muted are over 6:1, dashed so they are not the usual line.
+            HRV's band has no top, so it runs to the top of the plot with a
+            bottom edge only. */}
+        {range !== null && (
+          <g>
+            <rect
+              x={PAD.left}
+              width={PLOT_W}
+              y={y(range.high ?? hi)}
+              height={y(range.low) - y(range.high ?? hi)}
+              fill="var(--color-line)"
+              fillOpacity={0.6}
+              data-usual-range
+            />
+            {[range.low, range.high].map((edge) =>
+              edge === null ? null : (
+                <line
+                  key={edge}
+                  x1={PAD.left}
+                  x2={W - PAD.right}
+                  y1={y(edge)}
+                  y2={y(edge)}
+                  stroke="var(--color-muted)"
+                  strokeWidth={1}
+                  strokeDasharray="3 3"
+                  data-band-edge
+                />
+              ),
+            )}
+          </g>
+        )}
+
         {ticks.map((t) => (
           <g key={t}>
             <line
@@ -238,6 +278,7 @@ function Plot({ trend }: { trend: Trend }): React.JSX.Element {
           width={PLOT_W}
           height={PLOT_H}
           fill="transparent"
+          data-pointer-area
           onPointerMove={onMove}
           onPointerLeave={() => setHovered(null)}
         />
@@ -296,6 +337,8 @@ export default function TrendChart({
   const unit = READING_UNIT[metric]
   const withYear = spansYears(trend.points)
   const measuredPoints = trend.points.length - trend.seededPoints
+  // Null exactly when there are no points: nothing to draw, only to say.
+  const scale = trendScale(trend)
   return (
     <section className={CHART_BOX}>
       <div className="mb-3 flex gap-2" role="group" aria-label="Metric">
@@ -316,7 +359,7 @@ export default function TrendChart({
         ))}
       </div>
 
-      {trend.points.length === 0 ? (
+      {scale === null ? (
         <>
           <p className="text-sm text-(--color-muted)">
             {`No ${METRIC_NAME[metric]} readings to draw.`}
@@ -331,7 +374,7 @@ export default function TrendChart({
           {/* Keyed by metric: a hovered index is a point on one metric's line,
               and a tab changed from the keyboard never fires pointerleave
               (second review of #162). */}
-          <Plot key={metric} trend={trend} />
+          <Plot key={metric} trend={trend} scale={scale} />
           <p className="mt-2 flex flex-wrap items-center gap-4 text-xs text-(--color-muted)">
             {usualLabel(trend) !== null && (
               <span className="flex items-center gap-1">
@@ -339,6 +382,16 @@ export default function TrendChart({
                   <line x1="0" x2="14" y1="5" y2="5" stroke="var(--color-muted)" strokeWidth="1" />
                 </svg>
                 {usualLabel(trend)}
+              </span>
+            )}
+            {bandLabel(trend) !== null && (
+              <span className="flex items-center gap-1">
+                <svg width="14" height="10" aria-hidden="true">
+                  <rect width="14" height="10" fill="var(--color-line)" fillOpacity="0.6" />
+                  <line x1="0" x2="14" y1="0.5" y2="0.5" stroke="var(--color-muted)" strokeDasharray="3 3" />
+                  <line x1="0" x2="14" y1="9.5" y2="9.5" stroke="var(--color-muted)" strokeDasharray="3 3" />
+                </svg>
+                {bandLabel(trend)}
               </span>
             )}
             {/* Each kind keyed only if it is on the chart: an all-seeded demo
