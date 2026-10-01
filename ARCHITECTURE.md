@@ -1238,9 +1238,9 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
   is.
 - **Consent comes before anything leaves the device.** Who has access is visible on the
   check-in device, and access can be revoked from it. Remote visibility of someone's daily
-  physiology without consent is surveillance, however well meant. *Whose* consent that is
-  — the person's own, or a guardian's when they cannot give it — is not settled here.
-  (#31)
+  physiology without consent is surveillance, however well meant. It is the person's own
+  consent; a path for someone who cannot give it waits on legal advice (#31, #35). See
+  *Who sees it, and how it is taken back* below.
 - **What leaves the device is decided in one place** — a single tested function in
   `core/`, with every field of a session explicitly classified. Sync code sends what it
   returns and nothing else. (#37)
@@ -1328,6 +1328,44 @@ field to it (KV-53, KV-87, KV-100, KV-138, KV-154), and a sixth must not leave b
   whether such a card is shared at all.
 - Whatever leaves goes the way #33 decides; nothing here assumes the relay can read it.
 
+### Who sees it, and how it is taken back (KV-31)
+
+Decided 2026-10-01. Remote access shares an older adult's physiology with other people;
+whether that is care or surveillance depends almost entirely on who agreed to it and
+whether they can take it back. So every control sits with the cared-for person, at their
+own device.
+
+- **The person approves each viewer, on the check-in device.** A viewer cannot add
+  themselves: pairing starts on the check-in device, with a code shown there, so approving
+  someone means being at your own device to do it. There is no approval from a viewer's
+  phone, by link, or by default.
+- **Nothing is shared until they do.** Each approval says, on one screen, what that viewer
+  will see: *the readings, your answers and what the app made of them* (KV-32); whether
+  the pain note is on for them; and the date their history will reach back to.
+- **The person can see who has access, what they get, since when, and when each last
+  looked.** "Last looked" is the strongest check against quiet watching — not who *can*
+  look, but who *does* — and it means each viewer's app reports when it was opened, back
+  through the relay (#33). The list is also offered unprompted, periodically: a list
+  nobody revisits protects nobody.
+- **Revocation is on the check-in device, immediate, and needs nobody's sign-off.** The
+  removed viewer receives nothing new from that moment, and their app deletes the
+  check-ins it holds the next time it connects, with keys rotated as #33 decides. Said
+  honestly in the app: deleting a copy cannot unsee what was seen. (#45 implements it.)
+- **A removed viewer is told only that sharing has ended** — no date, no reason, no prompt
+  to ask. It will be noticed anyway; what is avoided is a notification that reads as an
+  event to react to, which matters most when the viewer is the danger (#36).
+- **Viewers cannot see each other.** Who else has access is the person's business.
+- **Only the person's own consent, for now.** Dementia and cognitive decline are common in
+  exactly the people this is for. Whether a guardian or power of attorney may approve
+  viewers, and what that looks like, is a legal question (#35), and it is not guessed at
+  here: until it is answered, someone who cannot agree at their own device is not shared
+  with anyone. **Deliberately unsupported**, not overlooked.
+- **What software cannot do.** Consent given under pressure — a viewer standing beside the
+  person while they approve — cannot be told apart from consent freely given. The defences
+  are that approval and revocation both happen at the person's own device, that they can
+  always see who is watching and when, and that removal is silent; #36 tests them against
+  a viewer who is the danger.
+
 ### What must hold before real check-ins are stored
 
 Each is owned by a Phase 1 ticket that has to land before the check-in flow (#2) stores
@@ -1359,7 +1397,6 @@ into this file before remote code is written:
 
 | Question | Ticket |
 |---|---|
-| Who consents, and how is access withdrawn — including for someone who cannot consent | #31 |
 | Can the server read what it carries, and how are keys managed and recovered | #33 |
 | What the caregiver's client is | #34 |
 | What legal and regulatory obligations sending health data brings | #35 |
