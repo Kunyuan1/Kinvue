@@ -46,7 +46,9 @@ Node process. The UI is still written as a web app; it just ships in an Electron
 ## Architecture & Flow
 
 Check-ins happen on one machine and stay there. The SDK itself talks to Presage while a
-capture runs (KV-65); nothing else here opens a socket.
+capture runs (KV-65): a licence meter that reports session times and per-metric datapoint
+counts, which is enough for Presage to know *when* each check-in happened (ARCHITECTURE.md,
+threat T10). Nothing else here opens a socket.
 
 **A capture needs an internet connection.** Not a preference — measured: with the network
 down a capture fails fast, as an error rather than a hang, and produces no reading at all —

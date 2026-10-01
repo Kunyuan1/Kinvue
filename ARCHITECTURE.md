@@ -1426,7 +1426,6 @@ into this file before remote code is written:
 | Can the server read what it carries, and how are keys managed and recovered | #33 |
 | What the caregiver's client is | #34 |
 | What legal and regulatory obligations sending health data brings — and whether a guardian or power of attorney may consent for someone who cannot (KV-31 left this open) | #35 |
-| What is being protected, from whom — including a viewer who is the danger | #36 |
 
 End-to-end encryption, so the relay cannot read what it carries, is the preferred
 direction. It does not keep the privacy guarantees in `README.md` true: any sync ends *no
@@ -1439,6 +1438,37 @@ that honestly.
 When remote access ships, the privacy section of `README.md` is rewritten in the same
 change. The docs must never describe a device that sends nothing after it starts sending
 something.
+
+### Threat model (KV-36)
+
+Written 2026-10-01, against #32 (what leaves) and #31 (who controls it), before #33 (how it
+travels) is decided. **Revisit it before #39 ships, and whenever #32, #31 or #33 changes**;
+rows that depend on #33 say so. A mitigation counts only when a ticket owns it.
+
+**What is protected.** The readings, the answers and the pain note. **The routine itself:**
+a history of check-in times says that an older person lives somewhere, probably alone, and
+is at home at a predictable hour — so timestamps are as sensitive as the vitals. And the
+relationships: who looks after whom.
+
+| # | Threat | From whom | Mitigation | Owner | Status |
+|---|---|---|---|---|---|
+| T1 | A viewer uses legitimate access to watch or control the person | **A viewer who is the danger** | Approval only at the person's own device; they see who looked and when, with the list shown periodically; immediate revocation with no sign-off; a removed viewer told only that sharing ended; viewers cannot see each other. Coerced consent cannot be detected — stated as a limit. | #31, #40, #45 | Decided |
+| T2 | Someone else at a shared computer approves a viewer as if they were the person | A household member | #31 assumes the check-in device *is* the person. A lock on the sharing screen, separate from the check-in itself, so pairing needs something only the person knows or holds. | #40 | **Gap → #40** |
+| T3 | The relay's contents read in a breach, or by its operator | Outside attacker; the operator | End-to-end encryption, so the relay holds nothing it can read (preferred, not decided); encrypted, restore-tested backups; operator access individual and recorded; logs with no health data. | #33, #46 | Open on #33 |
+| T4 | The relay infers the routine from metadata it must see even under end-to-end encryption: when check-ins arrive, who shares with whom | The operator; whoever breaches it | Hold as little metadata as delivery needs; no analytics; consider sending on a schedule rather than at capture time, so arrival does not mark the moment. | #33, #39 | Open on #33 |
+| T5 | A caregiver's phone is lost or stolen with shared check-ins on it | Whoever finds it | The client locks behind the phone's own authentication; the person can revoke that viewer from the check-in device (#45). A device offline after revocation keeps its copy until it connects — stated as a limit. | #34, #45 | Open on #34 |
+| T6 | The daily summary leaks on a lock screen, or through the push provider | Bystanders; Apple's or Google's push service | The push carries no health data, only "your summary is ready"; the content is fetched and composed on the device (#33). | #43 | **Gap → #43** |
+| T7 | Data on the check-in device itself: `sessions.json` is plain JSON, readable by anyone with that Windows account, its backups, or malware running as it | Others on the computer; malware; a backup service | Today, only the operating system's account boundary. **Unowned** until now; a ticket decides whether the store is encrypted at rest (for example with Electron's `safeStorage`) and what that protects against. | new ticket | **Gap → new** |
+| T8 | The renderer is compromised (a bug, a malicious dependency) and reaches the camera, the key's use or the history | Malicious code in the page | Sandbox, one page, IPC answered only for it, every handler through one checked wrapper, enforced by lint (KV-29). | #29 | Done |
+| T9 | A malicious release reaches installs through the update channel or a dependency | Supply-chain attacker | Electron and the SDK pinned exactly, each bump alone and launched before merge (KV-131, KV-145); signed installers and signed updates. Which dependencies may run install scripts is still undecided. | #19, #147 | Open on #19, #147 |
+| T10 | **The SDK's own traffic reveals the routine:** the licence meter reports session times and per-metric datapoint counts to the vendor on every capture, today, whatever Kinvue builds | The SDK vendor; whoever breaches it | Not mitigable in the app: a capture cannot run without it (KV-65). `README.md` now says the meter reveals when check-ins happen, not only that it exists; whether a third party receiving it is acceptable, and what users must be told, is a legal question. | #35 | **Accepted, disclosed; → #35** |
+| T11 | The pain note, the most personal field, reaches people the person did not mean it for | Any viewer | Off by default; turned on per viewer by the person; the note field says who will read it as they type (KV-32). | #31, #37, #40 | Decided |
+| T12 | Data the person deleted, or withdrew, survives elsewhere | Any copy holder | Deletion travels as a tombstone; a revoked viewer's app deletes its copy on next contact; partial deletion is tested as a flow because it looks like success. | #21, #45 | Planned |
+
+Two rows are the ones most likely to be argued with. **T10 is live now**, not a Phase 5
+risk: the vendor already receives when each check-in happened. And **T2 and T7 are the
+check-in device's own weakness** — every remote defence above assumes the device is the
+person's, and a shared family computer is exactly where this app is likely to sit.
 
 ---
 
