@@ -1327,7 +1327,7 @@ field to it (KV-53, KV-87, KV-100, KV-138, KV-154), and a sixth must not leave b
   viewer's chart, holding no seeded records, may have no usual to draw beside it — the card
   quoting a usual the chart cannot. Demo installs are not meant for sharing; #37 decides
   whether such a card is shared at all.
-- Whatever leaves goes the way #33 decides; nothing here assumes the relay can read it.
+- It travels end-to-end encrypted and signed, through a relay that cannot read it (KV-33).
 
 ### Who sees it, and how it is taken back (KV-31)
 
@@ -1351,12 +1351,14 @@ a remote viewer, is on no list and cannot be revoked; that is the device's own b
   a short recent history of each viewer's looks, not one timestamp. It is taken from what
   the relay delivered to each viewer, **not reported by the viewer's own app**, which a
   viewer who is the danger could silence or alter. Two costs, said plainly: the relay then
-  holds when each viewer fetched, which #36's T4 wants kept small, and #33 weighs the two;
+  holds when each viewer fetched, which #36's T4 wants kept small — so it keeps delivery
+  records for this window only, 30 days (KV-33);
   and reading a copy already on the viewer's phone, offline, is not seen at all. The list
   is also offered unprompted, periodically: a list nobody revisits protects nobody.
 - **Revocation is on the check-in device, immediate, and needs nobody's sign-off.** The
   removed viewer receives nothing new from that moment, and their app deletes the
-  check-ins it holds the next time it connects, with keys rotated as #33 decides. **A
+  check-ins it holds the next time it connects; the check-in device stops sealing to it
+  (KV-33). **A
   viewer's device that never reconnects keeps its copy** — key rotation protects only what
   had not yet been delivered. Said honestly in the app: removing access stops what comes
   next and deletes what it can reach, and cannot unsee what was seen. (#45 implements it.)
@@ -1385,12 +1387,68 @@ defences:
   — cannot be told apart from consent freely given.
 - **A lost check-in device ends every revocation.** Authority sits on that one device, so
   if it is lost, broken, wiped or replaced, no share can be ended and the person cannot see
-  who still holds their check-ins. How access is recovered, or ended, without it is #33's
-  to decide, with lost-device recovery.
+  who still holds their check-ins. KV-33 answers it with a printed recovery card that can
+  see who has access and end every share, but never approve anyone new.
 
 What remains as defence: the person can see who looks and how often, from a record the
 viewer cannot alter; a remote viewer can be removed at once, silently; and viewers cannot
 see each other. #36 tests them.
+
+### How it travels, and who holds the keys (KV-33)
+
+Decided 2026-10-01. **An end-to-end encrypted relay, kept deliberately small.** The relay
+stores and forwards what it cannot read, and the check-in device signs everything it sends.
+
+One fact shapes this more than any other: **the check-in device holds the whole history and
+is the only sender.** End-to-end designs are usually hardest at restoring history onto a
+replaced device, which pushes them toward key backup or escrow. Here a viewer who loses
+their phone re-pairs at the check-in device and is sent the share set again (KV-32), so no
+viewer key is ever backed up. Recovery is hard in exactly one place: the check-in device
+itself.
+
+- **Proven cryptography only.** Each record is signed by the check-in device (Ed25519) and
+  then sealed separately to each viewer's key (libsodium sealed boxes) — no home-made
+  construction, and no group protocol, since viewers are few. Encryption answers #36's T3;
+  the signature answers T13, which encryption alone does not.
+- **The pairing code confirms the keys, not just introduces them.** It is derived from
+  both devices' key fingerprints, so a relay that substituted a key during pairing is caught
+  at the one moment it could do so. Without this, "the relay cannot read it" holds only as
+  long as the relay never lies at pairing.
+- **Each viewer's stream is numbered.** Gaps, replays and reordering are visible on the
+  viewer's device, and a gap is shown as one, beside #44's missed check-ins (T13).
+- **The relay keeps as little as it can, for as short as it can.** Ciphertext until each
+  recipient has fetched it, and at most 14 days for a phone that stays off — the check-in
+  device can always send again. Delivery records only for #31's access-history window, 30
+  days, then deleted. That is all #31 and delivery need (T3, T4).
+- **Revocation stops sealing to that viewer** and deletes their waiting ciphertext on the
+  relay; their app deletes its copy on next contact, and one that never reconnects keeps it
+  — the limit #31 states (#45).
+- **A lost check-in device: a recovery card that can only end things** (T14). At setup the
+  person is given a printed recovery code to keep with their papers. With it they can see
+  who has access and **end every share**, but **not approve anyone new**. A replacement
+  check-in device starts fresh, and each viewer is approved again at it, in person. A card
+  found by the wrong person can stop sharing, never start it, so it does not reopen T1 or
+  T2.
+- **The daily summary's push carries no content** (#43). The viewer's app fetches, verifies
+  and composes.
+
+**Options not taken.** A **conventional backend** (encrypted in transit and at rest, but
+readable by its operator) and a **managed backend service** would have been simpler and
+faster, and both put every shared check-in — the pain note included, where a person has
+turned it on — where an operator, a third party under #35, or whoever breaches either can
+read it; and neither can stop its own operator altering a card (T13). **No Kinvue server**,
+the family's own cloud storage carrying the sealed share set, keeps the encryption and
+removes #46 almost entirely, but has nowhere to take #31's access history from, no server to
+send #43's push, and asks older adults to set up a shared folder correctly; it is the
+fallback if running a relay is ever ruled out.
+
+**What it costs.** A relay to run (#46): small and nearly stateless — store, forward,
+expire — but still backups, monitoring, a breach plan and an owner. Key handling that has to
+be right, which is why it uses recommended libraries only and is reviewed before #39 carries
+real data. And it weighs on #34: a native client keeps keys in the phone's secure storage,
+which a web app does less well. #36's T4 remains in part: the relay still sees when records
+arrive and who is paired with whom; sending on a schedule rather than at capture time is
+noted, not required.
 
 ### What must hold before real check-ins are stored
 
@@ -1423,17 +1481,14 @@ into this file before remote code is written:
 
 | Question | Ticket |
 |---|---|
-| Can the server read what it carries, can a viewer trust that what arrives was not changed (T13), and how are keys managed and recovered — including when the check-in device is lost (T14) | #33 |
 | What the caregiver's client is | #34 |
 | What legal and regulatory obligations sending health data brings — and whether a guardian or power of attorney may consent for someone who cannot (KV-31 left this open) | #35 |
 
-End-to-end encryption, so the relay cannot read what it carries, is the preferred
-direction. It does not keep the privacy guarantees in `README.md` true: any sync ends *no
-network* and *session data is local*, encrypted or not, and the other three are
-unaffected either way. What it adds is a new guarantee — neither the relay's operator nor
-anyone who compromises the relay can read a check-in (#36). It is not assumed:
-lost-device recovery and revocation are genuinely harder under it, and #33 has to weigh
-that honestly.
+End-to-end encryption is decided (KV-33, above). It does not keep the privacy guarantees
+in `README.md` true: any sync ends *no network* and *session data is local*, encrypted or
+not, and the other three are unaffected either way. What it adds is a new guarantee —
+neither the relay's operator nor anyone who compromises the relay can read a check-in, or
+alter one undetected (#36).
 
 When remote access ships, the privacy section of `README.md` is rewritten in the same
 change. The docs must never describe a device that sends nothing after it starts sending
@@ -1441,9 +1496,9 @@ something.
 
 ### Threat model (KV-36)
 
-Written 2026-10-01, against #32 (what leaves) and #31 (who controls it), before #33 (how it
-travels) is decided. **Revisit it before #39 ships, and whenever #32, #31 or #33 changes**;
-rows that depend on #33 say so. A mitigation counts only when a ticket owns it.
+Written 2026-10-01, against #32 (what leaves) and #31 (who controls it), and updated for
+#33 (how it travels) the same day. **Revisit it before #39 ships, and whenever #32, #31 or
+#33 changes.** A mitigation counts only when a ticket owns it.
 
 **What is protected, from being read:** the readings, the answers and the pain note. **The
 routine itself:** a history of check-in times says that an older person lives somewhere,
@@ -1461,8 +1516,8 @@ to check a card against. Integrity is protected as deliberately as confidentiali
 |---|---|---|---|---|---|
 | T1 | A viewer uses legitimate access to watch or control the person | **A remote viewer who is the danger** | What #31 keeps as defence: the person sees who looks and how often, from a record the viewer cannot alter (what the relay delivered, not the viewer's own report); removal is immediate and silent; viewers cannot see each other. Coerced consent cannot be detected — a limit. Presence at the device is **not** a defence here: see T2. | #31, #45 | Decided, until T2 is closed |
 | T2 | Someone at the check-in device acts with its authority: approves their own phone, revokes the viewer who might notice, and — removal being silent — leaves that viewer told only that sharing ended | **A household member who is the danger**, at a shared computer | Approval and revocation need only presence at the device, so until there is a lock on the sharing screen, separate from the check-in itself, the model assumes the device is the person's (#31's first limit). | #40 | **Gap → #40** |
-| T3 | The relay's contents read in a breach, or by its operator | Outside attacker; the operator | End-to-end encryption, so the relay holds nothing it can read (preferred, not decided); encrypted, restore-tested backups; operator access individual and recorded; logs with no health data. | #33, #46 | Open on #33 |
-| T4 | The relay infers behaviour from metadata it must hold even under end-to-end encryption: when check-ins arrive, who shares with whom, and **when each viewer fetched** — the access history #31 takes from it | The operator; whoever breaches it | Hold as little as delivery and #31's access history need, and no longer than they need it; no analytics; consider sending on a schedule rather than at capture time, so arrival does not mark the moment. #33 weighs the access history against this. | #33, #39 | Open on #33 |
+| T3 | The relay's contents read in a breach, or by its operator | Outside attacker; the operator | End-to-end encryption: each record sealed per viewer, so the relay holds nothing it can read; ciphertext kept only until fetched, at most 14 days (KV-33). Encrypted, restore-tested backups; operator access individual and recorded; logs with no health data. | #33, #46 | Decided; #46 to operate |
+| T4 | The relay infers behaviour from metadata it must hold even under end-to-end encryption: when check-ins arrive, who shares with whom, and **when each viewer fetched** — the access history #31 takes from it | The operator; whoever breaches it | Ciphertext kept until fetched, at most 14 days; delivery records for #31's 30-day access window only, then deleted; no analytics (KV-33). Arrival timing and the pairing graph remain visible — a limit; sending on a schedule rather than at capture time is noted, not required. | #33, #39 | Decided, in part a limit |
 | T5 | A caregiver's phone is lost or stolen with shared check-ins on it | Whoever finds it | The client locks behind the phone's own authentication; the person can revoke that viewer from the check-in device (#45). A device offline after revocation keeps its copy until it connects — a limit. | #34, #45 | Open on #34 |
 | T6 | The daily summary leaks on a lock screen, or through the push provider | Bystanders; Apple's or Google's push service | The push carries no health data, only "your summary is ready"; the content is fetched and composed on the device (#33). | #43 | **Gap → #43** |
 | T7 | Data on the check-in device itself: `sessions.json` is plain JSON, readable by anyone with that operating-system account, its backups (File History, Time Machine, a sync client), or malware running as it | Others on the computer; malware; a backup service | **Today**, only the operating system's account boundary, on Windows, macOS and Linux alike. #175 decides whether the store is encrypted at rest (for example with Electron's `safeStorage`, backed by each platform's own keychain) and what that protects against — not malware running as the same user. | #175 | **Gap → #175** |
@@ -1471,8 +1526,8 @@ to check a card against. Integrity is protected as deliberately as confidentiali
 | T10 | **The SDK's own traffic reveals the routine:** the licence meter carries each session's times and per-metric datapoint counts to the vendor, today, whatever Kinvue builds | The SDK vendor; whoever breaches it | Not mitigable in the app: a capture cannot run without it (KV-65). Established from the runtime's own schema, not by decrypting the traffic; *when* each report is sent is only partly known, but a report carrying the session's times says when the check-in happened whenever it arrives. `README.md` says so. Whether a third party receiving it is acceptable, and what users must be told, is a legal question. | #35 | **Accepted, disclosed; → #35** |
 | T11 | The pain note, the most personal field, reaches people the person did not mean it for | Any viewer | Off by default; turned on per viewer by the person; the note field says who will read it as they type (KV-32). | #31, #37, #40 | Decided |
 | T12 | Data the person deleted, or withdrew, survives elsewhere | Any copy holder | Deletion travels as a tombstone; a revoked viewer's app deletes its copy on next contact, and one that never reconnects keeps it — a limit; partial deletion is tested as a flow because it looks like success. | #21, #45 | Planned |
-| T13 | **A delivered card is altered, fabricated, replayed or dropped**, so a viewer reads a day that did not happen, or misses one that did | The relay; a network attacker; whoever breaches the relay | Every record authenticated end to end, by the check-in device, and verified on the viewer's device before it is shown — authenticated encryption, not encryption alone; gaps in the sequence shown, not smoothed over (with #44's missed check-ins); the daily summary composed from verified records only. | #33, #42, #43 | **Gap → #33** |
-| T14 | **The check-in device is lost, broken, wiped or replaced**, and with it every share's authority: nothing can be revoked, and the person cannot see who still holds their check-ins | Accident; theft | How access is recovered, or ended, without that device — a limit #31 states and hands on. | #33 | **Gap → #33** |
+| T13 | **A delivered card is altered, fabricated, replayed or dropped**, so a viewer reads a day that did not happen, or misses one that did | The relay; a network attacker; whoever breaches the relay | Every record signed by the check-in device (Ed25519) and verified on the viewer's device before it is shown; each viewer's stream numbered, so gaps, replays and reordering show, and a gap is shown as one (with #44); the pairing code derived from both key fingerprints, so a key swapped at pairing is caught; the daily summary composed from verified records only (KV-33). | #33, #42, #43 | Decided |
+| T14 | **The check-in device is lost, broken, wiped or replaced**, and with it every share's authority: nothing can be revoked, and the person cannot see who still holds their check-ins | Accident; theft | A printed recovery card, kept by the person, that can see who has access and end every share but never approve anyone new; a replacement device starts fresh, each viewer approved again at it (KV-33). A card found by the wrong person can stop sharing, not start it. | #33 | Decided |
 | T15 | **The SmartSpectra API key at rest.** In development it is plain text in `.env`, beside `sessions.json`; a packaged install has no route to a key yet. A stolen key means vendor account abuse and billing, and reaches the metered record of when check-ins happen (T10) | The same actors as T7 | **Today**, only the operating system's account boundary, as for T7. How a packaged install receives and holds its key is #19's, and it is a data-at-rest question in the same sense as #175's. | #19, #175 | **Gap → #19** |
 
 Four of these are the ones most likely to be argued with. **T10 is live now**, not a Phase 5
