@@ -163,4 +163,71 @@ export default tseslint.config(
       ],
     },
   },
+  {
+    /**
+     * The main process answers only Kinvue's own page, and its renderer stays
+     * sandboxed (KV-29).
+     *
+     * Every IPC handler goes through `handle()` in `app/main/index.ts`, which
+     * checks the sender before anything runs. It was first held by a text
+     * search over that one file, which `ipcMain.handleOnce` and `ipcMain.once`
+     * walked past, which any sibling module escaped — and this repo splits main
+     * into siblings on purpose — and which a comment saying `sandbox: true`
+     * satisfied while the code said otherwise (review of #169). This reads the
+     * code, not its characters, across all of `app/main/`.
+     *
+     * So: no use of `ipcMain` but the one inside `handle()`, which is disabled
+     * there with its reason; no way round the name; and the window's security
+     * options only as literals, never a value computed at runtime.
+     * `tests/lint-main.test.ts` checks every selector still fires.
+     */
+    files: ['app/main/**/*.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "MemberExpression[object.name='ipcMain']",
+          message:
+            'app/main registers IPC only through handle() in app/main/index.ts, which ' +
+            "answers only Kinvue's own page. ipcMain.handle, handleOnce, on and once all " +
+            'skip that check.',
+        },
+        {
+          selector: "MemberExpression[property.name='ipcMain']",
+          message:
+            'app/main reaches ipcMain only by its own name, so the IPC guard can see every ' +
+            'use. Register handlers through handle() in app/main/index.ts.',
+        },
+        {
+          selector: "ImportSpecifier[imported.name='ipcMain'][local.name!='ipcMain']",
+          message:
+            'app/main does not rename ipcMain on import, so the IPC guard can see every use. ' +
+            'Register handlers through handle() in app/main/index.ts.',
+        },
+        {
+          selector: "Property[key.name='sandbox'][value.value!=true]",
+          message:
+            'The renderer is sandboxed: sandbox is the literal true, never false or a value ' +
+            'computed at runtime (KV-29).',
+        },
+        {
+          selector: "Property[key.name='contextIsolation'][value.value!=true]",
+          message:
+            'contextIsolation is the literal true, never false or a value computed at ' +
+            'runtime (KV-29).',
+        },
+        {
+          selector: "Property[key.name='nodeIntegration'][value.value!=false]",
+          message:
+            'nodeIntegration is the literal false, never true or a value computed at ' +
+            'runtime (KV-29).',
+        },
+        {
+          selector: "Property[key.name='webSecurity'][value.value!=true]",
+          message:
+            'webSecurity stays on: if it is set at all, it is the literal true (KV-29).',
+        },
+      ],
+    },
+  },
 )
