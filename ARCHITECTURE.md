@@ -1423,7 +1423,7 @@ into this file before remote code is written:
 
 | Question | Ticket |
 |---|---|
-| Can the server read what it carries, and how are keys managed and recovered | #33 |
+| Can the server read what it carries, can a viewer trust that what arrives was not changed (T13), and how are keys managed and recovered — including when the check-in device is lost (T14) | #33 |
 | What the caregiver's client is | #34 |
 | What legal and regulatory obligations sending health data brings — and whether a guardian or power of attorney may consent for someone who cannot (KV-31 left this open) | #35 |
 
@@ -1445,30 +1445,41 @@ Written 2026-10-01, against #32 (what leaves) and #31 (who controls it), before 
 travels) is decided. **Revisit it before #39 ships, and whenever #32, #31 or #33 changes**;
 rows that depend on #33 say so. A mitigation counts only when a ticket owns it.
 
-**What is protected.** The readings, the answers and the pain note. **The routine itself:**
-a history of check-in times says that an older person lives somewhere, probably alone, and
-is at home at a predictable hour — so timestamps are as sensitive as the vitals. And the
-relationships: who looks after whom.
+**What is protected, from being read:** the readings, the answers and the pain note. **The
+routine itself:** a history of check-in times says that an older person lives somewhere,
+probably alone, and is at home at a predictable hour — so timestamps are as sensitive as
+the vitals. The relationships: who looks after whom. And who looks, and how often — the
+access history #31 shows the person is itself the most revealing record in the system.
+
+**And from being changed** (review of #176). A caregiver acts on what a card says: one
+altered from "normal" to "different", or a fortnight with its flagged day removed, sends
+someone two hundred miles for nothing or keeps them home when it mattered. A viewer's device
+composes each card from its own record and never rescores it (KV-32), so it has no history
+to check a card against. Integrity is protected as deliberately as confidentiality.
 
 | # | Threat | From whom | Mitigation | Owner | Status |
 |---|---|---|---|---|---|
-| T1 | A viewer uses legitimate access to watch or control the person | **A viewer who is the danger** | Approval only at the person's own device; they see who looked and when, with the list shown periodically; immediate revocation with no sign-off; a removed viewer told only that sharing ended; viewers cannot see each other. Coerced consent cannot be detected — stated as a limit. | #31, #40, #45 | Decided |
-| T2 | Someone else at a shared computer approves a viewer as if they were the person | A household member | #31 assumes the check-in device *is* the person. A lock on the sharing screen, separate from the check-in itself, so pairing needs something only the person knows or holds. | #40 | **Gap → #40** |
+| T1 | A viewer uses legitimate access to watch or control the person | **A remote viewer who is the danger** | What #31 keeps as defence: the person sees who looks and how often, from a record the viewer cannot alter (what the relay delivered, not the viewer's own report); removal is immediate and silent; viewers cannot see each other. Coerced consent cannot be detected — a limit. Presence at the device is **not** a defence here: see T2. | #31, #45 | Decided, until T2 is closed |
+| T2 | Someone at the check-in device acts with its authority: approves their own phone, revokes the viewer who might notice, and — removal being silent — leaves that viewer told only that sharing ended | **A household member who is the danger**, at a shared computer | Approval and revocation need only presence at the device, so until there is a lock on the sharing screen, separate from the check-in itself, the model assumes the device is the person's (#31's first limit). | #40 | **Gap → #40** |
 | T3 | The relay's contents read in a breach, or by its operator | Outside attacker; the operator | End-to-end encryption, so the relay holds nothing it can read (preferred, not decided); encrypted, restore-tested backups; operator access individual and recorded; logs with no health data. | #33, #46 | Open on #33 |
-| T4 | The relay infers the routine from metadata it must see even under end-to-end encryption: when check-ins arrive, who shares with whom | The operator; whoever breaches it | Hold as little metadata as delivery needs; no analytics; consider sending on a schedule rather than at capture time, so arrival does not mark the moment. | #33, #39 | Open on #33 |
-| T5 | A caregiver's phone is lost or stolen with shared check-ins on it | Whoever finds it | The client locks behind the phone's own authentication; the person can revoke that viewer from the check-in device (#45). A device offline after revocation keeps its copy until it connects — stated as a limit. | #34, #45 | Open on #34 |
+| T4 | The relay infers behaviour from metadata it must hold even under end-to-end encryption: when check-ins arrive, who shares with whom, and **when each viewer fetched** — the access history #31 takes from it | The operator; whoever breaches it | Hold as little as delivery and #31's access history need, and no longer than they need it; no analytics; consider sending on a schedule rather than at capture time, so arrival does not mark the moment. #33 weighs the access history against this. | #33, #39 | Open on #33 |
+| T5 | A caregiver's phone is lost or stolen with shared check-ins on it | Whoever finds it | The client locks behind the phone's own authentication; the person can revoke that viewer from the check-in device (#45). A device offline after revocation keeps its copy until it connects — a limit. | #34, #45 | Open on #34 |
 | T6 | The daily summary leaks on a lock screen, or through the push provider | Bystanders; Apple's or Google's push service | The push carries no health data, only "your summary is ready"; the content is fetched and composed on the device (#33). | #43 | **Gap → #43** |
-| T7 | Data on the check-in device itself: `sessions.json` is plain JSON, readable by anyone with that Windows account, its backups, or malware running as it | Others on the computer; malware; a backup service | Today, only the operating system's account boundary. **Unowned** until now; #175 decides whether the store is encrypted at rest (for example with Electron's `safeStorage`) and what that protects against — not malware running as the same user. | #175 | **Gap → #175** |
+| T7 | Data on the check-in device itself: `sessions.json` is plain JSON, readable by anyone with that operating-system account, its backups (File History, Time Machine, a sync client), or malware running as it | Others on the computer; malware; a backup service | **Today**, only the operating system's account boundary, on Windows, macOS and Linux alike. #175 decides whether the store is encrypted at rest (for example with Electron's `safeStorage`, backed by each platform's own keychain) and what that protects against — not malware running as the same user. | #175 | **Gap → #175** |
 | T8 | The renderer is compromised (a bug, a malicious dependency) and reaches the camera, the key's use or the history | Malicious code in the page | Sandbox, one page, IPC answered only for it, every handler through one checked wrapper, enforced by lint (KV-29). | #29 | Done |
-| T9 | A malicious release reaches installs through the update channel or a dependency | Supply-chain attacker | Electron and the SDK pinned exactly, each bump alone and launched before merge (KV-131, KV-145); signed installers and signed updates. Which dependencies may run install scripts is still undecided. | #19, #147 | Open on #19, #147 |
-| T10 | **The SDK's own traffic reveals the routine:** the licence meter reports session times and per-metric datapoint counts to the vendor on every capture, today, whatever Kinvue builds | The SDK vendor; whoever breaches it | Not mitigable in the app: a capture cannot run without it (KV-65). `README.md` now says the meter reveals when check-ins happen, not only that it exists; whether a third party receiving it is acceptable, and what users must be told, is a legal question. | #35 | **Accepted, disclosed; → #35** |
+| T9 | A malicious release reaches installs through the update channel or a dependency | Supply-chain attacker | **Today:** Electron and the SDK pinned exactly, each bump alone and launched before merge (KV-131, KV-145). **Not yet:** signed installers and signed updates, which wait on there being an installer and an update channel (#19); and which dependencies may run install scripts (#147). | #19, #147 | Partly done; open on #19, #147 |
+| T10 | **The SDK's own traffic reveals the routine:** the licence meter carries each session's times and per-metric datapoint counts to the vendor, today, whatever Kinvue builds | The SDK vendor; whoever breaches it | Not mitigable in the app: a capture cannot run without it (KV-65). Established from the runtime's own schema, not by decrypting the traffic; *when* each report is sent is only partly known, but a report carrying the session's times says when the check-in happened whenever it arrives. `README.md` says so. Whether a third party receiving it is acceptable, and what users must be told, is a legal question. | #35 | **Accepted, disclosed; → #35** |
 | T11 | The pain note, the most personal field, reaches people the person did not mean it for | Any viewer | Off by default; turned on per viewer by the person; the note field says who will read it as they type (KV-32). | #31, #37, #40 | Decided |
-| T12 | Data the person deleted, or withdrew, survives elsewhere | Any copy holder | Deletion travels as a tombstone; a revoked viewer's app deletes its copy on next contact; partial deletion is tested as a flow because it looks like success. | #21, #45 | Planned |
+| T12 | Data the person deleted, or withdrew, survives elsewhere | Any copy holder | Deletion travels as a tombstone; a revoked viewer's app deletes its copy on next contact, and one that never reconnects keeps it — a limit; partial deletion is tested as a flow because it looks like success. | #21, #45 | Planned |
+| T13 | **A delivered card is altered, fabricated, replayed or dropped**, so a viewer reads a day that did not happen, or misses one that did | The relay; a network attacker; whoever breaches the relay | Every record authenticated end to end, by the check-in device, and verified on the viewer's device before it is shown — authenticated encryption, not encryption alone; gaps in the sequence shown, not smoothed over (with #44's missed check-ins); the daily summary composed from verified records only. | #33, #42, #43 | **Gap → #33** |
+| T14 | **The check-in device is lost, broken, wiped or replaced**, and with it every share's authority: nothing can be revoked, and the person cannot see who still holds their check-ins | Accident; theft | How access is recovered, or ended, without that device — a limit #31 states and hands on. | #33 | **Gap → #33** |
+| T15 | **The SmartSpectra API key at rest.** In development it is plain text in `.env`, beside `sessions.json`; a packaged install has no route to a key yet. A stolen key means vendor account abuse and billing, and reaches the metered record of when check-ins happen (T10) | The same actors as T7 | **Today**, only the operating system's account boundary, as for T7. How a packaged install receives and holds its key is #19's, and it is a data-at-rest question in the same sense as #175's. | #19, #175 | **Gap → #19** |
 
-Two rows are the ones most likely to be argued with. **T10 is live now**, not a Phase 5
-risk: the vendor already receives when each check-in happened. And **T2 and T7 are the
+Four of these are the ones most likely to be argued with. **T10 is live now**, not a Phase 5
+risk: the vendor already receives when each check-in happened. **T2, T7 and T15 are the
 check-in device's own weakness** — every remote defence above assumes the device is the
-person's, and a shared family computer is exactly where this app is likely to sit.
+person's, and a shared family computer is exactly where this app is likely to sit. And
+**T13 is the one whose failure makes a caregiver act on something that never happened.**
 
 ---
 
