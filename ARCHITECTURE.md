@@ -1244,11 +1244,13 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
 - **What leaves the device is decided in one place** — `toShared` in `core/share/`,
   with every field of a session explicitly classified. Each shape that leaves has a table
   over its own keys — every branch's, for a union — so a new field does not compile until
-  it is decided. A field holding a shape is decided by that shape's table, never shared
-  whole, and one walk reads the tables from the record's down, so they cannot say one
-  thing while the code does another. The shared types are read off the tables too, so a
-  field a table stops sending leaves the type with it. Sync code sends what `toShared`
-  and `shareSet` return — `SharedRecord`s — and nothing else. (KV-37)
+  it is decided. A field that can hold a shape is decided by that shape's table (a list,
+  by a list of it), never shared whole; one walk reads the tables from the record's down,
+  `never` included, so they cannot say one thing while the code does another. The shared
+  types, and which fields a viewer must be granted, are read off the tables too. A record
+  that is not what its tables describe — a list where one shape belongs, a corrupt item, a
+  missing `id` — does not leave. Sync code sends what `toShared` and `shareSet` return —
+  `SharedRecord`s — and nothing else. (KV-37)
 - **A calm daily summary, never a real-time alert.** A notification the moment a flag
   fires would turn the app into the emergency alarm it is designed not to be, and a lock
   screen far away cannot carry the difference between "worth a look" and "drive over".
@@ -1328,13 +1330,16 @@ field to it (KV-53, KV-87, KV-100, KV-138, KV-154), and a sixth must not leave b
   check-in device. Not the whole history: agreeing today must not share months nobody
   agreed to share. The usual counts 14 usable check-ins, not 14 days, so for someone who
   checks in twice a week that reaches back about seven weeks; **the person is shown the
-  actual date it reaches back to** when they approve, not "about a fortnight".
+  actual date it reaches back to** when they approve, not "about a fortnight" — the day
+  of the first check-in actually sent, named in the zone it was taken in (KV-28).
 - **A demo install's real check-ins lose their seeded usual on the way out.** A real card
   scored against seeded days arrives with its stored verdict and seeded disclosure, but the
   viewer's chart, holding no seeded records, may have no usual to draw beside it — the card
   quoting a usual the chart cannot. Demo installs are not meant for sharing, but such a
   card **is** shared (KV-37): its stored verdict already says it was compared with demo
-  data, and holding back a real check-in would be the wrong way round.
+  data, and holding back a real check-in would be the wrong way round. What the viewer's
+  chart draws beside such a card — it holds none of the days its usual was built from — is
+  #42's to decide; the count it needs (`baselineSeededSessions`) travels with the card.
 - It travels end-to-end encrypted and signed, through a relay that cannot read it (KV-33).
 
 ### Who sees it, and how it is taken back (KV-31)

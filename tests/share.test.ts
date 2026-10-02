@@ -14,6 +14,8 @@ import {
   type Viewer,
 } from '@core/share'
 import type { Assessment, SessionRecord, Vitals } from '@core/session/types'
+import { scoreSession } from '@core/scoring'
+import { localDateOf } from '@core/session/time'
 import { history, session, sessionBeforeKV16 } from './helpers'
 
 /**
@@ -150,6 +152,27 @@ describe('toShared: one check-in as a viewer receives it (KV-37)', () => {
   it('never sends a seeded record', () => {
     expect(RECORD_POLICY.seeded).toBe('never')
     expect(toShared(session({ seeded: true }), WITH_NOTE)).toBeNull()
+    // `seeded: false` is a real check-in, and leaves like one.
+    expect(toShared(everything(), WITH_NOTE)).not.toBeNull()
+  })
+
+  it('makes every viewer say whether it has each per-viewer field', () => {
+    // @ts-expect-error the pain note is `per-viewer`, so a viewer must say
+    const unsaid: Viewer = { shareId: 'share-1' }
+    expect(unsaid).not.toHaveProperty('painNote')
+  })
+
+  it('allows `never` only on a true/false field, where "true" means something', () => {
+    // The seeded test above is what shows the table, not a rule beside it,
+    // keeps a record home (second review of #180).
+    interface Inner {
+      keepHome: boolean
+      reading: number
+    }
+    const inner = { keepHome: 'never', reading: 'shared' } as const satisfies Policy<Inner>
+    // @ts-expect-error `never` means something only for a true/false field
+    const onANumber: Policy<Inner> = { keepHome: 'never', reading: 'never' }
+    expect([inner.keepHome, onANumber.reading]).toEqual(['never', 'never'])
   })
 
   it('sends a record from before KV-16 with the question it was asked', () => {
@@ -230,6 +253,71 @@ describe('the tables cannot be left incomplete (review of #180)', () => {
     expect([meal, note]).toEqual([false, 'left hip, since yesterday'])
   })
 
+  it('cannot send a shape whole to one viewer either (second review of #180)', () => {
+    interface Clip {
+      url: string
+      transcript: string
+    }
+    // @ts-expect-error `per-viewer` would copy the shape whole once granted
+    const perViewer: Policy<{ note: string; clip: Clip }> = { note: 'shared', clip: 'per-viewer' }
+    expect(perViewer.clip).toBe('per-viewer')
+  })
+
+  it('cannot share a field that is sometimes a shape, or a list that sometimes holds one', () => {
+    interface Clip {
+      url: string
+      transcript: string
+    }
+    // @ts-expect-error `details` can hold a `Clip`, so `shared` is not an answer for it
+    const mixed: Policy<{ details: string | Clip }> = { details: 'shared' }
+    // @ts-expect-error nor for a list whose items can be one
+    const mixedList: Policy<{ items: (string | Clip)[] }> = { items: 'shared' }
+    // A list of plain values is a plain value.
+    const plainList: Policy<{ tags: string[] }> = { tags: 'shared' }
+    expect([mixed.details, mixedList.items, plainList.tags]).toEqual(['shared', 'shared', 'shared'])
+  })
+
+  it('refuses a record holding a list where one shape belongs, or the reverse', () => {
+    const asList = everything()
+    ;(asList as unknown as { vitals: unknown }).vitals = [asList.vitals, asList.vitals]
+    expect(toShared(asList, VIEWER)).toBeNull()
+
+    const asOne = everything()
+    const rules = asOne.assessment!.firedRules
+    ;(asOne.assessment as unknown as { firedRules: unknown }).firedRules = rules[0]
+    expect(toShared(asOne, VIEWER)).toBeNull()
+
+    const notAShape = everything()
+    ;(notAShape as unknown as { answers: unknown }).answers = 'good'
+    expect(toShared(notAShape, VIEWER)).toBeNull()
+  })
+
+  it('refuses a record missing a field a viewer cannot use it without', () => {
+    // No `id` and it can never be updated or removed on the viewer's device (#45).
+    for (const key of ['id', 'capturedAt', 'vitals', 'answers'] as const) {
+      const record = everything()
+      delete (record as Partial<SessionRecord>)[key]
+      expect(toShared(record, VIEWER), key).toBeNull()
+    }
+    // Optional ones may be absent, as on any record from before them.
+    expect(toShared(session(), VIEWER)).not.toBeNull()
+  })
+
+  it('refuses a record holding an object where its table expects a plain value', () => {
+    const record = everything()
+    ;(record as unknown as { timeZone: unknown }).timeZone = { region: 'Europe', history: [] }
+    expect(toShared(record, VIEWER)).toBeNull()
+  })
+
+  it('refuses a record whose list holds anything but shapes, rather than shortening it', () => {
+    // Three fired rules, the middle one corrupt: two arriving would leave the
+    // verdict quoting a rule its evidence no longer shows.
+    const record = everything()
+    const [rule] = record.assessment!.firedRules
+    ;(record.assessment as unknown as { firedRules: unknown[] }).firedRules = [rule, 'trunc', rule]
+    expect(toShared(record, VIEWER)).toBeNull()
+  })
+
   it('cannot share a shape whole: it is decided field by field by its own table', () => {
     // @ts-expect-error `vitals` holds a shape, so `shared` is not an answer for it
     const whole: Policy<SessionRecord> = { ...RECORD_POLICY, vitals: 'shared' }
@@ -255,7 +343,7 @@ describe('shareSet: what a new viewer is sent (KV-32)', () => {
   it('reaches back to the earliest check-in behind the current usual', () => {
     // Twenty usable days; the latest was compared with the 14 before it.
     const days = Array.from({ length: 20 }, (_, i) => on(i))
-    expect(shareSetStart(days, 'test-person')).toBe(days[5]!.capturedAt)
+    expect(shareSetStart(days, 'test-person')?.capturedAt).toBe(days[5]!.capturedAt)
     expect(shareSet(days, 'test-person', VIEWER).map((r) => r.id)).toEqual(
       days.slice(5).map((r) => r.id),
     )
@@ -263,7 +351,7 @@ describe('shareSet: what a new viewer is sent (KV-32)', () => {
 
   it('counts usable check-ins, not days: twice a week reaches back about seven weeks', () => {
     const twiceAWeek = Array.from({ length: 20 }, (_, i) => on(Math.round(i * 3.5)))
-    const start = Date.parse(shareSetStart(twiceAWeek, 'test-person')!)
+    const start = Date.parse(shareSetStart(twiceAWeek, 'test-person')!.capturedAt)
     const latest = Date.parse(twiceAWeek.at(-1)!.capturedAt)
     expect((latest - start) / 86_400_000).toBeGreaterThanOrEqual(45)
   })
@@ -309,7 +397,7 @@ describe('shareSet: what a new viewer is sent (KV-32)', () => {
     // A demo install: twelve seeded days, then two real check-ins.
     const seeded = Array.from({ length: 12 }, (_, i) => on(i, { seeded: true, id: `seed-${i}` }))
     const real = [on(31, { id: 'real-1' }), on(32, { id: 'real-2' })]
-    expect(shareSetStart([...seeded, ...real], 'test-person')).toBe(real[0]!.capturedAt)
+    expect(shareSetStart([...seeded, ...real], 'test-person')?.capturedAt).toBe(real[0]!.capturedAt)
     expect(shareSet([...seeded, ...real], 'test-person', VIEWER).map((r) => r.id)).toEqual([
       'real-1',
       'real-2',
@@ -319,15 +407,66 @@ describe('shareSet: what a new viewer is sent (KV-32)', () => {
     expect(shareSet(seeded, 'test-person', VIEWER)).toEqual([])
   })
 
+  it('reaches back as far as the latest card says its usual began, and no further', () => {
+    // Scored as `submit` scores them, so each stores the span it was compared with.
+    const days: SessionRecord[] = []
+    for (let i = 0; i < 20; i++) {
+      const day = on(i)
+      day.assessment = scoreSession(day, days)
+      days.push(day)
+    }
+    const latest = days.at(-1)!
+    const span = latest.assessment!.baselineSpan!
+    expect(shareSetStart(days, 'test-person')?.capturedAt).toBe(span.from)
+
+    // A window since shortened would recompute a later start; the stored span,
+    // which the card quotes, still decides.
+    latest.assessment = {
+      ...latest.assessment!,
+      baselineSpan: { ...span, from: days[2]!.capturedAt },
+    }
+    expect(shareSetStart(days, 'test-person')?.capturedAt).toBe(days[2]!.capturedAt)
+  })
+
+  it('gives the start with its zone, so the consent screen names the day it was there', () => {
+    // 23:40 on 1 September in London is 22:40 UTC; elsewhere it could be the 2nd.
+    const late = on(0, { capturedAt: '2026-09-01T22:40:00.000Z', timeZone: 'Europe/London' })
+    const start = shareSetStart([late], 'test-person')!
+    expect(start).toEqual({ capturedAt: '2026-09-01T22:40:00.000Z', timeZone: 'Europe/London' })
+    expect(localDateOf(start)).toBe('2026-09-01')
+    // Nothing else of the record comes with it.
+    expect(Object.keys(start)).toEqual(['capturedAt', 'timeZone'])
+    expect(shareSetStart([on(0)], 'test-person')).toEqual({ capturedAt: on(0).capturedAt })
+  })
+
+  it('lets no seeded day stand in for the latest usable check-in', () => {
+    // The same real data — two refused captures — with and without a demo
+    // fortnight behind it, gets the same answer: nothing usable, nothing sent.
+    const real = [refused(60), refused(61)]
+    const seeded = Array.from({ length: 20 }, (_, i) => on(i, { seeded: true, id: `seed-${i}` }))
+    expect(shareSetStart(real, 'test-person')).toBeNull()
+    expect(shareSetStart([...seeded, ...real], 'test-person')).toBeNull()
+    expect(shareSet([...seeded, ...real], 'test-person', VIEWER)).toEqual([])
+  })
+
+  it('dates the share by the first record actually sent, whatever else refuses one', () => {
+    // A record that cannot leave, at the start of the window, must not set the date.
+    const days = Array.from({ length: 20 }, (_, i) => on(i))
+    ;(days[5] as unknown as { answers: unknown }).answers = 'corrupt'
+    const sent = shareSet(days, 'test-person', VIEWER)
+    expect(sent.map((r) => r.id)).not.toContain(days[5]!.id)
+    expect(shareSetStart(days, 'test-person')?.capturedAt).toBe(sent[0]!.capturedAt)
+  })
+
   it('reaches back to the check-ins a card still learning was counted against', () => {
     // Two usable days before the latest: no usual yet, but the latest card says
     // "2 of 3", so the two it counted are sent with it.
     const days = [on(0), on(1), on(2)]
-    expect(shareSetStart(days, 'test-person')).toBe(days[0]!.capturedAt)
+    expect(shareSetStart(days, 'test-person')?.capturedAt).toBe(days[0]!.capturedAt)
   })
 
   it('starts at the latest when nothing came before it, and is empty with none usable', () => {
-    expect(shareSetStart([on(3)], 'test-person')).toBe(on(3).capturedAt)
+    expect(shareSetStart([on(3)], 'test-person')?.capturedAt).toBe(on(3).capturedAt)
     expect(shareSetStart([refused(1)], 'test-person')).toBeNull()
     expect(shareSet([refused(1)], 'test-person', VIEWER)).toEqual([])
     expect(shareSet(history(0), 'test-person', VIEWER)).toEqual([])

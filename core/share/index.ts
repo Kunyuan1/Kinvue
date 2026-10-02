@@ -21,14 +21,14 @@ import { unusableReason } from '../session/usable'
  * **Every field is classified, and the tables do the copying.** Each shape that
  * leaves has a table typed over its own keys, so a field added to the record —
  * or to its vitals, answers, assessment, fired rules, uncompared metrics or
- * baseline span — does not compile until it is decided here. A field holding a
- * shape of its own is classified by that shape's table, never as `shared`
- * whole, and one walk (`pick`) copies a record by reading the tables from
- * `RECORD_POLICY` down: a field leaves only because its table says `shared`,
- * so the table cannot say one thing while the code does another (review of
- * #180, which found the record's own table read by nothing). Anything a record
- * carries that no table names — a hand-edited store, a field from a newer
- * client — is left behind.
+ * baseline span — does not compile until it is decided here. A field that can
+ * hold a shape is classified by that shape's table, or a list of it, never as
+ * `shared` or `per-viewer` whole, and one walk (`pick`) copies a record by
+ * reading the tables from `RECORD_POLICY` down — `never` included: a field
+ * leaves only because its table says so, so the table cannot say one thing
+ * while the code does another (two reviews of #180). Anything a record carries
+ * that no table names — a hand-edited store, a field from a newer client — is
+ * left behind; a record that is not what its tables describe does not leave.
  */
 
 /** How one field is treated on the way out. */
@@ -41,21 +41,52 @@ export type Sharing =
   | 'replaced'
   /** Leaves only to a viewer the person turned it on for. */
   | 'per-viewer'
-  /** Marks a record that never leaves at all. */
+  /**
+   * Never leaves, and when it is true, neither does the record holding it, at
+   * any depth: `seeded` is why a demo day stays home. Only for a true/false
+   * field, where "true" has a meaning.
+   */
   | 'never'
 
 /**
  * How one field is treated. A field holding a shape, or a list of them, takes
- * that shape's own table, or a `Sharing` other than `shared`: copied whole,
- * whatever it held would leave with it, decided by nobody.
+ * that shape's own table, or `withheld`: anything else — `shared`, or
+ * `per-viewer` once granted — would copy it whole, and whatever it held would
+ * leave with it, decided by nobody (second review of #180).
  */
-type Entry<V> = [NonNullable<V>] extends [readonly (infer E)[]]
-  ? E extends object
-    ? Policy<E> | Exclude<Sharing, 'shared'>
-    : Sharing
-  : [NonNullable<V>] extends [object]
-    ? Policy<NonNullable<V>> | Exclude<Sharing, 'shared'>
-    : Sharing
+type Entry<V> = [Shapes<V>] extends [never]
+  ? [NonNullable<V>] extends [boolean]
+    ? Sharing
+    : Exclude<Sharing, 'never'>
+  : [Shapes<V>] extends [readonly (infer E)[]]
+    ? [Extract<E, object>] extends [never]
+      ? Sharing
+      : ListPolicy<Policy<Extract<E, object>>> | 'withheld'
+    : Policy<Shapes<V>> | 'withheld'
+
+/**
+ * The members of `V` that are shapes. Asked of every member, not of `V` whole:
+ * `string | Clip` is not an object, so asking "is it one?" let `shared` copy
+ * the `Clip` (second review of #180). A field that can hold a shape at all is
+ * decided by a table, and its plain members do not leave through it.
+ */
+type Shapes<V> = Extract<NonNullable<V>, object>
+
+const LIST: unique symbol = Symbol('list')
+
+/**
+ * A list of shapes, each decided by `policy`. Its own kind of entry, not the
+ * table itself, so `pick` knows which it expects: a list arriving where one
+ * shape belongs, or one shape where a list does, is not sent as though it were
+ * the other (second review of #180). Keyed by a symbol, so no field name can
+ * be mistaken for it.
+ */
+export interface ListPolicy<P> {
+  readonly [LIST]: P
+}
+
+/** The entry for a field holding a list of shapes, each decided by `policy`. */
+export const listOf = <P>(policy: P): ListPolicy<P> => ({ [LIST]: policy })
 
 /**
  * A table over every key of `T`, optional ones included — and, for a union
@@ -122,12 +153,14 @@ export const BASELINE_SPAN_POLICY = {
 export const ASSESSMENT_POLICY = {
   flag: 'shared',
   summary: 'shared',
-  firedRules: FIRED_RULE_POLICY,
+  firedRules: listOf(FIRED_RULE_POLICY),
   baselineSessions: 'shared',
   baselineSeededSessions: 'shared',
   baselineRefusedSessions: 'shared',
   baselineSpan: BASELINE_SPAN_POLICY,
-  uncomparedMetrics: UNCOMPARED_POLICY,
+  uncomparedMetrics: listOf(UNCOMPARED_POLICY),
+  // The stored reason a verdict was withheld (KV-138), not a classification:
+  // the card says it, so it leaves.
   withheld: 'shared',
 } as const satisfies Policy<Assessment>
 
@@ -139,6 +172,8 @@ export const RECORD_POLICY = {
   id: 'shared',
   personId: 'replaced',
   capturedAt: 'shared',
+  // Names a region, and over time shows travel — the cost KV-32 accepted, since
+  // a viewer elsewhere needs the person's own day, not theirs (KV-28).
   timeZone: 'shared',
   vitals: VITALS_POLICY,
   answers: ANSWERS_POLICY,
@@ -167,14 +202,18 @@ type SharedOf<T, P> = T extends unknown
 /** The entry `P` gives `K`, or `never` for a key it does not name. */
 type Entered<K, P> = K extends keyof P ? P[K] : never
 
-/** One value as its entry lets it leave: as itself, or rebuilt by its own table. */
+/**
+ * One value as its entry lets it leave: as itself, or rebuilt by its own table
+ * — which sends only the shape members of a mixed union, so only they are on
+ * the type.
+ */
 type SharedValue<V, P> = P extends 'shared'
   ? V
-  : V extends readonly (infer E)[]
-    ? SharedOf<E, P>[]
-    : V extends object
-      ? SharedOf<V, P>
-      : V
+  : P extends ListPolicy<infer Q>
+    ? NonNullable<V> extends readonly (infer E)[]
+      ? SharedOf<Extract<E, object>, Q>[] | Extract<V, undefined>
+      : never
+    : SharedOf<Shapes<V>, P> | Extract<V, undefined>
 
 /** One check-in as a viewer's device receives it. */
 export type SharedRecord = SharedOf<SessionRecord, typeof RECORD_POLICY> & {
@@ -182,19 +221,54 @@ export type SharedRecord = SharedOf<SessionRecord, typeof RECORD_POLICY> & {
   personId: string
 }
 
-/** The vitals as they leave: `hrvSdnnMs` is absent, not set to anything. */
-export type SharedVitals = SharedRecord['vitals']
-
-/** Who a record is being prepared for. */
-export interface Viewer {
-  /** The opaque id this person is known by in this share. */
-  shareId: string
-  /** Whether the person has turned the pain note on for this viewer (KV-31). */
-  painNote: boolean
+/**
+ * Who a record is being prepared for: the opaque id this person is known by in
+ * this share, and, for every field a table sends `per-viewer`, whether the
+ * person has turned it on for this viewer (KV-31) — today only `painNote`.
+ *
+ * **Those fields are read off the tables** (second review of #180), so a new
+ * `per-viewer` entry does not compile until every viewer says whether it has
+ * it. Written out by hand, the entry could exist with nothing to grant it: it
+ * would never be sent, while the shared type and a consent screen offered it.
+ */
+export type Viewer = { shareId: string } & {
+  readonly [K in PerViewerKey<typeof RECORD_POLICY> & string]: boolean
 }
 
-/** A table as `pick` walks it: every entry a `Sharing` or a table of its own. */
-type AnyPolicy = { readonly [key: string]: Sharing | AnyPolicy }
+/** Every field some table under `P` sends only to a viewer given it. */
+type PerViewerKey<P> =
+  P extends ListPolicy<infer Q>
+    ? PerViewerKey<Q>
+    : P extends object
+      ? { [K in keyof P]: P[K] extends 'per-viewer' ? K : PerViewerKey<P[K]> }[keyof P]
+      : never
+
+/** A table as `pick` walks it: every entry a `Sharing`, a table, or a list of one. */
+type AnyPolicy = { readonly [key: string]: Sharing | AnyPolicy | ListPolicy<AnyPolicy> }
+
+/** The keys of `T` it cannot be without. */
+type RequiredKeys<T> = { [K in keyof T]-?: object extends Pick<T, K> ? never : K }[keyof T]
+
+/**
+ * The record's own fields a viewer cannot use it without: every required field
+ * of `SessionRecord` that leaves. Checked complete by the compiler, so a new
+ * required field does not compile until it is listed. A stored record is not
+ * validated (`core/session/usable.ts`), and one arriving with no `id` could
+ * never be updated or removed (#45), nor one with no `capturedAt` dated.
+ *
+ * Only the record's own fields. Whether the shapes under it hold every field
+ * their types require is checked field by field by #181; until then a viewer
+ * reads them as defensively as the check-in device does.
+ */
+const MUST_ARRIVE = {
+  id: true,
+  capturedAt: true,
+  vitals: true,
+  answers: true,
+} as const satisfies Record<Exclude<RequiredKeys<SessionRecord>, 'personId'>, true>
+
+/** What `pick` gives back for a record it cannot send as its tables describe. */
+const REFUSED = null
 
 /**
  * `source` as its table lets it leave, walked from `RECORD_POLICY` down. A
@@ -205,34 +279,67 @@ type AnyPolicy = { readonly [key: string]: Sharing | AnyPolicy }
  * is never written in its place. A shape that is not one where its table
  * expects one — a hand-edited store — is left behind rather than copied.
  */
-function pick(source: object, policy: AnyPolicy, viewer: Viewer): Record<string, unknown> {
+function pick(
+  source: object,
+  policy: AnyPolicy,
+  viewer: Viewer | null,
+): Record<string, unknown> | typeof REFUSED {
   const out: Record<string, unknown> = {}
   for (const [key, entry] of Object.entries(policy)) {
     if (!Object.hasOwn(source, key)) continue
     const value: unknown = (source as Record<string, unknown>)[key]
     if (value === undefined) continue
-    if (typeof entry === 'object') {
-      if (Array.isArray(value)) {
-        out[key] = value.filter(isShape).map((item) => pick(item, entry, viewer))
-      } else if (isShape(value)) {
-        out[key] = pick(value, entry, viewer)
-      }
-    } else if (entry === 'shared' || (entry === 'per-viewer' && granted(viewer, key))) {
-      out[key] = value
+    // Read from the table, so marking a field `never` keeps its record home
+    // with no second rule to keep in step (second review of #180).
+    if (entry === 'never') {
+      if (value === true) return REFUSED
+      continue
+    }
+    if (typeof entry === 'object' && LIST in entry) {
+      // A list where its table expects one: anything else refuses the record.
+      if (!Array.isArray(value)) return REFUSED
+      // Every item, or the record does not leave: a list quietly shortened —
+      // three fired rules arriving as two — would send a verdict that its own
+      // evidence no longer explains (second review of #180).
+      const items = value.map((item) => (isShape(item) ? pick(item, entry[LIST], viewer) : REFUSED))
+      if (items.includes(REFUSED)) return REFUSED
+      out[key] = items
+    } else if (typeof entry === 'object') {
+      // One shape where its table expects one: a list, or a plain value,
+      // refuses the record rather than arriving as something it is typed not to be.
+      if (!isShape(value)) return REFUSED
+      const shape = pick(value, entry, viewer)
+      if (shape === REFUSED) return REFUSED
+      out[key] = shape
+    } else if (entry === 'shared' || entry === 'per-viewer') {
+      // A leaf leaves only as a plain value. An object where its table expects
+      // one — a hand-edited store — would leave whole, decided by nobody, and
+      // leaving it behind would send a record missing a field it is typed to have.
+      // Checked whether or not this viewer is sent it, so whether a record may
+      // leave is the same for every viewer.
+      if (!isPlain(value)) return REFUSED
+      if (entry === 'per-viewer' && !granted(viewer, key)) continue
+      out[key] = Array.isArray(value) ? [...value] : value
     }
   }
   return out
 }
 
+/** A string, number, boolean or null — or a list of only those, which is copied. */
+const isPlain = (value: unknown): boolean =>
+  value === null ||
+  ['string', 'number', 'boolean'].includes(typeof value) ||
+  (Array.isArray(value) && value.every((item) => item === null || typeof item !== 'object'))
+
 const isShape = (value: unknown): value is object =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /**
- * Whether `viewer` has been given a `per-viewer` field: a grant of the same
- * name, set to true. The pain note is the only one (KV-31).
+ * Whether `viewer` has been given a `per-viewer` field: its grant of the same
+ * name, which `Viewer` is made to carry for every such field.
  */
-const granted = (viewer: Viewer, key: string): boolean =>
-  (viewer as unknown as Record<string, unknown>)[key] === true
+const granted = (viewer: Viewer | null, key: string): boolean =>
+  viewer !== null && (viewer as unknown as Record<string, unknown>)[key] === true
 
 /**
  * `record` as it may leave the device for `viewer`, or null when it may not
@@ -244,10 +351,33 @@ const granted = (viewer: Viewer, key: string): boolean =>
  * a real check-in would be the wrong way round (KV-32's open question).
  */
 export function toShared(record: SessionRecord, viewer: Viewer): SharedRecord | null {
-  if (record.seeded === true) return null
+  const picked = leaving(record, viewer)
   // `personId` is `replaced`, so `pick` leaves it behind and it is written here.
-  const picked = pick(record, RECORD_POLICY, viewer) as Omit<SharedRecord, 'personId'>
-  return { ...picked, personId: viewer.shareId }
+  return picked === null ? null : { ...picked, personId: viewer.shareId }
+}
+
+/**
+ * Whether `record` may leave at all: the one question `toShared` and the share
+ * set both ask, so `shareSetStart` cannot date a record `shareSet` would not
+ * send (second review of #180). The same answer for every viewer.
+ */
+function mayLeave(record: SessionRecord): boolean {
+  return leaving(record, null) !== null
+}
+
+/**
+ * `record` as its tables let it leave, or null: a `never` field set, a shape
+ * that is not what its table expects, or a field a viewer cannot use it
+ * without missing.
+ */
+function leaving(
+  record: SessionRecord,
+  viewer: Viewer | null,
+): Omit<SharedRecord, 'personId'> | null {
+  const picked = pick(record, RECORD_POLICY, viewer)
+  if (picked === REFUSED) return null
+  if (Object.keys(MUST_ARRIVE).some((key) => !Object.hasOwn(picked, key))) return null
+  return picked as Omit<SharedRecord, 'personId'>
 }
 
 /**
@@ -268,19 +398,32 @@ export function toShared(record: SessionRecord, viewer: Viewer): SharedRecord | 
 function toBeSent(records: readonly SessionRecord[], personId: string): SessionRecord[] {
   const theirs = records
     .filter((r) => r.personId === personId)
-    .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
-  const latest = theirs.filter((r) => unusableReason(r.vitals) === null).at(-1)
+    // The same plain order as the comparisons below, not `localeCompare`'s
+    // collation, so the sort and the selection cannot disagree.
+    .sort((a, b) => (a.capturedAt < b.capturedAt ? -1 : a.capturedAt > b.capturedAt ? 1 : 0))
+  // A real one: a seeded day standing in for "the latest" would let demo data
+  // decide whether a person's real check-ins are sent (second review of #180).
+  const latest = theirs.filter((r) => unusableReason(r.vitals) === null && mayLeave(r)).at(-1)
   if (latest === undefined) return []
+  // Where the latest card's usual began, as it stored it (KV-154): the window
+  // it was compared with, which a later change to the window's length must not
+  // move (second review of #180). Recomputed only for a verdict stored before
+  // the span was, or one that leaned on nothing.
+  const stored: unknown = latest.assessment?.baselineSpan?.from
   const behind = baselineWindow(theirs.filter((r) => r.capturedAt < latest.capturedAt))
-  const reach = (behind[0] ?? latest).capturedAt
-  return theirs.filter((r) => r.seeded !== true && r.capturedAt >= reach)
+  const reach = typeof stored === 'string' ? stored : (behind[0] ?? latest).capturedAt
+  return theirs.filter((r) => r.capturedAt >= reach && mayLeave(r))
 }
 
 /**
- * The date a new viewer's history begins: the first check-in they will
- * actually be sent. Shown to the person when they approve, as the actual date
- * (KV-32): the usual counts 14 usable check-ins, not 14 days, so it can reach
- * back weeks.
+ * When a new viewer's history begins: the first check-in they will actually be
+ * sent. Shown to the person when they approve, as the actual date (KV-32): the
+ * usual counts 14 usable check-ins, not 14 days, so it can reach back weeks.
+ *
+ * **Its instant and its zone, not a date** (second review of #180). A UTC
+ * instant cannot name a day without the zone it was taken in (KV-28): 23:40 on
+ * 1 September in London is the 2nd in UTC. So the consent screen gets what
+ * `localDateOf` takes, and dates it the way every other screen does.
  *
  * **Read off what is sent, not off the usual** (review of #180). It used to be
  * the earliest check-in behind the usual, seeded ones included, so on a demo
@@ -291,8 +434,14 @@ function toBeSent(records: readonly SessionRecord[], personId: string): SessionR
  * Null when nothing would be sent — no usable check-in, or none that is real —
  * and a viewer then starts from approval onward.
  */
-export function shareSetStart(records: readonly SessionRecord[], personId: string): string | null {
-  return toBeSent(records, personId)[0]?.capturedAt ?? null
+export function shareSetStart(
+  records: readonly SessionRecord[],
+  personId: string,
+): Pick<SessionRecord, 'capturedAt' | 'timeZone'> | null {
+  const first = toBeSent(records, personId)[0]
+  if (first === undefined) return null
+  const { capturedAt, timeZone } = first
+  return timeZone === undefined ? { capturedAt } : { capturedAt, timeZone }
 }
 
 /**
@@ -312,7 +461,7 @@ export function shareSet(
   personId: string,
   viewer: Viewer,
 ): SharedRecord[] {
-  return toBeSent(records, personId)
-    .map((r) => toShared(r, viewer))
-    .filter((r): r is SharedRecord => r !== null)
+  // Never empty: `toBeSent` kept only records that may leave, and whether one
+  // may is the same for every viewer.
+  return toBeSent(records, personId).flatMap((r) => toShared(r, viewer) ?? [])
 }
