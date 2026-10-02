@@ -1128,8 +1128,10 @@ version again. The dashboard says so, and deliberately offers no *Start a new hi
 it (KV-98): the file is whole, and the newer version reads it as it is.
 That is the deliberate choice, on the grounds that misreading a newer file as though it
 were this one is the quieter and worse failure, but it is a real contract and the cost
-lands on a person, not a developer. A migration, when one is needed, is #30's to design,
-and it will need a version per record rather than per file.
+lands on a person, not a developer. KV-30 decided there is no migration that rewrites
+records: each record now says its own format, and a history holding one in a format this
+build does not know is refused the same way as a newer file — see *What a record carries on
+its own*.
 
 `SessionStore` is an interface for exactly one reason: it is the seam to swap when the
 size assumption stops holding.
@@ -1300,6 +1302,7 @@ means another thing:
 
 | Field | Leaves | Why |
 |---|---|---|
+| `format` | Yes, always | What a viewer checks before reading anything else (KV-30). Written on the way out even for a record from before it, as 1. |
 | `id` | Yes | An opaque UUID; updates and removals (#45) travel by it. |
 | `personId` | **Replaced** | The local id can read like a name. The share's own opaque id is written into `personId` on the way out — `presentAll` groups and `trendOf` filters by it, so it cannot simply be dropped. |
 | `capturedAt`, `timeZone` | Yes | A viewer elsewhere needs *their* day (#28). The zone names a region; that is the cost. |
@@ -1311,6 +1314,7 @@ means another thing:
 | `answers.painNote` | **Only with consent, per viewer** | Below. |
 | `assessment.flag`, `.summary`, `.firedRules` (each rule's `id`, `title`, `explanation`, `severity`) | Yes | The verdict and the words it was given in. Severity orders the rules and is never shown as a score (#42). |
 | `assessment.baselineSessions`, `.baselineSeededSessions`, `.baselineRefusedSessions`, `.baselineSpan`, `.uncomparedMetrics`, `.withheld` | Yes | The counts and reasons the card quotes, stored so the viewer need not recompute them. |
+| `assessment.rulesVersion` | Yes | Which rules gave the verdict (KV-30): a viewer never rescores, so this is how it can tell a verdict from rules the app no longer has. |
 | `seeded`, and seeded records | **Never** | Demo data about nobody, with ids that repeat across installs. |
 
 `assessment` is classified field by field, like the rest: five tickets have each added a
@@ -1562,6 +1566,66 @@ native** apps reuse nothing and mean two codebases.
 - When the repo is split (#38), the shared components move to a `ui` package beside
   `core`: `core`, `ui`, the desktop app, the caregiver app, and the relay.
 
+### What a record carries on its own (KV-30)
+
+Decided 2026-10-02. A record used to have to make sense only inside one file on one machine.
+Shared, it lands on a viewer's phone, is read there by code of another age, and outlives the
+code that wrote it. What #30 asked, and what was decided:
+
+- **Its format, on the record.** `format` (`RECORD_FORMAT` in `core/session/format.ts`) is
+  written on every record, and always on one that leaves (KV-37). A reader refuses a record
+  in a format newer than it knows rather than reading it as one it does: the check-in device
+  refuses the whole history, as it refuses a newer file (`NewerStoreError`), since leaving
+  one record out would score every later check-in against a usual missing a day; how a
+  viewer says it is #42's. **It is bumped only when a reader of the old format would
+  misread the new** — a field that changes meaning, or is renamed or removed. KV-16's meal
+  question would have been one. Adding a field is not: every reader leaves behind what it
+  does not know (`toShared` does by construction), so bumping for one would lock older
+  readers out of records they read correctly. Format 1 is every record so far, both meal
+  questions included, since today's reader reads both.
+- **No migration that rewrites history.** A record from before KV-30 carries no format; it
+  is format 1 by definition and read as that (`formatOf`), and nothing on disk is rewritten
+  to say so. A migration editing every record would be the riskiest write the store ever
+  made, to record what is already true. The file's own `version` is unchanged, so a build
+  from before KV-30 still reads a file written since, ignoring the new fields. A future
+  format that does change a meaning is read through a function from the old to the new,
+  applied as it is read and never written back — the way `asAskedNow` already reads a
+  seeded day from before KV-16.
+- **Which rules gave the verdict.** `assessment.rulesVersion` (`RULES_VERSION` in
+  `core/scoring`) is written on every verdict. A viewer never rescores (KV-32), so without
+  it a caregiver reading last year's flag could not tell it came from rules the app no
+  longer has; with it, #42 can say so where the check-in device says it with a drift line
+  (KV-138). It is bumped whenever the scorer would store something different for the same
+  check-in and history, and `tests/rules-version.test.ts` makes that a check rather than a
+  rule someone remembers: it scores a fixed set of check-ins, straddling each comparison
+  rule's line, and pins a hash of what comes out beside the version. A change to a
+  threshold, weight, rule or sentence fails until both move together. It catches what that
+  set exercises, which is why it straddles the lines. Verdicts from before it carry none,
+  and read as unknown: several earlier scorers gave them, and which is not recorded.
+- **Person identity was settled by KV-32.** `personId` never leaves the device — the
+  share's own opaque id replaces it (KV-37) — so a readable local id like `demo-margaret`
+  is sent nowhere, and the global uniqueness the ticket asked for is the share id's. A
+  person added once #18 allows more than one gets a random UUID as their local id as well,
+  so the file names nobody; the existing id stays, since rewriting it would rewrite every
+  record.
+- **No field for the device that wrote it.** Its three uses are answered better elsewhere.
+  Pairing and revocation (#40, #45) work by device keys (KV-33), and every envelope a
+  viewer receives is signed by the check-in device's key, which proves who sent it where a
+  field could only claim it — and two names for one device could disagree. For debugging,
+  the format and the rules version say which code wrote a record and which scored it.
+- **The same record arriving twice is one record.** Ids are UUIDs and never reused, and
+  `append` on any store behind the `SessionStore` seam is idempotent (`sameRecord`): a
+  record already held, arriving again, writes nothing; a *different* record under a held id
+  is refused — not merged, and not taken for a duplicate, since either would lose one of
+  the two unseen. Key order, and a format of 1 left unsaid, are not differences. A record
+  that does have to change on a viewer — the pain note turned on or off for them later, or
+  a deletion — travels as its own message, by id (#41, #45), never as a second copy that
+  quietly replaces the first. A tombstone, whatever #45 makes it, must win over the record
+  it names whichever of the two arrives first.
+- **What is still not checked.** A record's format is checked as it is read; the rest of it
+  is not, field by field. A signature proves who sent a record, not that it is well formed,
+  so #181 checks every field before #42 reads records from another device.
+
 ### What must hold before real check-ins are stored
 
 Each is owned by a Phase 1 ticket that has to land before the check-in flow (#2) stores
@@ -1571,8 +1635,9 @@ three hold:
 - **Records are never edited in place, and have globally unique ids.** Both hold.
   Sessions are only ever appended, which is the property sync needs, and an id is a UUID
   rather than the local clock, so two devices — or two submits in the same millisecond —
-  cannot produce the same one (#25). Seeded ids repeat across installs, which is
-  acceptable only because seeded records never leave the device (#37). When a record is
+  cannot produce the same one (#25). The same record arriving twice is one record
+  (KV-30). Seeded ids repeat across installs, which is acceptable only because seeded
+  records never leave the device (#37). When a record is
   removed — by deletion, or by whatever retention #21 settles on — sync must carry that
   as a tombstone, not as silence. (#45)
 - **Vitals originate in the main process and nowhere else.** This holds: `submit` takes

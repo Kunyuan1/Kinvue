@@ -1,4 +1,5 @@
 import { failureTag } from '../capture/failure'
+import { RECORD_FORMAT } from './format'
 import type { SessionStore } from './store'
 import type { Assessment, CaptureResult, CheckInAnswers, SessionRecord, Vitals } from './types'
 
@@ -129,6 +130,8 @@ export function createCheckIn(deps: CheckInDeps): CheckIn {
       try {
         const history = await deps.store.list(personId)
         const session: SessionRecord = {
+          // Said on the record itself, so it is understood wherever it lands (KV-30).
+          format: RECORD_FORMAT,
           // Not derived from the clock: ids must stay unique once records from
           // more than one device meet.
           id: deps.newId(),

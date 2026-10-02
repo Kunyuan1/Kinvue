@@ -529,3 +529,91 @@ describe('what starting a new history will not do (KV-98 review)', () => {
     expect(await readFile(note, 'utf8')).toBe('edited by someone')
   })
 })
+
+describe('records that make sense on their own (KV-30)', () => {
+  /** A file as KV-13 writes it, holding these records exactly. */
+  const fileOf = (sessions: unknown[]): string => JSON.stringify({ version: 1, sessions })
+
+  it('reads a history from before KV-30 as it is, and never rewrites it to say so', async () => {
+    // The migration is the absence of one: a record with no format is format 1.
+    const { path } = await storeIn()
+    const old = [
+      session({ id: 'old-1' }),
+      session({ id: 'old-2', capturedAt: '2026-09-16T09:00:00.000Z' }),
+    ]
+    await writeFile(path, fileOf(old), 'utf8')
+    const store = createJsonSessionStore(path)
+
+    expect(await store.list('test-person')).toEqual(old)
+    await store.append(session({ id: 'new', format: 1, capturedAt: '2026-09-17T09:00:00.000Z' }))
+    const written = JSON.parse(await readFile(path, 'utf8')) as {
+      sessions: Record<string, unknown>[]
+    }
+    expect(written.sessions.slice(0, 2)).toEqual(old)
+    expect(written.sessions[0]).not.toHaveProperty('format')
+    expect(written.sessions[2]?.format).toBe(1)
+  })
+
+  it('refuses a history holding a newer record, whole, and will not set it aside', async () => {
+    const { path } = await storeIn()
+    const text = fileOf([session({ id: 'old' }), session({ id: 'newer', format: 2 })])
+    await writeFile(path, text, 'utf8')
+    const store = createJsonSessionStore(path, () => new Date(2026, 8, 22, 10, 0))
+
+    const listed = await store.list('test-person').catch((e: unknown) => e)
+    expect(listed).toBeInstanceOf(NewerStoreError)
+    expect(String(listed)).toContain(
+      'holds check-ins written by a newer version of Kinvue (record format 2; this one reads ' +
+        'format 1)',
+    )
+    expect(classifyDashboardError(listed)).toBe('store-newer')
+    await expect(store.append(session({ id: 'today' }))).rejects.toBeInstanceOf(NewerStoreError)
+    await expect(store.startNewHistory()).rejects.toBeInstanceOf(NewerStoreError)
+    expect(await readFile(path, 'utf8')).toBe(text)
+  })
+
+  it('refuses a record whose format is not a format, as it would a broken file', async () => {
+    for (const bad of [{ ...session(), format: '1' }, null, 'a check-in']) {
+      const { path } = await storeIn()
+      await writeFile(path, fileOf([session({ id: 'fine' }), bad]), 'utf8')
+      const store = createJsonSessionStore(path)
+      const listed = await store.list('test-person').catch((e: unknown) => e)
+      expect(listed, JSON.stringify(bad)).toBeInstanceOf(UnreadableStoreError)
+      expect(String(listed)).toMatch(/a check-in in it does not say a format this app knows/)
+    }
+  })
+
+  it('stores a record that arrives twice once, and does not write the second time', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    const record = session({ id: 'once', format: 1 })
+    await store.append(record)
+    const before = await readFile(path, 'utf8')
+
+    renameControl.failNext = true // would throw if a write were attempted
+    await store.append(structuredClone(record))
+    renameControl.failNext = false
+    expect(await readFile(path, 'utf8')).toBe(before)
+    expect(await store.list('test-person')).toEqual([record])
+  })
+
+  it('takes a record from before KV-30, arriving again as format 1, for the same one', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, fileOf([session({ id: 'old' })]), 'utf8')
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'old', format: 1 }))
+    expect(await store.list('test-person')).toHaveLength(1)
+  })
+
+  it('refuses a different record under an id already stored, and changes nothing', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'taken' }))
+    const before = await readFile(path, 'utf8')
+
+    const clash = store.append(session({ id: 'taken', vitals: { pulseRateBpm: 95 } }))
+    await expect(clash).rejects.toThrow(/already holds a different check-in with the id taken/)
+    await expect(clash).rejects.toThrow(/Nothing has been changed/)
+    expect(await readFile(path, 'utf8')).toBe(before)
+  })
+})
