@@ -173,6 +173,8 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
   trend/index.ts         the trend's series and its sentences, shaped here so the
                          caregiver's own client draws the same thing (KV-4)
+  share/index.ts         what may leave the device: every field classified, the
+                         pain note per viewer, seeded records never (KV-37)
 
 tests/                   Vitest. Covers baseline, scoring, validation, check-in, time,
                          device, guidance, frames, answers, failures, the capture reply,
