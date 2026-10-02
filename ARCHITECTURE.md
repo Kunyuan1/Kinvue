@@ -1243,9 +1243,12 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
   *Who sees it, and how it is taken back* below.
 - **What leaves the device is decided in one place** — `toShared` in `core/share/`,
   with every field of a session explicitly classified. Each shape that leaves has a table
-  typed over its own keys, so a new field does not compile until it is decided, and the
-  tables do the copying, so they cannot say one thing while the code does another. Sync
-  code sends what it returns and nothing else. (KV-37)
+  over its own keys — every branch's, for a union — so a new field does not compile until
+  it is decided. A field holding a shape is decided by that shape's table, never shared
+  whole, and one walk reads the tables from the record's down, so they cannot say one
+  thing while the code does another. The shared types are read off the tables too, so a
+  field a table stops sending leaves the type with it. Sync code sends what `toShared`
+  and `shareSet` return — `SharedRecord`s — and nothing else. (KV-37)
 - **A calm daily summary, never a real-time alert.** A notification the moment a flag
   fires would turn the app into the emergency alarm it is designed not to be, and a lock
   screen far away cannot carry the difference between "worth a look" and "drive over".
