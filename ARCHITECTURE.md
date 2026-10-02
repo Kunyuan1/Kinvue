@@ -1241,9 +1241,11 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
   physiology without consent is surveillance, however well meant. It is the person's own
   consent; a path for someone who cannot give it waits on legal advice (#35). See
   *Who sees it, and how it is taken back* below.
-- **What leaves the device is decided in one place** — a single tested function in
-  `core/`, with every field of a session explicitly classified. Sync code sends what it
-  returns and nothing else. (#37)
+- **What leaves the device is decided in one place** — `toShared` in `core/share/`,
+  with every field of a session explicitly classified. Each shape that leaves has a table
+  typed over its own keys, so a new field does not compile until it is decided, and the
+  tables do the copying, so they cannot say one thing while the code does another. Sync
+  code sends what it returns and nothing else. (KV-37)
 - **A calm daily summary, never a real-time alert.** A notification the moment a flag
   fires would turn the app into the emergency alarm it is designed not to be, and a lock
   screen far away cannot carry the difference between "worth a look" and "drive over".
@@ -1327,8 +1329,9 @@ field to it (KV-53, KV-87, KV-100, KV-138, KV-154), and a sixth must not leave b
 - **A demo install's real check-ins lose their seeded usual on the way out.** A real card
   scored against seeded days arrives with its stored verdict and seeded disclosure, but the
   viewer's chart, holding no seeded records, may have no usual to draw beside it — the card
-  quoting a usual the chart cannot. Demo installs are not meant for sharing; #37 decides
-  whether such a card is shared at all.
+  quoting a usual the chart cannot. Demo installs are not meant for sharing, but such a
+  card **is** shared (KV-37): its stored verdict already says it was compared with demo
+  data, and holding back a real check-in would be the wrong way round.
 - It travels end-to-end encrypted and signed, through a relay that cannot read it (KV-33).
 
 ### Who sees it, and how it is taken back (KV-31)
