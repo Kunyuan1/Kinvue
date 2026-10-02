@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { scoreSession } from '@core/scoring'
+import { RULES_VERSION, scoreSession } from '@core/scoring'
+import { RECORD_FORMAT } from '@core/session/format'
 import { classifyCaptureError, classifySubmitError } from '@core/capture/failure'
 import { createCheckIn, PENDING_CAPTURE_TTL_MS, type CheckInDeps } from '@core/session/checkin'
 import type { CheckInAnswers, SessionRecord, Vitals } from '@core/session/types'
@@ -53,6 +54,15 @@ describe('createCheckIn', () => {
     expect(record.personId).toBe(PERSON)
     expect(record.capturedAt).toBe(START.toISOString())
     expect(record.assessment).toBeDefined()
+  })
+
+  it('says on the record which format it is in and which rules scored it (KV-30)', async () => {
+    const { checkIn, stored } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+
+    expect(stored[0]?.format).toBe(RECORD_FORMAT)
+    expect(stored[0]?.assessment?.rulesVersion).toBe(RULES_VERSION)
   })
 
   it('records the zone the capture was taken in', async () => {

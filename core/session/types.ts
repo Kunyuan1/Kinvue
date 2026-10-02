@@ -235,12 +235,30 @@ export interface Assessment {
    * those the reason is recovered from the stored summary where it can be.
    */
   withheld?: WithheldReason
+  /**
+   * Which version of the rules gave this verdict: `RULES_VERSION` when it was
+   * scored (KV-30). Absent on a verdict scored before versions were recorded,
+   * and that reads as unknown, not as version 1: those were given by several
+   * earlier scorers (KV-93, KV-100, KV-138 each changed what one stores), and
+   * which one is not on the record.
+   *
+   * A seeded record's verdict is given when shown (KV-103), so it always
+   * carries the current one.
+   */
+  rulesVersion?: number
 }
 
 /** What withheld a verdict: see `Assessment.withheld`. */
 export type WithheldReason = UnusableReason | 'still-learning' | 'uncompared'
 
 export interface SessionRecord {
+  /**
+   * The record format it was written in (KV-30): `RECORD_FORMAT` in
+   * `core/session/format.ts`, which says when it changes. Absent on a record
+   * written before KV-30, which is format 1 by definition and is read as that
+   * (`formatOf`), never rewritten to say so.
+   */
+  format?: number
   id: string
   /** Which cared-for person this check-in belongs to. */
   personId: string

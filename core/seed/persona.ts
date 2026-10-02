@@ -1,5 +1,6 @@
 import type { Assessment, SessionRecord, SleepAnswer, MoodAnswer } from '../session/types'
 import { scoreSession, totalSeverity } from '../scoring'
+import { RECORD_FORMAT } from '../session/format'
 
 /**
  * A pre-seeded history for the demo persona (KV-8).
@@ -125,6 +126,7 @@ export function seedDemoHistory(
     const jitter = (spread: number): number => (r() - 0.5) * 2 * spread
 
     const draw = (): SessionRecord => ({
+      format: RECORD_FORMAT,
       id: `seed-${DEMO_PERSON_ID}-${i}`,
       personId: DEMO_PERSON_ID,
       capturedAt: at.toISOString(),

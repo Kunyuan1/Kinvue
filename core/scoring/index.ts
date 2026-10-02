@@ -30,6 +30,22 @@ export type { Rule, RuleContext } from './rules'
  */
 export const ELEVATED_SEVERITY_THRESHOLD = 0.6
 
+/**
+ * Which version of the rules scored a check-in, written on every verdict
+ * (KV-30). Thresholds will be recalibrated (#22), and a caregiver reading last
+ * year's flag — on a viewer's device, which never rescores (KV-32) — should be
+ * able to tell it was given by rules the app no longer has.
+ *
+ * **Bumped whenever the scorer would store something different for the same
+ * check-in and history**: a verdict, a fired rule, a severity, or the words of
+ * a summary or explanation, since those are stored too. `tests/rules-version.test.ts`
+ * scores a fixed set of check-ins and pins what comes out, so a change that
+ * moves any of it fails there until this is bumped with it. It catches what
+ * that set exercises; a threshold moved by a hair between two of its cases can
+ * pass unnoticed, which is why the set straddles each rule's line.
+ */
+export const RULES_VERSION = 1
+
 /** What an assessment's fired rules sum to: the number compared against the threshold. */
 export function totalSeverity(assessment: Assessment): number {
   return assessment.firedRules.reduce((sum, rule) => sum + rule.severity, 0)
@@ -493,7 +509,7 @@ function summaryOf(facts: AssessmentFacts): string {
 }
 
 function withSummary(facts: AssessmentFacts): Assessment {
-  return { ...facts, summary: summaryOf(facts) }
+  return { ...facts, summary: summaryOf(facts), rulesVersion: RULES_VERSION }
 }
 
 /**

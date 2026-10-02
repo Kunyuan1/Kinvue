@@ -1,4 +1,5 @@
 import { baselineWindow } from '../baseline'
+import { formatOf } from '../session/format'
 import type {
   Assessment,
   BaselineSpan,
@@ -162,9 +163,15 @@ export const ASSESSMENT_POLICY = {
   // The stored reason a verdict was withheld (KV-138), not a classification:
   // the card says it, so it leaves.
   withheld: 'shared',
+  // So a viewer, which never rescores, can tell a verdict from rules the app
+  // no longer has (KV-30).
+  rulesVersion: 'shared',
 } as const satisfies Policy<Assessment>
 
 export const RECORD_POLICY = {
+  // What a viewer checks before reading anything else (KV-30). Always written
+  // on the way out, as 1 for a record from before it said so.
+  format: 'shared',
   // Not replaced like `personId` (review of #180): a real record's id is a
   // random UUID (#25), so it names nothing and correlates nothing across
   // installs. The ids that do — `seed-demo-margaret-3` — are on seeded records,
@@ -217,6 +224,8 @@ type SharedValue<V, P> = P extends 'shared'
 
 /** One check-in as a viewer's device receives it. */
 export type SharedRecord = SharedOf<SessionRecord, typeof RECORD_POLICY> & {
+  /** Always present: a record that leaves says which format it is in (KV-30). */
+  format: number
   /** The share's own opaque id, never the local one (KV-32). */
   personId: string
 }
@@ -352,8 +361,11 @@ const granted = (viewer: Viewer | null, key: string): boolean =>
  */
 export function toShared(record: SessionRecord, viewer: Viewer): SharedRecord | null {
   const picked = leaving(record, viewer)
-  // `personId` is `replaced`, so `pick` leaves it behind and it is written here.
-  return picked === null ? null : { ...picked, personId: viewer.shareId }
+  // `personId` is `replaced`, so `pick` leaves it behind and it is written here;
+  // `format` is written even where the record leaves it unsaid, as 1 (KV-30).
+  return picked === null
+    ? null
+    : { ...picked, format: formatOf(record), personId: viewer.shareId }
 }
 
 /**
