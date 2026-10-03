@@ -129,6 +129,19 @@ describe('toShared: one check-in as a viewer receives it (KV-37)', () => {
     expect(shared.timeZone).toBe('Europe/London')
   })
 
+  it('keeps home a record whose format is not one it can read (review of #182)', () => {
+    for (const format of ['2', 0, -1, 1.5, Number.NaN, null, 2]) {
+      const record = { ...everything(), format } as unknown as SessionRecord
+      expect(toShared(record, VIEWER), String(format)).toBeNull()
+    }
+    // And so the share set never sends one, nor dates the share by it.
+    const days = [
+      session({ id: 'odd', format: 0 }),
+      session({ id: 'fine', capturedAt: '2026-09-16T09:00:00.000Z' }),
+    ]
+    expect(shareSet(days, 'test-person', VIEWER).map((r) => r.id)).toEqual(['fine'])
+  })
+
   it('always says which format it is in, as 1 for a record from before it said so (KV-30)', () => {
     expect(RECORD_POLICY.format).toBe('shared')
     expect(toShared(everything(), VIEWER)!.format).toBe(1)

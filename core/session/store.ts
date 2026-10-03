@@ -156,11 +156,19 @@ export class UnreachableStoreError extends Error {
  * **Raised for one newer record as well as for a newer file** (KV-30): a
  * history holding a check-in this build cannot read is refused whole, as a
  * newer file is. Leaving that one out would score every later check-in against
- * a usual missing a day, with nothing to say so, and `append` would still write
- * it back untouched — so nothing would be lost, only quietly misread.
+ * a usual missing a day, with nothing to say so. And it would not stop there:
+ * the check runs in `read`, which `append` uses too, so a record filtered out
+ * here would be pushed past and the file renamed over without it — the record
+ * gone, not merely misread (review of #182). Only a filter in `list` alone
+ * would leave `append` writing it back untouched.
+ *
+ * Whole, and not just for the person it belongs to: a record in a format this
+ * build does not know cannot be trusted to say whose it is. A viewer, which
+ * knows that from the share and never rescores, holds such a record aside
+ * instead (ARCHITECTURE.md, KV-30).
  */
 export class NewerStoreError extends Error {
-  constructor(path: string, version: number, of: 'file' | 'record' = 'file') {
+  constructor(path: string, version: number, of: 'file' | 'record') {
     super(
       of === 'file'
         ? `${failureTag('store-newer')}: The check-in history at ${path} was written by a ` +
@@ -172,6 +180,33 @@ export class NewerStoreError extends Error {
             'version can read it.',
     )
     this.name = 'NewerStoreError'
+  }
+}
+
+/**
+ * One entry in the history is not a check-in this build can read: not a
+ * record at all, or a record whose `format` is not a format (KV-30).
+ *
+ * **Never set aside** (review of #182). It began as an `UnreadableStoreError`,
+ * which offers *Start a new history* — so one hand-edited or half-merged entry
+ * among months of good ones put a button under the sentence that would archive
+ * the whole baseline. The file is as intact as a newer one, and better
+ * understood than nothing, so it is refused the same way: whole, every time,
+ * with a sentence saying which entry and that the rest is fine. Refused whole
+ * because an entry this build cannot read cannot be trusted to say whose it
+ * is, so it cannot be left out of one person's history and not another's.
+ */
+export class UnrecognisedRecordError extends Error {
+  constructor(path: string, position: number, total: number, notARecord: boolean) {
+    const what = notARecord
+      ? 'is not a check-in at all'
+      : 'is a check-in in a format this app does not know'
+    super(
+      `${failureTag('store-record-unknown')}: Entry ${String(position)} of ${String(total)} in ` +
+        `the check-in history at ${path} ${what}. Nothing has been changed, and the rest of ` +
+        'the history is intact; the file needs someone to look at that entry.',
+    )
+    this.name = 'UnrecognisedRecordError'
   }
 }
 
@@ -248,7 +283,7 @@ async function read(path: string): Promise<FileShape> {
   // mismatch, which names the real problem and implies the fix (KV-13 review).
   const version: unknown = (parsed as { version?: unknown }).version
   if (typeof version === 'number' && Number.isFinite(version) && version > FILE_VERSION) {
-    throw new NewerStoreError(path, version)
+    throw new NewerStoreError(path, version, 'file')
   }
   if (version !== FILE_VERSION) {
     throw new UnreadableStoreError(path, describeVersion(version))
@@ -264,8 +299,10 @@ async function read(path: string): Promise<FileShape> {
   if (newer !== undefined) {
     throw new NewerStoreError(path, (newer as { format: number }).format, 'record')
   }
-  if (records.some((r) => !isObject(r) || checkFormat(r) === 'unrecognised')) {
-    throw new UnreadableStoreError(path, 'a check-in in it does not say a format this app knows')
+  const unknown = records.findIndex((r) => !isObject(r) || checkFormat(r) === 'unrecognised')
+  if (unknown !== -1) {
+    const notARecord = !isObject(records[unknown])
+    throw new UnrecognisedRecordError(path, unknown + 1, records.length, notARecord)
   }
   return parsed
 }

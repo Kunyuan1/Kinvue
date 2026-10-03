@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
+import { createHash } from 'node:crypto'
 import { checkFormat, formatOf, RECORD_FORMAT, sameRecord } from '@core/session/format'
+import { RECORD_POLICY } from '@core/share'
+import type { SessionRecord } from '@core/session/types'
 import { session } from './helpers'
 
 /**
@@ -32,17 +35,18 @@ describe('sameRecord: one record arriving twice is one record (KV-30)', () => {
   })
 
   it('ignores key order, which is not part of what a record says', () => {
+    // Every level reversed from the record itself, not rebuilt from literals, so
+    // a changed default or a fifth question cannot make this fail for the wrong
+    // reason (review of #182).
     const record = session({ timeZone: 'Europe/London' })
-    const reordered = JSON.parse(
-      JSON.stringify({
-        answers: { painReported: false, skippedMeal: false, sleep: 'well', mood: 'good' },
-        vitals: Object.fromEntries(Object.entries(record.vitals).reverse()),
-        timeZone: record.timeZone,
-        capturedAt: record.capturedAt,
-        personId: record.personId,
-        id: record.id,
-      }),
-    )
+    const reverse = <T extends object>(o: T): T =>
+      Object.fromEntries(Object.entries(o).reverse()) as T
+    const reordered = reverse({
+      ...record,
+      answers: reverse(record.answers),
+      vitals: reverse(record.vitals),
+    })
+    expect(JSON.stringify(reordered)).not.toBe(JSON.stringify(record))
     expect(sameRecord(record, reordered)).toBe(true)
   })
 
@@ -58,7 +62,47 @@ describe('sameRecord: one record arriving twice is one record (KV-30)', () => {
     expect(sameRecord(session(), session({ format: 2 }))).toBe(false)
   })
 
+  it('reads only an absent format as unsaid: `null` is a value, not a format', () => {
+    // Review of #182: `formatOf` read `null` as 1 while `checkFormat` refused it.
+    const nulled = { ...session(), format: null } as unknown as SessionRecord
+    expect(checkFormat(nulled)).toBe('unrecognised')
+    expect(sameRecord(session(), nulled)).toBe(false)
+  })
+
   it('is not the same record under another id, even with the same content', () => {
     expect(sameRecord(session({ id: 'a' }), session({ id: 'b' }))).toBe(false)
+  })
+})
+
+describe('the format and what leaves are decided together (review of #182)', () => {
+  /**
+   * The share tables as data: every entry, nested tables and lists included.
+   * A list's table sits under a symbol, which `Object.entries` does not see.
+   */
+  function shape(policy: object): unknown {
+    const symbols = Object.getOwnPropertySymbols(policy)
+    if (symbols.length > 0) return { list: shape((policy as Record<symbol, object>)[symbols[0]!]!) }
+    return Object.fromEntries(
+      Object.entries(policy).map(([key, entry]) => [
+        key,
+        typeof entry === 'object' ? shape(entry) : entry,
+      ]),
+    )
+  }
+
+  /** What leaves, pinned beside the format it leaves in. */
+  const PINNED = { recordFormat: 1, sharedShape: '8d7dbffdcac9814f' }
+
+  it('fails when what leaves changes, until someone decides whether the format must move', () => {
+    const sharedShape = createHash('sha256')
+      .update(JSON.stringify(shape(RECORD_POLICY)))
+      .digest('hex')
+      .slice(0, 16)
+    expect(
+      { recordFormat: RECORD_FORMAT, sharedShape },
+      'What leaves the device has changed. Decide whether a viewer reading the old shared ' +
+        'shape would misread the new one: if so, bump RECORD_FORMAT in core/session/format.ts. ' +
+        'Either way, update PINNED here to the new values.',
+    ).toEqual(PINNED)
   })
 })

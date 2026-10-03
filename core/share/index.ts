@@ -1,5 +1,5 @@
 import { baselineWindow } from '../baseline'
-import { formatOf } from '../session/format'
+import { checkFormat, formatOf } from '../session/format'
 import type {
   Assessment,
   BaselineSpan,
@@ -361,11 +361,8 @@ const granted = (viewer: Viewer | null, key: string): boolean =>
  */
 export function toShared(record: SessionRecord, viewer: Viewer): SharedRecord | null {
   const picked = leaving(record, viewer)
-  // `personId` is `replaced`, so `pick` leaves it behind and it is written here;
-  // `format` is written even where the record leaves it unsaid, as 1 (KV-30).
-  return picked === null
-    ? null
-    : { ...picked, format: formatOf(record), personId: viewer.shareId }
+  // `personId` is `replaced`, so `pick` leaves it behind and it is written here.
+  return picked === null ? null : { ...picked, personId: viewer.shareId }
 }
 
 /**
@@ -386,10 +383,17 @@ function leaving(
   record: SessionRecord,
   viewer: Viewer | null,
 ): Omit<SharedRecord, 'personId'> | null {
+  // The field a viewer checks before anything else is the last one to guess
+  // at (review of #182): a format that is not one, or one newer than this
+  // build reads, keeps the record home rather than leaving as a string, a `0`,
+  // or a `1` the record never said.
+  if (checkFormat(record) !== 'readable') return null
   const picked = pick(record, RECORD_POLICY, viewer)
   if (picked === REFUSED) return null
   if (Object.keys(MUST_ARRIVE).some((key) => !Object.hasOwn(picked, key))) return null
-  return picked as Omit<SharedRecord, 'personId'>
+  // Written even where the record leaves it unsaid, as 1, so every record that
+  // leaves says its format — and so the type below is true, not just asserted.
+  return { ...(picked as Omit<SharedRecord, 'personId' | 'format'>), format: formatOf(record) }
 }
 
 /**

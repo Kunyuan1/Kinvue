@@ -7,6 +7,7 @@ import {
   NewerStoreError,
   UnreachableStoreError,
   UnreadableStoreError,
+  UnrecognisedRecordError,
 } from '@core/session/store'
 import { classifyDashboardError, classifySubmitError } from '@core/capture/failure'
 import { session, sessionBeforeKV16 } from './helpers'
@@ -572,14 +573,27 @@ describe('records that make sense on their own (KV-30)', () => {
     expect(await readFile(path, 'utf8')).toBe(text)
   })
 
-  it('refuses a record whose format is not a format, as it would a broken file', async () => {
-    for (const bad of [{ ...session(), format: '1' }, null, 'a check-in']) {
+  it('refuses an entry it cannot read, says which, and never sets the history aside', async () => {
+    // One bad entry among good ones is not a broken file: offering to archive
+    // the baseline over it would be the destructive answer (review of #182).
+    const cases: [unknown, string][] = [
+      [{ ...session(), format: '1' }, 'is a check-in in a format this app does not know'],
+      [null, 'is not a check-in at all'],
+      ['a check-in', 'is not a check-in at all'],
+    ]
+    for (const [bad, says] of cases) {
       const { path } = await storeIn()
-      await writeFile(path, fileOf([session({ id: 'fine' }), bad]), 'utf8')
-      const store = createJsonSessionStore(path)
+      const text = fileOf([session({ id: 'fine' }), bad, session({ id: 'also-fine' })])
+      await writeFile(path, text, 'utf8')
+      const store = createJsonSessionStore(path, () => new Date(2026, 9, 3, 10, 0))
       const listed = await store.list('test-person').catch((e: unknown) => e)
-      expect(listed, JSON.stringify(bad)).toBeInstanceOf(UnreadableStoreError)
-      expect(String(listed)).toMatch(/a check-in in it does not say a format this app knows/)
+      expect(listed, JSON.stringify(bad)).toBeInstanceOf(UnrecognisedRecordError)
+      expect(String(listed)).toContain(`Entry 2 of 3 in the check-in history at ${path} ${says}`)
+      expect(String(listed)).toContain('the rest of the history is intact')
+      expect(classifyDashboardError(listed)).toBe('store-record-unknown')
+      expect(classifySubmitError(listed)).toBe('store-unreadable')
+      await expect(store.startNewHistory()).rejects.toBeInstanceOf(UnrecognisedRecordError)
+      expect(await readFile(path, 'utf8')).toBe(text)
     }
   })
 

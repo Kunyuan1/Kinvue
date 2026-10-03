@@ -1521,9 +1521,10 @@ Three facts decided it more than any general comparison:
   *the* chart, not a second drawing of it that can drift from the first. `core/` imports
   nothing from Node except the JSON-file store, and the viewer does not reuse that file: it
   implements the same `SessionStore` seam over the phone's own storage, keeping the file's
-  discipline — refuse a store from a newer version, check the shape of what is read, write
-  so a crash leaves the old copy — since a newer desktop app is exactly where its records
-  will come from (#30, #42).
+  discipline — never read a record from a newer format as one it knows, check the shape of
+  what is read, write so a crash leaves the old copy — since a newer desktop app is exactly
+  where its records will come from (#30, #42). Not the check-in device's way of refusing,
+  though: see *What a record carries on its own*.
 - **A web app served live would weaken KV-33.** Whoever controls the server that sends the
   page can send code that reads the viewer's keys, to one viewer or all of them, on any
   request, with nothing to show it happened — the standing weakness of end-to-end encryption
@@ -1575,14 +1576,30 @@ code that wrote it. What #30 asked, and what was decided:
 - **Its format, on the record.** `format` (`RECORD_FORMAT` in `core/session/format.ts`) is
   written on every record, and always on one that leaves (KV-37). A reader refuses a record
   in a format newer than it knows rather than reading it as one it does: the check-in device
-  refuses the whole history, as it refuses a newer file (`NewerStoreError`), since leaving
-  one record out would score every later check-in against a usual missing a day; how a
-  viewer says it is #42's. **It is bumped only when a reader of the old format would
+  refuses the whole history, as it refuses a newer file (`NewerStoreError`): leaving one
+  record out would score every later check-in against a usual missing a day, and it cannot
+  be left out of one person's history only, since a record in a format this build does not
+  know cannot be trusted to say whose it is. A viewer is placed differently (review of
+  #182): it never rescores (KV-32), and it knows whose a record is from the share it came
+  in, not from the record. So a viewer holds just that record aside and shows the rest,
+  saying a check-in needs a newer version of the app; refusing everything there would cost
+  a caregiver every person they look after and protect nothing. How it says so is #42's.
+  An entry the device cannot read at all — not a record, or a format that is not one — is
+  refused the same way as a newer one, with no offer to set the history aside
+  (`UnrecognisedRecordError`): the file is as intact, and archiving a baseline over one
+  entry somebody needs to look at would be the destructive answer. **It is bumped only when a reader of the old format would
   misread the new** — a field that changes meaning, or is renamed or removed. KV-16's meal
   question would have been one. Adding a field is not: every reader leaves behind what it
   does not know (`toShared` does by construction), so bumping for one would lock older
   readers out of records they read correctly. Format 1 is every record so far, both meal
-  questions included, since today's reader reads both.
+  questions included, since today's reader reads both. **One number covers both shapes a
+  record is read in** — as stored, by an older check-in app, and as it leaves
+  (`SharedRecord`), by a viewer — and is bumped when a reader of either would misread the
+  new. So a change to what leaves can need a bump with nothing stored changing, and a test
+  pins the share tables beside the number so that is decided, not missed; the other way
+  round, a change to a field that never leaves bumps it too, and viewers hold back records
+  they could have read until they are updated. That cost was taken over two numbers kept in
+  step by hand (review of #182).
 - **No migration that rewrites history.** A record from before KV-30 carries no format; it
   is format 1 by definition and read as that (`formatOf`), and nothing on disk is rewritten
   to say so. A migration editing every record would be the riskiest write the store ever

@@ -18,6 +18,16 @@ import type { SessionRecord } from './types'
  * construction), so bumping for one would only lock older readers out of
  * records they read correctly.
  *
+ * **One number for both shapes a record is read in** (review of #182): as
+ * stored, by an older build of the check-in app, and as it leaves
+ * (`SharedRecord`), by a viewer. It is bumped when a reader of either would
+ * misread the new — so a change to what leaves can need a bump with nothing
+ * stored changing, and `tests/format.test.ts` pins the share tables beside
+ * this number to make that a decision rather than an oversight. The cost runs
+ * the other way: a change to a field that never leaves bumps it too, and a
+ * viewer then holds back records it could have read until it is updated. Rare,
+ * cleared by an update, and cheaper than two numbers kept in step by hand.
+ *
  * Every record written before KV-30 is format 1, though none of them says so.
  * They are not rewritten to say it: history is append-only, and a migration
  * that edited every record on disk would be the riskiest write this file ever
@@ -26,9 +36,20 @@ import type { SessionRecord } from './types'
  */
 export const RECORD_FORMAT = 1
 
-/** The format of a record already read: as written, or 1 for one from before KV-30. */
+/**
+ * Whether a record leaves its format unsaid, as every record from before
+ * KV-30 does: the field absent, and nothing else. `null` is a value somebody
+ * wrote, not a format left unsaid, so it is not read as 1 (review of #182) —
+ * one definition, which `formatOf`, `checkFormat` and `sameRecord` all use.
+ */
+const formatUnsaid = (record: { format?: unknown }): boolean => record.format === undefined
+
+/**
+ * The format of a record already read: as written, or 1 for one from before
+ * KV-30. Only for a record `checkFormat` has passed; it does not ask again.
+ */
 export function formatOf(record: Pick<SessionRecord, 'format'>): number {
-  return record.format ?? 1
+  return formatUnsaid(record) ? 1 : (record.format as number)
 }
 
 /**
@@ -38,7 +59,7 @@ export function formatOf(record: Pick<SessionRecord, 'format'>): number {
  * format field that is not a format at all.
  */
 export function checkFormat(record: { format?: unknown }): 'readable' | 'newer' | 'unrecognised' {
-  const format = record.format === undefined ? 1 : record.format
+  const format = formatUnsaid(record) ? 1 : record.format
   if (typeof format !== 'number' || !Number.isInteger(format) || format < 1) return 'unrecognised'
   return format > RECORD_FORMAT ? 'newer' : 'readable'
 }

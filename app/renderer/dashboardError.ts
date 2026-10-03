@@ -21,6 +21,9 @@ const FLOOR: Record<Exclude<DashboardFailure, 'unknown'>, string> = {
   'store-newer':
     'The saved check-in history was written by a newer version of Kinvue. Nothing has been ' +
     'changed. The newer version can read it.',
+  'store-record-unknown':
+    'One entry in the saved check-in history could not be read. Nothing has been changed, ' +
+    'and the rest of the history is intact. The file needs someone to look at it.',
 }
 
 /**

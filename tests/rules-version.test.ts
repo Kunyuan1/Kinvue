@@ -91,9 +91,9 @@ interface EdgeCase extends Case {
 
 /** Readings just inside, on and just past every edge of each metric's usual range. */
 function edges(): EdgeCase[] {
-  const history = life(7, 16)
-    .map((c) => c.session)
-    .filter((s) => s.seeded !== true)
+  // Seed 7 has no seeded days (only seeds divisible by 3 do), so this is a
+  // measured history as it stands; nothing needs filtering out of it.
+  const history = life(7, 16).map((c) => c.session)
   const baseline = computeBaseline(history)
   const cases: EdgeCase[] = []
   for (const metric of Object.keys(FIELD) as ComparedMetric[]) {
