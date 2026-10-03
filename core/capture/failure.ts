@@ -72,6 +72,14 @@ export type TaggedFailure =
    * for setting aside: the newer version reads it.
    */
   | 'store-newer'
+  /**
+   * One entry in the stored history is not a check-in this app can read: not a
+   * record at all, or a record whose format is not a format (KV-30, review of
+   * #182). The rest of the history is intact, so, like `store-newer`, it is
+   * never offered for setting aside — that would archive a whole baseline over
+   * one entry somebody needs to look at.
+   */
+  | 'store-record-unknown'
 
 /**
  * What the capture screen can be asked to say.
@@ -109,6 +117,8 @@ export type DashboardFailure =
   | 'store-unreachable'
   /** The history was written by a newer version of the app. Its own sentence, no button. */
   | 'store-newer'
+  /** One entry in the history cannot be read. Its own sentence, no button. */
+  | 'store-record-unknown'
   /** Anything else. Shown as a plain sentence; the original goes to the console. */
   | 'unknown'
 
@@ -152,6 +162,7 @@ const ON_CAPTURE: Record<TaggedFailure, CaptureFailure | null> = {
   'store-unreadable': 'unknown',
   'store-unreachable': 'unknown',
   'store-newer': 'unknown',
+  'store-record-unknown': 'unknown',
 }
 
 /** Where every tag goes on the submit path. Never null: see `classifySubmitError`. */
@@ -174,6 +185,8 @@ const ON_SUBMIT: Record<TaggedFailure, SubmitFailure> = {
   // Retrying cannot fix it any more than an unreadable file, so it gets the same
   // "needs looking at" sentence rather than "worth another go".
   'store-newer': 'store-unreadable',
+  // Likewise: it fails the same way every time until someone looks at the file.
+  'store-record-unknown': 'store-unreadable',
 }
 
 /**
@@ -194,6 +207,7 @@ const ON_DASHBOARD: Record<TaggedFailure, DashboardFailure> = {
   'store-unreadable': 'store-unreadable',
   'store-unreachable': 'store-unreachable',
   'store-newer': 'store-newer',
+  'store-record-unknown': 'store-record-unknown',
 }
 
 /**

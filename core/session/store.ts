@@ -3,6 +3,7 @@ import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/pr
 import { dirname } from 'node:path'
 import { failureTag } from '../capture/failure'
 import { asAskedNow } from './answers'
+import { checkFormat, RECORD_FORMAT, sameRecord } from './format'
 import type { SessionRecord } from './types'
 
 /**
@@ -17,7 +18,16 @@ import type { SessionRecord } from './types'
 export interface SessionStore {
   /** All sessions for a person, oldest first. */
   list(personId: string): Promise<SessionRecord[]>
-  /** Append one session. Sessions are never edited in place. */
+  /**
+   * Append one session. Sessions are never edited in place.
+   *
+   * **Idempotent** (KV-30): a record already stored, arriving again, is one
+   * record, and nothing is written. A *different* record under a stored id is
+   * refused, not merged and not treated as a duplicate — ids are never reused,
+   * so it is a bug or a forgery, and either answer would lose one of the two
+   * unseen. Any store behind this seam keeps both rules, the caregiver's
+   * client's included (KV-34).
+   */
   append(record: SessionRecord): Promise<void>
   /** Every person with at least one session. */
   people(): Promise<string[]>
@@ -35,8 +45,9 @@ export interface SessionStore {
  * Read, not decoration (KV-13). It was written on every save and checked
  * nowhere, which implies a migration story that does not exist — and a file
  * from a later version would have been read as though it were this one, which
- * is the quiet kind of wrong. Sync (#30) will need a version on each record
- * rather than on the file; this is only about the file.
+ * is the quiet kind of wrong. This is only about the file: each record carries
+ * its own format as well (`RECORD_FORMAT`, KV-30), checked as the file is read,
+ * so a record in a newer format is refused without this having to change.
  */
 const FILE_VERSION = 1
 
@@ -139,25 +150,72 @@ export class UnreachableStoreError extends Error {
  * again afterwards would find no `sessions.json`, start from nothing, and never
  * look at the file set aside. So it has its own tag, the dashboard offers no
  * button for it, and `startNewHistory` refuses to move it: the fix is the newer
- * version, which reads it as it is. Migration is #30's.
+ * version, which reads it as it is. There is no migration to offer instead:
+ * records are never rewritten into another format (KV-30).
+ *
+ * **Raised for one newer record as well as for a newer file** (KV-30): a
+ * history holding a check-in this build cannot read is refused whole, as a
+ * newer file is. Leaving that one out would score every later check-in against
+ * a usual missing a day, with nothing to say so. And it would not stop there:
+ * the check runs in `read`, which `append` uses too, so a record filtered out
+ * here would be pushed past and the file renamed over without it — the record
+ * gone, not merely misread (review of #182). Only a filter in `list` alone
+ * would leave `append` writing it back untouched.
+ *
+ * Whole, and not just for the person it belongs to: a record in a format this
+ * build does not know cannot be trusted to say whose it is. A viewer, which
+ * knows that from the share and never rescores, holds such a record aside
+ * instead (ARCHITECTURE.md, KV-30).
  */
 export class NewerStoreError extends Error {
-  constructor(path: string, version: number) {
+  constructor(path: string, version: number, of: 'file' | 'record') {
     super(
-      `${failureTag('store-newer')}: The check-in history at ${path} was written by a newer ` +
-        `version of Kinvue (file version ${String(version)}; this one reads version ` +
-        `${String(FILE_VERSION)}). Nothing has been changed. The newer version can read it.`,
+      of === 'file'
+        ? `${failureTag('store-newer')}: The check-in history at ${path} was written by a ` +
+            `newer version of Kinvue (file version ${String(version)}; this one reads version ` +
+            `${String(FILE_VERSION)}). Nothing has been changed. The newer version can read it.`
+        : `${failureTag('store-newer')}: The check-in history at ${path} holds check-ins ` +
+            `written by a newer version of Kinvue (record format ${String(version)}; this one ` +
+            `reads format ${String(RECORD_FORMAT)}). Nothing has been changed. The newer ` +
+            'version can read it.',
     )
     this.name = 'NewerStoreError'
   }
 }
 
 /**
+ * One entry in the history is not a check-in this build can read: not a
+ * record at all, or a record whose `format` is not a format (KV-30).
+ *
+ * **Never set aside** (review of #182). It began as an `UnreadableStoreError`,
+ * which offers *Start a new history* — so one hand-edited or half-merged entry
+ * among months of good ones put a button under the sentence that would archive
+ * the whole baseline. The file is as intact as a newer one, and better
+ * understood than nothing, so it is refused the same way: whole, every time,
+ * with a sentence saying which entry and that the rest is fine. Refused whole
+ * because an entry this build cannot read cannot be trusted to say whose it
+ * is, so it cannot be left out of one person's history and not another's.
+ */
+export class UnrecognisedRecordError extends Error {
+  constructor(path: string, position: number, total: number, notARecord: boolean) {
+    const what = notARecord
+      ? 'is not a check-in at all'
+      : 'is a check-in in a format this app does not know'
+    super(
+      `${failureTag('store-record-unknown')}: Entry ${String(position)} of ${String(total)} in ` +
+        `the check-in history at ${path} ${what}. Nothing has been changed, and the rest of ` +
+        'the history is intact; the file needs someone to look at that entry.',
+    )
+    this.name = 'UnrecognisedRecordError'
+  }
+}
+
+/**
  * Only what it actually checks: an object with a `sessions` array. The version
- * is checked separately, before this, and the records themselves are still not
- * validated — `isFileShape` says nothing about what is *in* `sessions`. KV-74
- * had to defend against exactly that in the scorer; it belongs with #30's
- * record format rather than here.
+ * is checked separately, before this, and so is each record's format (KV-30),
+ * after it. The rest of each record is still not validated — `isFileShape`
+ * says nothing about what is *in* `sessions`. KV-74 had to defend against
+ * exactly that in the scorer; checking every field is #181's.
  */
 function isFileShape(value: unknown): value is FileShape {
   return (
@@ -225,7 +283,7 @@ async function read(path: string): Promise<FileShape> {
   // mismatch, which names the real problem and implies the fix (KV-13 review).
   const version: unknown = (parsed as { version?: unknown }).version
   if (typeof version === 'number' && Number.isFinite(version) && version > FILE_VERSION) {
-    throw new NewerStoreError(path, version)
+    throw new NewerStoreError(path, version, 'file')
   }
   if (version !== FILE_VERSION) {
     throw new UnreadableStoreError(path, describeVersion(version))
@@ -233,8 +291,24 @@ async function read(path: string): Promise<FileShape> {
   if (!isFileShape(parsed)) {
     throw new UnreadableStoreError(path, 'it has no list of sessions')
   }
+
+  // Each record's format before anything else about it is trusted (KV-30), and
+  // a newer one before a broken one, for the same reason as the file's version.
+  const records: unknown[] = parsed.sessions
+  const newer = records.find((r) => isObject(r) && checkFormat(r) === 'newer')
+  if (newer !== undefined) {
+    throw new NewerStoreError(path, (newer as { format: number }).format, 'record')
+  }
+  const unknown = records.findIndex((r) => !isObject(r) || checkFormat(r) === 'unrecognised')
+  if (unknown !== -1) {
+    const notARecord = !isObject(records[unknown])
+    throw new UnrecognisedRecordError(path, unknown + 1, records.length, notARecord)
+  }
   return parsed
 }
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value)
 
 /**
  * Written via a temp file and a rename so a crash mid-write cannot truncate
@@ -338,6 +412,18 @@ export function createJsonSessionStore(
      */
     async append(record) {
       const data = await read(path)
+      const stored = data.sessions.find((s) => s.id === record.id)
+      if (stored !== undefined) {
+        // The same record again is the one already here: nothing to write.
+        if (sameRecord(stored, record)) return
+        // Untagged, so it reads as `unknown` and invites a retry — which is
+        // right on the one path that appends: a submit tried again draws a new id.
+        throw new Error(
+          `The check-in history at ${path} already holds a different check-in with the id ` +
+            `${record.id}. Check-ins are never replaced, so it was not stored. Nothing has ` +
+            'been changed.',
+        )
+      }
       data.sessions.push(record)
       await write(path, data)
     },

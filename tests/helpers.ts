@@ -29,6 +29,7 @@ export function session(
     id?: string
     seeded?: true
     timeZone?: string
+    format?: number
   } = {},
 ): SessionRecord {
   const record: SessionRecord = {
@@ -43,6 +44,8 @@ export function session(
   // Likewise absent unless asked for: a record with no zone is a real case
   // (anything written before KV-28, or a device that could not say).
   if (overrides.timeZone !== undefined) record.timeZone = overrides.timeZone
+  // Absent unless asked for too, as on every record from before KV-30.
+  if (overrides.format !== undefined) record.format = overrides.format
   return record
 }
 

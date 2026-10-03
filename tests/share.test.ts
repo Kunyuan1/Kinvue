@@ -46,6 +46,7 @@ const ASSESSMENT: Required<Assessment> = {
   baselineSpan: { from: '2026-08-01T09:00:00.000Z', to: '2026-09-10T09:00:00.000Z' },
   uncomparedMetrics: [{ metric: 'hrv', readings: 1, needed: 3, mean: 31 }],
   withheld: 'uncompared',
+  rulesVersion: 1,
 }
 
 /** A real check-in with every field set. */
@@ -54,6 +55,7 @@ function everything(): SessionRecord {
     id: 'r-1',
     capturedAt: '2026-09-15T09:00:00.000Z',
     timeZone: 'Europe/London',
+    format: 1,
     vitals: { hrvSdnnMs: 41 },
     answers: { painReported: true, painNote: 'left hip, since yesterday' },
   })
@@ -125,6 +127,27 @@ describe('toShared: one check-in as a viewer receives it (KV-37)', () => {
     expect(shared.assessment).toEqual(ASSESSMENT)
     expect(shared.capturedAt).toBe(record.capturedAt)
     expect(shared.timeZone).toBe('Europe/London')
+  })
+
+  it('keeps home a record whose format is not one it can read (review of #182)', () => {
+    for (const format of ['2', 0, -1, 1.5, Number.NaN, null, 2]) {
+      const record = { ...everything(), format } as unknown as SessionRecord
+      expect(toShared(record, VIEWER), String(format)).toBeNull()
+    }
+    // And so the share set never sends one, nor dates the share by it.
+    const days = [
+      session({ id: 'odd', format: 0 }),
+      session({ id: 'fine', capturedAt: '2026-09-16T09:00:00.000Z' }),
+    ]
+    expect(shareSet(days, 'test-person', VIEWER).map((r) => r.id)).toEqual(['fine'])
+  })
+
+  it('always says which format it is in, as 1 for a record from before it said so (KV-30)', () => {
+    expect(RECORD_POLICY.format).toBe('shared')
+    expect(toShared(everything(), VIEWER)!.format).toBe(1)
+    const before = session()
+    expect(before).not.toHaveProperty('format')
+    expect(toShared(before, VIEWER)!.format).toBe(1)
   })
 
   it('withholds what the policy withholds', () => {

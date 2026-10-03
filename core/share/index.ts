@@ -1,4 +1,5 @@
 import { baselineWindow } from '../baseline'
+import { checkFormat, formatOf } from '../session/format'
 import type {
   Assessment,
   BaselineSpan,
@@ -162,9 +163,15 @@ export const ASSESSMENT_POLICY = {
   // The stored reason a verdict was withheld (KV-138), not a classification:
   // the card says it, so it leaves.
   withheld: 'shared',
+  // So a viewer, which never rescores, can tell a verdict from rules the app
+  // no longer has (KV-30).
+  rulesVersion: 'shared',
 } as const satisfies Policy<Assessment>
 
 export const RECORD_POLICY = {
+  // What a viewer checks before reading anything else (KV-30). Always written
+  // on the way out, as 1 for a record from before it said so.
+  format: 'shared',
   // Not replaced like `personId` (review of #180): a real record's id is a
   // random UUID (#25), so it names nothing and correlates nothing across
   // installs. The ids that do — `seed-demo-margaret-3` — are on seeded records,
@@ -217,6 +224,8 @@ type SharedValue<V, P> = P extends 'shared'
 
 /** One check-in as a viewer's device receives it. */
 export type SharedRecord = SharedOf<SessionRecord, typeof RECORD_POLICY> & {
+  /** Always present: a record that leaves says which format it is in (KV-30). */
+  format: number
   /** The share's own opaque id, never the local one (KV-32). */
   personId: string
 }
@@ -374,10 +383,17 @@ function leaving(
   record: SessionRecord,
   viewer: Viewer | null,
 ): Omit<SharedRecord, 'personId'> | null {
+  // The field a viewer checks before anything else is the last one to guess
+  // at (review of #182): a format that is not one, or one newer than this
+  // build reads, keeps the record home rather than leaving as a string, a `0`,
+  // or a `1` the record never said.
+  if (checkFormat(record) !== 'readable') return null
   const picked = pick(record, RECORD_POLICY, viewer)
   if (picked === REFUSED) return null
   if (Object.keys(MUST_ARRIVE).some((key) => !Object.hasOwn(picked, key))) return null
-  return picked as Omit<SharedRecord, 'personId'>
+  // Written even where the record leaves it unsaid, as 1, so every record that
+  // leaves says its format — and so the type below is true, not just asserted.
+  return { ...(picked as Omit<SharedRecord, 'personId' | 'format'>), format: formatOf(record) }
 }
 
 /**

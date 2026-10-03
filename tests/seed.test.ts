@@ -3,6 +3,7 @@ import { MIN_BASELINE_SESSIONS, computeBaseline } from '@core/baseline'
 import {
   ELEVATED_SEVERITY_THRESHOLD,
   presentAll,
+  RULES_VERSION,
   scoreSession,
   totalSeverity,
   unusableReason,
@@ -15,6 +16,7 @@ import {
 } from '@core/seed/persona'
 import type { Assessment } from '@core/session/types'
 import { asAskedNow } from '@core/session/answers'
+import { RECORD_FORMAT } from '@core/session/format'
 import { session } from './helpers'
 
 /**
@@ -369,6 +371,13 @@ describe('the seeded demo history', () => {
     for (const s of seeded) {
       expect(s.seeded, s.id).toBe(true)
       expect(s.personId, s.id).toBe(DEMO_PERSON_ID)
+    }
+  })
+
+  it('writes the format written now, and is shown with the rules in use now (KV-30)', () => {
+    for (const s of seeded) expect(s.format, s.id).toBe(RECORD_FORMAT)
+    for (const s of withSeededVerdicts(seeded)) {
+      expect(s.assessment?.rulesVersion, s.id).toBe(RULES_VERSION)
     }
   })
 })

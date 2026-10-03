@@ -7,6 +7,7 @@ import {
   NewerStoreError,
   UnreachableStoreError,
   UnreadableStoreError,
+  UnrecognisedRecordError,
 } from '@core/session/store'
 import type { SessionRecord } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
@@ -226,6 +227,18 @@ describe('starting a new history (KV-98)', () => {
     expect(screen.queryByText('Start a new history')).toBeNull()
   })
 
+  it('is not offered when one entry cannot be read, which says the rest is intact', async () => {
+    // Archiving months of baseline over one entry was the remedy on offer
+    // until the review of #182.
+    listSessions.mockRejectedValue(
+      fromMain(new UnrecognisedRecordError(PATH, 2, 18, true), 'sessions:list'),
+    )
+    render(<App />)
+    await screen.findByText(/Entry 2 of 18 .* is not a check-in at all/)
+    expect(document.body.textContent).toMatch(/the rest of the history is intact/)
+    expect(screen.queryByText('Start a new history')).toBeNull()
+  })
+
   it('sets the file aside on the press, clears the error, and names where the old file went', async () => {
     listSessions.mockRejectedValueOnce(unreadable()).mockResolvedValue([])
     startNewHistory.mockResolvedValue(`${PATH}.unreadable-2026-09-22`)
@@ -277,7 +290,7 @@ describe('starting a new history (KV-98)', () => {
   it('offers no button when the press finds the file is from a newer version', async () => {
     listSessions.mockRejectedValue(unreadable())
     startNewHistory.mockRejectedValue(
-      fromMain(new NewerStoreError(PATH, 2), 'sessions:startNewHistory'),
+      fromMain(new NewerStoreError(PATH, 2, 'file'), 'sessions:startNewHistory'),
     )
     render(<App />)
 
