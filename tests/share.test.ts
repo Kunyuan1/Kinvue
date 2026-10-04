@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  checkShared,
   ANSWERS_POLICY,
   ASSESSMENT_POLICY,
   BASELINE_SPAN_POLICY,
@@ -13,7 +14,7 @@ import {
   type Policy,
   type Viewer,
 } from '@core/share'
-import type { Assessment, SessionRecord, Vitals } from '@core/session/types'
+import type { Assessment, CheckInAnswers, SessionRecord, Vitals } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
 import { localDateOf } from '@core/session/time'
 import { history, session, sessionBeforeKV16 } from './helpers'
@@ -129,6 +130,16 @@ describe('toShared: one check-in as a viewer receives it (KV-37)', () => {
     expect(shared.timeZone).toBe('Europe/London')
   })
 
+  it('keeps home a record any field of which is not what its type says (KV-181)', () => {
+    // A reading stored as text is a plain value, so copying alone would send it.
+    const asText = everything() as unknown as { vitals: Record<string, unknown> }
+    asText.vitals.durationSec = '30'
+    expect(toShared(asText as unknown as SessionRecord, VIEWER)).toBeNull()
+    const mood = everything() as unknown as { answers: Record<string, unknown> }
+    mood.answers.mood = 'great'
+    expect(toShared(mood as unknown as SessionRecord, VIEWER)).toBeNull()
+  })
+
   it('keeps home a record whose format is not one it can read (review of #182)', () => {
     for (const format of ['2', 0, -1, 1.5, Number.NaN, null, 2]) {
       const record = { ...everything(), format } as unknown as SessionRecord
@@ -177,6 +188,12 @@ describe('toShared: one check-in as a viewer receives it (KV-37)', () => {
     expect(toShared(session({ seeded: true }), WITH_NOTE)).toBeNull()
     // `seeded: false` is a real check-in, and leaves like one.
     expect(toShared(everything(), WITH_NOTE)).not.toBeNull()
+  })
+
+  it('sends a field only to some viewers only when a record can be without it (KV-181)', () => {
+    // @ts-expect-error `mood` is required, so a viewer not given it would get a record missing it
+    const required: Policy<CheckInAnswers> = { ...ANSWERS_POLICY, mood: 'per-viewer' }
+    expect(required.mood).toBe('per-viewer')
   })
 
   it('makes every viewer say whether it has each per-viewer field', () => {
@@ -495,3 +512,59 @@ describe('shareSet: what a new viewer is sent (KV-32)', () => {
     expect(shareSet(history(0), 'test-person', VIEWER)).toEqual([])
   })
 })
+
+describe('checkShared: what a viewer asks of every record it receives (KV-181)', () => {
+  it('passes everything `toShared` sends, for every shape and every viewer', () => {
+    const records = [everything(), session(), sessionBeforeKV16(true), sessionBeforeKV16(false, {
+      answers: { painReported: true, painNote: 'knee' },
+    })]
+    for (const record of records) {
+      for (const viewer of [VIEWER, WITH_NOTE]) {
+        expect(checkShared(toShared(record, viewer)), record.id).toBeNull()
+      }
+    }
+    const days = Array.from({ length: 20 }, (_, i) =>
+      session({ id: `d-${i}`, capturedAt: new Date(Date.UTC(2026, 7, 1 + i, 9)).toISOString() }),
+    )
+    for (const sent of shareSet(days, 'test-person', WITH_NOTE)) {
+      expect(checkShared(sent)).toBeNull()
+    }
+  })
+
+  it('does not look for what is never sent, and lets a per-viewer field be missing', () => {
+    const sent = toShared(everything(), VIEWER)! as unknown as Record<string, unknown>
+    expect(sent.vitals).not.toHaveProperty('hrvSdnnMs')
+    expect(sent.answers).not.toHaveProperty('painNote')
+    expect(checkShared(sent)).toBeNull()
+    // A field it does not know — or one a sender should have withheld — is left alone.
+    ;(sent.vitals as Record<string, unknown>).hrvSdnnMs = 41
+    ;(sent as Record<string, unknown>).spo2Percent = 97
+    expect(checkShared(sent)).toBeNull()
+  })
+
+  it('refuses a record that is not what `toShared` sends, and names the field', () => {
+    type Fields = Record<string, unknown>
+    const spoilt = (spoil: (r: Fields) => void): unknown => {
+      const sent = structuredClone(toShared(everything(), WITH_NOTE)!) as unknown as Fields
+      spoil(sent)
+      return sent
+    }
+    expect(checkShared('a record')).toBe('it is not a check-in at all')
+    expect(checkShared(spoilt((r) => delete r.format))).toBe('format is missing')
+    expect(checkShared(spoilt((r) => (r.format = 2)))).toBe(
+      'it is in a newer format (2) than this app reads (1)',
+    )
+    expect(checkShared(spoilt((r) => (r.personId = '')))).toBe('personId is not an id')
+    expect(checkShared(spoilt((r) => delete (r.vitals as Fields).durationSec))).toBe(
+      'vitals.durationSec is missing',
+    )
+    expect(checkShared(spoilt((r) => ((r.answers as Fields).eatenToday = true)))).toBe(
+      'the meal question is answered both ways in answers',
+    )
+    const truncated = spoilt((r) => {
+      ;(r.assessment as { firedRules: unknown[] }).firedRules[0] = 'x'
+    })
+    expect(checkShared(truncated)).toBe('assessment.firedRules[0] is not a group of fields')
+  })
+})
+

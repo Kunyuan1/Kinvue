@@ -231,7 +231,10 @@ describe('starting a new history (KV-98)', () => {
     // Archiving months of baseline over one entry was the remedy on offer
     // until the review of #182.
     listSessions.mockRejectedValue(
-      fromMain(new UnrecognisedRecordError(PATH, 2, 18, true), 'sessions:list'),
+      fromMain(
+        new UnrecognisedRecordError(PATH, 2, 18, 'it is not a check-in at all'),
+        'sessions:list',
+      ),
     )
     render(<App />)
     await screen.findByText(/Entry 2 of 18 .* is not a check-in at all/)

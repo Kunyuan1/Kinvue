@@ -1639,9 +1639,27 @@ code that wrote it. What #30 asked, and what was decided:
   a deletion — travels as its own message, by id (#41, #45), never as a second copy that
   quietly replaces the first. A tombstone, whatever #45 makes it, must win over the record
   it names whichever of the two arrives first.
-- **What is still not checked.** A record's format is checked as it is read; the rest of it
-  is not, field by field. A signature proves who sent a record, not that it is well formed,
-  so #181 checks every field before #42 reads records from another device.
+- **Every field is checked as it is read (KV-181).** A signature proves who sent a record,
+  not that it is well formed, so the format is not the only thing read before a record is
+  trusted. `checkRecord` (`core/session/check.ts`) checks each field against its type —
+  required fields present, the meal question answered exactly one way, verdicts, moods and
+  reasons within their values, and `null` only where a field can hold it — and gives the
+  first reason, naming the field. It never repairs. Fields it does not know are left
+  alone, since adding one does not change the format. Every shape the store has ever
+  written passes: each field added since the first commit is optional, and the one
+  required field that changed widened (`confidence`, KV-12). One spec per shape, typed
+  over its keys, so a new field does not compile until it is checked. What a refusal does
+  is each reader's:
+  - **the check-in device refuses its whole file**, under the same no-button sentence as an
+    unrecognised format (`UnrecognisedRecordError`), now naming the field — an entry it
+    cannot read cannot say whose it is, and a file set aside over one entry would cost a
+    baseline;
+  - **a viewer holds the one record aside** and shows the rest: `checkShared` asks of a
+    received record what `checkRecord` asks of a stored one, steered by the share tables
+    so the two cannot drift, and the viewer knows whose it is from the share. How it says
+    so is #42's.
+  `toShared` refuses a record `checkRecord` refuses, so nothing leaves that a viewer would
+  have to hold aside.
 
 ### What must hold before real check-ins are stored
 

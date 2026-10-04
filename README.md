@@ -164,6 +164,7 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
     answers.ts           the four questions: complete, or not a check-in at all
     format.ts            what a record says about itself: its format, and when two
                          arriving are one record (KV-30)
+    check.ts             every field of a record read, checked against its type (KV-181)
     checkin.ts           holds a capture until its answers arrive, then scores and stores it
     time.ts              which local day a check-in belongs to, where it was taken
   baseline/index.ts      per-person trailing baseline + MIN_BASELINE_SESSIONS

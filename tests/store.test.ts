@@ -577,7 +577,10 @@ describe('records that make sense on their own (KV-30)', () => {
     // One bad entry among good ones is not a broken file: offering to archive
     // the baseline over it would be the destructive answer (review of #182).
     const cases: [unknown, string][] = [
-      [{ ...session(), format: '1' }, 'is a check-in in a format this app does not know'],
+      [
+        { ...session(), format: '1' },
+        'is a check-in this app cannot read (format is not a record format)',
+      ],
       [null, 'is not a check-in at all'],
       ['a check-in', 'is not a check-in at all'],
     ]
@@ -595,6 +598,28 @@ describe('records that make sense on their own (KV-30)', () => {
       await expect(store.startNewHistory()).rejects.toBeInstanceOf(UnrecognisedRecordError)
       expect(await readFile(path, 'utf8')).toBe(text)
     }
+  })
+
+  it('refuses an entry over any field, not just its format, naming the field', async () => {
+    const { path } = await storeIn()
+    const bad = session({ id: 'bad' }) as unknown as { vitals: Record<string, unknown> }
+    bad.vitals.durationSec = '30'
+    const text = fileOf([session({ id: 'fine' }), bad])
+    await writeFile(path, text, 'utf8')
+    const store = createJsonSessionStore(path, () => new Date(2026, 9, 4, 10, 0))
+
+    const listed = await store.list('test-person').catch((e: unknown) => e)
+    expect(listed).toBeInstanceOf(UnrecognisedRecordError)
+    expect(String(listed)).toContain(
+      'Entry 2 of 2 in the check-in history at ' +
+        `${path} is a check-in this app cannot read (vitals.durationSec is not a number)`,
+    )
+    expect(classifyDashboardError(listed)).toBe('store-record-unknown')
+    await expect(store.append(session({ id: 'today' }))).rejects.toBeInstanceOf(
+      UnrecognisedRecordError,
+    )
+    await expect(store.startNewHistory()).rejects.toBeInstanceOf(UnrecognisedRecordError)
+    expect(await readFile(path, 'utf8')).toBe(text)
   })
 
   it('stores a record that arrives twice once, and does not write the second time', async () => {

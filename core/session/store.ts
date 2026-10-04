@@ -3,6 +3,7 @@ import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/pr
 import { dirname } from 'node:path'
 import { failureTag } from '../capture/failure'
 import { asAskedNow } from './answers'
+import { checkRecord, NOT_A_RECORD } from './check'
 import { checkFormat, RECORD_FORMAT, sameRecord } from './format'
 import type { SessionRecord } from './types'
 
@@ -185,7 +186,8 @@ export class NewerStoreError extends Error {
 
 /**
  * One entry in the history is not a check-in this build can read: not a
- * record at all, or a record whose `format` is not a format (KV-30).
+ * record at all, or one whose fields are not what their types say — its
+ * format first (KV-30), then every field (KV-181, `checkRecord`).
  *
  * **Never set aside** (review of #182). It began as an `UnreadableStoreError`,
  * which offers *Start a new history* — so one hand-edited or half-merged entry
@@ -197,10 +199,12 @@ export class NewerStoreError extends Error {
  * is, so it cannot be left out of one person's history and not another's.
  */
 export class UnrecognisedRecordError extends Error {
-  constructor(path: string, position: number, total: number, notARecord: boolean) {
-    const what = notARecord
-      ? 'is not a check-in at all'
-      : 'is a check-in in a format this app does not know'
+  /** `why` is `checkRecord`'s reason, naming the field: whoever opens the file needs it. */
+  constructor(path: string, position: number, total: number, why: string) {
+    const what =
+      why === NOT_A_RECORD
+        ? 'is not a check-in at all'
+        : `is a check-in this app cannot read (${why})`
     super(
       `${failureTag('store-record-unknown')}: Entry ${String(position)} of ${String(total)} in ` +
         `the check-in history at ${path} ${what}. Nothing has been changed, and the rest of ` +
@@ -213,9 +217,8 @@ export class UnrecognisedRecordError extends Error {
 /**
  * Only what it actually checks: an object with a `sessions` array. The version
  * is checked separately, before this, and so is each record's format (KV-30),
- * after it. The rest of each record is still not validated — `isFileShape`
- * says nothing about what is *in* `sessions`. KV-74 had to defend against
- * exactly that in the scorer; checking every field is #181's.
+ * after it, and then every field of each (KV-181, `checkRecord`). `isFileShape`
+ * itself still says nothing about what is *in* `sessions`.
  */
 function isFileShape(value: unknown): value is FileShape {
   return (
@@ -299,10 +302,11 @@ async function read(path: string): Promise<FileShape> {
   if (newer !== undefined) {
     throw new NewerStoreError(path, (newer as { format: number }).format, 'record')
   }
-  const unknown = records.findIndex((r) => !isObject(r) || checkFormat(r) === 'unrecognised')
-  if (unknown !== -1) {
-    const notARecord = !isObject(records[unknown])
-    throw new UnrecognisedRecordError(path, unknown + 1, records.length, notARecord)
+  // Then every field of every entry (KV-181). Refused whole, like a newer
+  // record: an entry this build cannot read cannot say whose it is.
+  for (const [i, record] of records.entries()) {
+    const why = checkRecord(record)
+    if (why !== null) throw new UnrecognisedRecordError(path, i + 1, records.length, why)
   }
   return parsed
 }
