@@ -38,22 +38,35 @@ import type {
  * not change the format (KV-30), so a newer record may carry one.
  *
  * **One spec per shape, typed over its keys**, as the share tables are: a field
- * added to a shape does not compile until it has a check here, and a field
- * cannot be checked as optional when its type requires it, or the reverse.
+ * added to a shape does not compile until it has a check here, a field cannot
+ * be checked as optional when its type requires it, or the reverse, and each
+ * takes the check its type calls for (`FieldFor`) — a shape's own spec, a list
+ * of its item's — not merely some check.
+ *
+ * **Types, not ranges** (review of #183). This says a field is a number, not
+ * that the number is sensible: `confidence` is 0..1 by convention, and a sender
+ * that skipped the SDK's percentage conversion (`app/main/vitals.ts`) would send
+ * 95 and pass — then clear `unusableReason`'s 0.5 as a fully vouched-for
+ * reading, the reassuring direction. The same goes for a severity outside 0..1
+ * or a negative count. Ranges stay with whoever produces the value (the
+ * capture's conversion, the scorer) and whoever leans on one: a reader that
+ * needs a range checks it itself rather than assuming this did. Deliberate:
+ * which ranges are right is a question about the data, not about its shape,
+ * and a check that guessed at one could refuse a real history.
  */
 
 /** Why a value is not what its field holds, or null when it is. */
 export type Check = (value: unknown, at: string) => string | null
 
-/** A field holding one shape, checked field by field, then as a whole by `also`. */
-export interface Nested {
-  readonly shape: AnySpec
+/** A field holding one shape, checked field by field by `shape`, then as a whole by `also`. */
+export interface Nested<S = AnySpec> {
+  readonly shape: S
   readonly also?: (value: Record<string, unknown>, at: string) => string | null
 }
 
-/** A field holding a list, every item of which is one shape. */
-export interface ListOf {
-  readonly listOf: AnySpec
+/** A field holding a list, every item of which is the shape `listOf` describes. */
+export interface ListOf<S = AnySpec> {
+  readonly listOf: S
 }
 
 export type Field = Check | Nested | ListOf
@@ -63,8 +76,8 @@ export type Field = Check | Nested | ListOf
  * where the type says the field may be missing is a value, and is checked as
  * one — and refused unless the field can hold `null` (KV-30's rule for formats).
  */
-export interface Optional {
-  readonly optional: Field
+export interface Optional<F = Field> {
+  readonly optional: F
 }
 
 export type Entry = Field | Optional
@@ -87,32 +100,84 @@ type MissingIn<T, K extends PropertyKey> = T extends unknown
     : true
   : never
 
-/** A spec for `T`: every key, optional exactly where `T` lets the field be missing. */
+/** The value at `K` in whichever members of `T` have it. */
+type ValueAt<T, K extends PropertyKey> = T extends unknown
+  ? K extends keyof T
+    ? T[K]
+    : never
+  : never
+
+/** The members of `V` that are shapes. */
+type Shapes<V> = Extract<NonNullable<V>, object>
+
+/**
+ * The check a field of type `V` takes: a `Check` for a plain value, a spec of
+ * *that* shape for one, and a spec of its item for a list (review of #183). So
+ * vitals cannot be checked as answers, a list as one shape, or a shape by a
+ * check that looks at nothing under it — the type decides, as `Entry` does for
+ * the share tables, not only that the field has a check.
+ */
+export type FieldFor<V> = [Shapes<V>] extends [never]
+  ? Check
+  : [Shapes<V>] extends [readonly (infer E)[]]
+    ? [Extract<E, object>] extends [never]
+      ? Check
+      : ListOf<Spec<Extract<E, object>>>
+    : Nested<Spec<Shapes<V>>>
+
+/**
+ * A spec for `T`: every key, optional exactly where `T` lets the field be
+ * missing, and each with the check its type calls for (`FieldFor`).
+ */
 export type Spec<T> = {
-  readonly [K in AnyKey<T>]-?: MayBeMissing<T, K> extends true ? Optional : Field
+  readonly [K in AnyKey<T>]-?: MayBeMissing<T, K> extends true
+    ? Optional<FieldFor<ValueAt<T, K>>>
+    : FieldFor<ValueAt<T, K>>
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
 
-const optional = (field: Field): Optional => ({ optional: field })
-const nested = (shape: AnySpec, also?: Nested['also']): Nested =>
+const optional = <F extends Field>(field: F): Optional<F> => ({ optional: field })
+const nested = <S extends AnySpec>(shape: S, also?: Nested['also']): Nested<S> =>
   also === undefined ? { shape } : { shape, also }
-const listOf = (shape: AnySpec): ListOf => ({ listOf: shape })
+const listOf = <S extends AnySpec>(shape: S): ListOf<S> => ({ listOf: shape })
 
 const number: Check = (v, at) =>
   typeof v === 'number' && Number.isFinite(v) ? null : `${at} is not a number`
 const nullableNumber: Check = (v, at) => (v === null ? null : number(v, at))
 const boolean: Check = (v, at) => (typeof v === 'boolean' ? null : `${at} is not true or false`)
 const string: Check = (v, at) => (typeof v === 'string' ? null : `${at} is not text`)
-/** An id: text, and not empty, since updates and removals travel by it (#45). */
+/**
+ * An id: text, not empty, and with no space around it, since updates and
+ * removals travel by it (#45) and ids are matched exactly — `' share-1'` would
+ * be another id that looks the same (review of #183; `parsePersonId`'s rule).
+ */
 const id: Check = (v, at) =>
-  typeof v === 'string' && v !== '' ? null : `${at} is not an id`
-/** A moment: text that names one, since every reader sorts and dates by it. */
+  typeof v === 'string' && v !== '' && v.trim() === v ? null : `${at} is not an id`
+/**
+ * A moment, written exactly as `toISOString` writes one — the only way this
+ * app has ever written a time — and naming a real one. Not merely something
+ * `Date.parse` accepts (review of #183): it takes `'1'` and `'09/15/2026'`,
+ * and every reader compares these as text — the store's sort, the share set's
+ * reach, `sameRecord` — which orders them as time only when every one is this
+ * same fixed-width UTC form.
+ */
+const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 const instant: Check = (v, at) =>
-  typeof v === 'string' && Number.isFinite(Date.parse(v)) ? null : `${at} is not a time`
+  typeof v === 'string' && ISO_INSTANT.test(v) && new Date(v).toISOString() === v
+    ? null
+    : `${at} is not a time`
+/**
+ * A format that is there. `checkFormat` reads an absent one as 1, which is
+ * right for a record and wrong for this check, which only runs on a format
+ * that is present — so `undefined` is refused here rather than left to the
+ * caller to have filtered out (review of #183).
+ */
 const format: Check = (v, at) =>
-  checkFormat({ format: v }) === 'unrecognised' ? `${at} is not a record format` : null
+  v === undefined || checkFormat({ format: v }) === 'unrecognised'
+    ? `${at} is not a record format`
+    : null
 const oneOf =
   <T extends string>(values: readonly T[]): Check =>
   (v, at) =>

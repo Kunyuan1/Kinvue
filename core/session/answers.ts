@@ -134,10 +134,12 @@ const LABEL: Record<(typeof ANSWER_STEPS)[number], (answers: CheckInAnswers) => 
  * when (KV-93). The pain note, when there is one, is shown on its own and
  * unedited; this only says whether there was pain.
  *
- * **An answer it cannot read says so.** Records read from disk are not
- * validated field by field, so a value outside these tables — a hand-edited
- * store, a record from another client — reads as "not recorded" rather than
- * vanishing from a row whose job is to leave nothing ambiguous.
+ * **An answer it cannot read says so.** A value outside these tables reads as
+ * "not recorded" rather than vanishing from a row whose job is to leave nothing
+ * ambiguous. Records read from disk are checked field by field since KV-181
+ * (`checkRecord`), so one cannot reach here from the store; this stays for a
+ * record that took another path — built in memory, or read by a viewer whose
+ * own check it got past (review of #183).
  *
  * In `core/` rather than the card so the caregiver's client (#42) says the
  * same thing. Each table is keyed by its answer type, and the labels by

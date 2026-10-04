@@ -361,9 +361,23 @@ const granted = (viewer: Viewer | null, key: string): boolean =>
  * a real check-in would be the wrong way round (KV-32's open question).
  */
 export function toShared(record: SessionRecord, viewer: Viewer): SharedRecord | null {
+  checkViewer(viewer)
   const picked = leaving(record, viewer)
   // `personId` is `replaced`, so `pick` leaves it behind and it is written here.
   return picked === null ? null : { ...picked, personId: viewer.shareId }
+}
+
+/**
+ * Refuses a viewer whose share id could not be a record's `personId`, by the
+ * spec's own check (review of #183). `checkRecord` checks the local id, which
+ * never leaves; the id that does is written here, after every check, so a
+ * `replaced` field's replacement is checked where it is made. A blank one
+ * would send every record to be held aside. Thrown, not a null: it is a share
+ * that is not set up, not a record that may not leave.
+ */
+function checkViewer(viewer: Viewer): void {
+  const why = checkField(RECORD_SPEC.personId, viewer.shareId, 'shareId')
+  if (why !== null) throw new Error(`This viewer cannot be sent anything: ${why}.`)
 }
 
 /**
@@ -415,13 +429,17 @@ function leaving(
  */
 function toBeSent(records: readonly SessionRecord[], personId: string): SessionRecord[] {
   const theirs = records
-    .filter((r) => r.personId === personId)
+    // Read nothing of a record before it is checked (review of #183): a
+    // malformed one — `vitals` that are null — would throw in `unusableReason`
+    // or the baseline window before `mayLeave` could refuse it. Checked, not
+    // `mayLeave`: seeded days are well formed, and still count toward the usual.
+    .filter((r) => checkRecord(r) === null && r.personId === personId)
     // The same plain order as the comparisons below, not `localeCompare`'s
     // collation, so the sort and the selection cannot disagree.
     .sort((a, b) => (a.capturedAt < b.capturedAt ? -1 : a.capturedAt > b.capturedAt ? 1 : 0))
   // A real one: a seeded day standing in for "the latest" would let demo data
   // decide whether a person's real check-ins are sent (second review of #180).
-  const latest = theirs.filter((r) => unusableReason(r.vitals) === null && mayLeave(r)).at(-1)
+  const latest = theirs.filter((r) => mayLeave(r) && unusableReason(r.vitals) === null).at(-1)
   if (latest === undefined) return []
   // Where the latest card's usual began, as it stored it (KV-154): the window
   // it was compared with, which a later change to the window's length must not
@@ -481,6 +499,7 @@ export function shareSet(
 ): SharedRecord[] {
   // Never empty: `toBeSent` kept only records that may leave, and whether one
   // may is the same for every viewer.
+  checkViewer(viewer)
   return toBeSent(records, personId).flatMap((r) => toShared(r, viewer) ?? [])
 }
 
@@ -520,9 +539,18 @@ function checkSharedShape(
   const fields = value as Record<string, unknown>
   for (const [key, entry] of Object.entries(spec)) {
     const sharing = policy[key]
-    // Not sent, so not looked for.
-    if (sharing === undefined || sharing === 'withheld' || sharing === 'never') continue
     const here = at === '' ? key : `${at}.${key}`
+    // A record that carries a `never` field never leaves, so one that arrives
+    // carrying it was not sent by `toShared` — and `seeded` on a real check-in
+    // would have a viewer label a real person's day as invented (review of
+    // #183). The same meaning on both sides of the wire.
+    if (sharing === 'never') {
+      if (holds(fields, key)) return `${here} should never have been sent`
+      continue
+    }
+    // Not sent, so not looked for; one that arrives anyway is left alone, as a
+    // field this build does not know would be.
+    if (sharing === undefined || sharing === 'withheld') continue
     const field = isOptional(entry) ? entry.optional : entry
     if (!holds(fields, key)) {
       // A `per-viewer` field is always optional in its type (`Leaf`), so this

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   ANSWERS_SPEC,
+  ASSESSMENT_SPEC,
   checkRecord,
+  FIRED_RULE_SPEC,
   RECORD_SPEC,
   VITALS_SPEC,
   type Spec,
@@ -9,7 +11,7 @@ import {
 import { createCheckIn } from '@core/session/checkin'
 import { scoreSession } from '@core/scoring'
 import { seedDemoHistory, withSeededVerdicts } from '@core/seed/persona'
-import type { CheckInAnswers, SessionRecord, Vitals } from '@core/session/types'
+import type { Assessment, CheckInAnswers, SessionRecord, Vitals } from '@core/session/types'
 import { history, session, sessionBeforeKV16 } from './helpers'
 
 /**
@@ -143,9 +145,23 @@ describe('checkRecord refuses a field that is not what its type says, and names 
   const cases: [string, (r: Record<string, unknown>) => unknown, string][] = [
     ['not a record', () => 'a check-in', 'it is not a check-in at all'],
     ['an empty id', set('id', ''), 'id is not an id'],
+    ['an id that is only space', set('id', '   '), 'id is not an id'],
+    ['an id with space around it', set('personId', ' demo-margaret'), 'personId is not an id'],
     ['no id', set('id', undefined), 'id is missing'],
     ['no person', set('personId', undefined), 'personId is missing'],
     ['a time that is not one', set('capturedAt', 'yesterday'), 'capturedAt is not a time'],
+    ['a time Date.parse takes', set('capturedAt', '09/15/2026'), 'capturedAt is not a time'],
+    ['a year', set('capturedAt', '2026'), 'capturedAt is not a time'],
+    [
+      'a time with an offset',
+      set('capturedAt', '2026-09-15T10:00:00.000+01:00'),
+      'capturedAt is not a time',
+    ],
+    [
+      'a day that is not one',
+      set('capturedAt', '2026-02-30T09:00:00.000Z'),
+      'capturedAt is not a time',
+    ],
     ['null where a zone may only be absent', set('timeZone', null), 'timeZone is not text'],
     ['a format that is not one', set('format', '1'), 'format is not a record format'],
     [
@@ -230,6 +246,14 @@ describe('checkRecord refuses a field that is not what its type says, and names 
   }
 })
 
+describe('each check stands on its own', () => {
+  it('refuses a format of undefined, not reading it as 1 the way an absent one is', () => {
+    const format = RECORD_SPEC.format.optional
+    expect(format(undefined, 'format')).toBe('format is not a record format')
+    expect(format(1, 'format')).toBeNull()
+  })
+})
+
 describe('a spec cannot be left incomplete, or call a field optional that is not', () => {
   // Checked by the compiler: each `@ts-expect-error` fails the typecheck if the
   // line below it stops being an error.
@@ -240,6 +264,20 @@ describe('a spec cannot be left incomplete, or call a field optional that is not
     // @ts-expect-error `durationSec` has no check
     const missing: Spec<Vitals> = rest
     expect(missing).not.toHaveProperty('durationSec')
+  })
+
+  it('checks each field as its type calls for, not merely with something (review of #183)', () => {
+    // @ts-expect-error vitals hold a shape: a bare check would look at nothing under them
+    const unchecked: Spec<SessionRecord> = { ...RECORD_SPEC, vitals: any }
+    // @ts-expect-error vitals checked as answers
+    const wrongShape: Spec<SessionRecord> = { ...RECORD_SPEC, vitals: { shape: ANSWERS_SPEC } }
+    // @ts-expect-error one shape checked as a list
+    const asList: Spec<SessionRecord> = { ...RECORD_SPEC, answers: { listOf: FIRED_RULE_SPEC } }
+    // @ts-expect-error a list checked as one shape
+    const asOne: Spec<Assessment> = { ...ASSESSMENT_SPEC, firedRules: { shape: FIRED_RULE_SPEC } }
+    // @ts-expect-error a plain field cannot be given a shape's spec
+    const plainAsShape: Spec<Vitals> = { ...VITALS_SPEC, durationSec: { shape: VITALS_SPEC } }
+    expect([unchecked, wrongShape, asList, asOne, plainAsShape]).toHaveLength(5)
   })
 
   it('takes a field as optional exactly when its type lets it be missing', () => {

@@ -1591,8 +1591,11 @@ code that wrote it. What #30 asked, and what was decided:
   misread the new** — a field that changes meaning, or is renamed or removed. KV-16's meal
   question would have been one. Adding a field is not: every reader leaves behind what it
   does not know (`toShared` does by construction), so bumping for one would lock older
-  readers out of records they read correctly. Format 1 is every record so far, both meal
-  questions included, since today's reader reads both. **One number covers both shapes a
+  readers out of records they read correctly. **Since KV-181, any change to an existing
+  field's type bumps it too**, widening included: every field is checked as it is read,
+  so an older reader would refuse such a record — and its whole history — as one it cannot
+  read, where bumped it says what is true, that a newer version wrote it. Format 1 is
+  every record so far, both meal questions included, since today's reader reads both. **One number covers both shapes a
   record is read in** — as stored, by an older check-in app, and as it leaves
   (`SharedRecord`), by a viewer — and is bumped when a reader of either would misread the
   new. So a change to what leaves can need a bump with nothing stored changing, and a test
@@ -1645,7 +1648,9 @@ code that wrote it. What #30 asked, and what was decided:
   required fields present, the meal question answered exactly one way, verdicts, moods and
   reasons within their values, and `null` only where a field can hold it — and gives the
   first reason, naming the field. It never repairs. Fields it does not know are left
-  alone, since adding one does not change the format. Every shape the store has ever
+  alone, since adding one does not change the format. It checks types, not ranges: a
+  `confidence` of 95 — a percentage a sender failed to convert — passes, so ranges stay
+  with whoever produces a value and whoever leans on one. Every shape the store has ever
   written passes: each field added since the first commit is optional, and the one
   required field that changed widened (`confidence`, KV-12). One spec per shape, typed
   over its keys, so a new field does not compile until it is checked. What a refusal does

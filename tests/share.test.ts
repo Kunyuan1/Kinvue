@@ -479,6 +479,26 @@ describe('shareSet: what a new viewer is sent (KV-32)', () => {
     expect(shareSetStart([on(0)], 'test-person')).toEqual({ capturedAt: on(0).capturedAt })
   })
 
+  it('sends nothing to a viewer whose share id could not be a person id (review of #183)', () => {
+    // A blank id would arrive on every record, and every one be held aside.
+    for (const shareId of ['', '  ', ' share-1']) {
+      const viewer = { ...VIEWER, shareId }
+      expect(() => toShared(everything(), viewer), JSON.stringify(shareId)).toThrow(
+        /This viewer cannot be sent anything: shareId is not an id/,
+      )
+      expect(() => shareSet([on(0)], 'test-person', viewer)).toThrow(/cannot be sent anything/)
+    }
+  })
+
+  it('skips a malformed record rather than reading it, in either function (review of #183)', () => {
+    const days = Array.from({ length: 5 }, (_, i) => on(i))
+    const broken = { ...on(5, { id: 'broken' }), vitals: null } as unknown as SessionRecord
+    const withNull = [...days, broken, null as unknown as SessionRecord]
+    expect(shareSetStart(withNull, 'test-person')?.capturedAt).toBe(days[0]!.capturedAt)
+    const sent = shareSet(withNull, 'test-person', VIEWER).map((r) => r.id)
+    expect(sent).toEqual(days.map((r) => r.id))
+  })
+
   it('lets no seeded day stand in for the latest usable check-in', () => {
     // The same real data — two refused captures — with and without a demo
     // fortnight behind it, gets the same answer: nothing usable, nothing sent.
@@ -561,10 +581,15 @@ describe('checkShared: what a viewer asks of every record it receives (KV-181)',
     expect(checkShared(spoilt((r) => ((r.answers as Fields).eatenToday = true)))).toBe(
       'the meal question is answered both ways in answers',
     )
+    // A field that keeps a record home cannot arrive on one (review of #183).
+    for (const seeded of [true, false]) {
+      expect(checkShared(spoilt((r) => (r.seeded = seeded)))).toBe(
+        'seeded should never have been sent',
+      )
+    }
     const truncated = spoilt((r) => {
       ;(r.assessment as { firedRules: unknown[] }).firedRules[0] = 'x'
     })
     expect(checkShared(truncated)).toBe('assessment.firedRules[0] is not a group of fields')
   })
 })
-

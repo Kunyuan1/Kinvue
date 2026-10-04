@@ -18,6 +18,14 @@ import type { SessionRecord } from './types'
  * construction), so bumping for one would only lock older readers out of
  * records they read correctly.
  *
+ * **Since KV-181, any change to an existing field's type bumps it too** —
+ * widening included, as `confidence` gaining `null` (KV-12) would now (review
+ * of #183). Every field is checked as it is read, so an older reader refuses a
+ * record whose field it finds of another type, and refuses its whole history
+ * with it, under "a check-in this app cannot read". Bumped, the same refusal
+ * says what is true — a newer version wrote it, and reads it — instead of
+ * pointing someone at a file with nothing wrong in it.
+ *
  * **One number for both shapes a record is read in** (review of #182): as
  * stored, by an older build of the check-in app, and as it leaves
  * (`SharedRecord`), by a viewer. It is bumped when a reader of either would
