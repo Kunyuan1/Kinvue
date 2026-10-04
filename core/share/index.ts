@@ -1,5 +1,16 @@
 import { baselineWindow } from '../baseline'
-import { checkFormat, formatOf } from '../session/format'
+import {
+  checkField,
+  checkRecord,
+  holds,
+  isOptional,
+  NOT_A_RECORD,
+  RECORD_SPEC,
+  type AnySpec,
+  type Field,
+  type Nested,
+} from '../session/check'
+import { checkFormat, formatOf, RECORD_FORMAT } from '../session/format'
 import type {
   Assessment,
   BaselineSpan,
@@ -56,14 +67,25 @@ export type Sharing =
  * leave with it, decided by nobody (second review of #180).
  */
 type Entry<V> = [Shapes<V>] extends [never]
-  ? [NonNullable<V>] extends [boolean]
-    ? Sharing
-    : Exclude<Sharing, 'never'>
+  ? Leaf<V>
   : [Shapes<V>] extends [readonly (infer E)[]]
     ? [Extract<E, object>] extends [never]
-      ? Sharing
+      ? Leaf<V>
       : ListPolicy<Policy<Extract<E, object>>> | 'withheld'
     : Policy<Shapes<V>> | 'withheld'
+
+/**
+ * How a plain field may be treated. `never` only on a true/false field, where
+ * "true" means something; `per-viewer` only on a field a record can be without
+ * (KV-181), since a viewer not given it receives the record without it — so
+ * the shared type, `checkShared` and the field's own type all agree it may be
+ * missing.
+ */
+type Leaf<V> = Exclude<
+  Sharing,
+  ([NonNullable<V>] extends [boolean] ? never : 'never') |
+    (undefined extends V ? never : 'per-viewer')
+>
 
 /**
  * The members of `V` that are shapes. Asked of every member, not of `V` whole:
@@ -255,27 +277,6 @@ type PerViewerKey<P> =
 /** A table as `pick` walks it: every entry a `Sharing`, a table, or a list of one. */
 type AnyPolicy = { readonly [key: string]: Sharing | AnyPolicy | ListPolicy<AnyPolicy> }
 
-/** The keys of `T` it cannot be without. */
-type RequiredKeys<T> = { [K in keyof T]-?: object extends Pick<T, K> ? never : K }[keyof T]
-
-/**
- * The record's own fields a viewer cannot use it without: every required field
- * of `SessionRecord` that leaves. Checked complete by the compiler, so a new
- * required field does not compile until it is listed. A stored record is not
- * validated (`core/session/usable.ts`), and one arriving with no `id` could
- * never be updated or removed (#45), nor one with no `capturedAt` dated.
- *
- * Only the record's own fields. Whether the shapes under it hold every field
- * their types require is checked field by field by #181; until then a viewer
- * reads them as defensively as the check-in device does.
- */
-const MUST_ARRIVE = {
-  id: true,
-  capturedAt: true,
-  vitals: true,
-  answers: true,
-} as const satisfies Record<Exclude<RequiredKeys<SessionRecord>, 'personId'>, true>
-
 /** What `pick` gives back for a record it cannot send as its tables describe. */
 const REFUSED = null
 
@@ -360,9 +361,23 @@ const granted = (viewer: Viewer | null, key: string): boolean =>
  * a real check-in would be the wrong way round (KV-32's open question).
  */
 export function toShared(record: SessionRecord, viewer: Viewer): SharedRecord | null {
+  checkViewer(viewer)
   const picked = leaving(record, viewer)
   // `personId` is `replaced`, so `pick` leaves it behind and it is written here.
   return picked === null ? null : { ...picked, personId: viewer.shareId }
+}
+
+/**
+ * Refuses a viewer whose share id could not be a record's `personId`, by the
+ * spec's own check (review of #183). `checkRecord` checks the local id, which
+ * never leaves; the id that does is written here, after every check, so a
+ * `replaced` field's replacement is checked where it is made. A blank one
+ * would send every record to be held aside. Thrown, not a null: it is a share
+ * that is not set up, not a record that may not leave.
+ */
+function checkViewer(viewer: Viewer): void {
+  const why = checkField(RECORD_SPEC.personId, viewer.shareId, 'shareId')
+  if (why !== null) throw new Error(`This viewer cannot be sent anything: ${why}.`)
 }
 
 /**
@@ -383,14 +398,15 @@ function leaving(
   record: SessionRecord,
   viewer: Viewer | null,
 ): Omit<SharedRecord, 'personId'> | null {
-  // The field a viewer checks before anything else is the last one to guess
-  // at (review of #182): a format that is not one, or one newer than this
-  // build reads, keeps the record home rather than leaving as a string, a `0`,
-  // or a `1` the record never said.
-  if (checkFormat(record) !== 'readable') return null
+  // Every field, its format first (KV-181): a record that is not what its type
+  // says stays home rather than leaving for a viewer to puzzle over. A format
+  // that is not one, or is newer than this build reads, is the first thing this
+  // refuses — the field a viewer checks before anything else is the last one to
+  // guess at (review of #182) — and a missing `id` the next, since a record
+  // without one could never be updated or removed on a viewer's device (#45).
+  if (checkRecord(record) !== null) return null
   const picked = pick(record, RECORD_POLICY, viewer)
   if (picked === REFUSED) return null
-  if (Object.keys(MUST_ARRIVE).some((key) => !Object.hasOwn(picked, key))) return null
   // Written even where the record leaves it unsaid, as 1, so every record that
   // leaves says its format — and so the type below is true, not just asserted.
   return { ...(picked as Omit<SharedRecord, 'personId' | 'format'>), format: formatOf(record) }
@@ -413,13 +429,17 @@ function leaving(
  */
 function toBeSent(records: readonly SessionRecord[], personId: string): SessionRecord[] {
   const theirs = records
-    .filter((r) => r.personId === personId)
+    // Read nothing of a record before it is checked (review of #183): a
+    // malformed one — `vitals` that are null — would throw in `unusableReason`
+    // or the baseline window before `mayLeave` could refuse it. Checked, not
+    // `mayLeave`: seeded days are well formed, and still count toward the usual.
+    .filter((r) => checkRecord(r) === null && r.personId === personId)
     // The same plain order as the comparisons below, not `localeCompare`'s
     // collation, so the sort and the selection cannot disagree.
     .sort((a, b) => (a.capturedAt < b.capturedAt ? -1 : a.capturedAt > b.capturedAt ? 1 : 0))
   // A real one: a seeded day standing in for "the latest" would let demo data
   // decide whether a person's real check-ins are sent (second review of #180).
-  const latest = theirs.filter((r) => unusableReason(r.vitals) === null && mayLeave(r)).at(-1)
+  const latest = theirs.filter((r) => mayLeave(r) && unusableReason(r.vitals) === null).at(-1)
   if (latest === undefined) return []
   // Where the latest card's usual began, as it stored it (KV-154): the window
   // it was compared with, which a later change to the window's length must not
@@ -479,5 +499,93 @@ export function shareSet(
 ): SharedRecord[] {
   // Never empty: `toBeSent` kept only records that may leave, and whether one
   // may is the same for every viewer.
+  checkViewer(viewer)
   return toBeSent(records, personId).flatMap((r) => toShared(r, viewer) ?? [])
+}
+
+/**
+ * Why `value` is not a record as `toShared` sends one, or null when it is: what
+ * a viewer asks of every record it receives, before reading it (KV-181).
+ *
+ * The same checks as `checkRecord`, steered by the share tables, so the two
+ * cannot drift: a field the tables do not send is not looked for, a
+ * `per-viewer` one may be missing, and `format` must be there, since
+ * `toShared` always writes it. Fields it does not know are left alone, as a
+ * newer sender may add one without changing the format (KV-30).
+ *
+ * A viewer holds a record this refuses aside and shows the rest (ARCHITECTURE.md,
+ * KV-181): it knows whose the record is from the share it came in, and it never
+ * rescores, so one bad record need not cost the caregiver the others.
+ */
+export function checkShared(value: unknown): string | null {
+  if (!isShape(value)) return NOT_A_RECORD
+  if (!holds(value as Record<string, unknown>, 'format')) return 'format is missing'
+  if (checkFormat(value) === 'newer') {
+    const said = String((value as { format: unknown }).format)
+    return `it is in a newer format (${said}) than this app reads (${String(RECORD_FORMAT)})`
+  }
+  return checkSharedShape(RECORD_SPEC, RECORD_POLICY, value, '')
+}
+
+/** `checkShape` for a shape as it leaves: the entries `policy` sends, and no others. */
+function checkSharedShape(
+  spec: AnySpec,
+  policy: AnyPolicy,
+  value: unknown,
+  at: string,
+  also?: Nested['also'],
+): string | null {
+  if (!isShape(value)) return `${at === '' ? 'it' : at} is not a group of fields`
+  const fields = value as Record<string, unknown>
+  for (const [key, entry] of Object.entries(spec)) {
+    const sharing = policy[key]
+    const here = at === '' ? key : `${at}.${key}`
+    // A record that carries a `never` field never leaves, so one that arrives
+    // carrying it was not sent by `toShared` — and `seeded` on a real check-in
+    // would have a viewer label a real person's day as invented (review of
+    // #183). The same meaning on both sides of the wire.
+    if (sharing === 'never') {
+      if (holds(fields, key)) return `${here} should never have been sent`
+      continue
+    }
+    // Not sent, so not looked for; one that arrives anyway is left alone, as a
+    // field this build does not know would be.
+    if (sharing === undefined || sharing === 'withheld') continue
+    const field = isOptional(entry) ? entry.optional : entry
+    if (!holds(fields, key)) {
+      // A `per-viewer` field is always optional in its type (`Leaf`), so this
+      // covers a viewer who was not given it too.
+      if (isOptional(entry)) continue
+      return `${here} is missing`
+    }
+    const why =
+      typeof sharing === 'object'
+        ? checkSharedField(field, sharing, fields[key], here)
+        : checkField(field, fields[key], here)
+    if (why !== null) return why
+  }
+  return also === undefined ? null : also(fields, at === '' ? 'it' : at)
+}
+
+/** A field with a table of its own, checked as that table sends it. */
+function checkSharedField(
+  field: Field,
+  sharing: AnyPolicy | ListPolicy<AnyPolicy>,
+  value: unknown,
+  at: string,
+): string | null {
+  if (LIST in sharing && typeof field === 'object' && 'listOf' in field) {
+    if (!Array.isArray(value)) return `${at} is not a list`
+    for (const [i, item] of value.entries()) {
+      const why = checkSharedShape(field.listOf, sharing[LIST], item, `${at}[${String(i)}]`)
+      if (why !== null) return why
+    }
+    return null
+  }
+  if (!(LIST in sharing) && typeof field === 'object' && 'shape' in field) {
+    return checkSharedShape(field.shape, sharing, value, at, field.also)
+  }
+  // A table and a spec that disagree on what the field holds: checked as the
+  // spec says, which is never looser than the type.
+  return checkField(field, value, at)
 }

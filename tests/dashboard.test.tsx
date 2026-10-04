@@ -9,6 +9,7 @@ import {
   UnreadableStoreError,
   UnrecognisedRecordError,
 } from '@core/session/store'
+import { NOT_A_RECORD } from '@core/session/check'
 import type { SessionRecord } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
 import { history, session } from './helpers'
@@ -231,10 +232,15 @@ describe('starting a new history (KV-98)', () => {
     // Archiving months of baseline over one entry was the remedy on offer
     // until the review of #182.
     listSessions.mockRejectedValue(
-      fromMain(new UnrecognisedRecordError(PATH, 2, 18, true), 'sessions:list'),
+      fromMain(
+        new UnrecognisedRecordError(PATH, 2, 18, NOT_A_RECORD),
+        'sessions:list',
+      ),
     )
     render(<App />)
-    await screen.findByText(/Entry 2 of 18 .* is not a check-in at all/)
+    // The not-a-record sentence, not the cannot-read one quoting it (review of #183).
+    await screen.findByText(/Entry 2 of 18 .* is not a check-in at all\. Nothing/)
+    expect(document.body.textContent).not.toMatch(/cannot read/)
     expect(document.body.textContent).toMatch(/the rest of the history is intact/)
     expect(screen.queryByText('Start a new history')).toBeNull()
   })

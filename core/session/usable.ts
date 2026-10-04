@@ -85,15 +85,18 @@ export function unusableReason(vitals: Vitals): UnusableReason | null {
   // Both numeric tests are written `!(x >= n)` rather than `x < n`, so a value
   // that is not a number at all lands on the withholding side.
   //
-  // `store.ts` casts parsed JSON to `SessionRecord` without validating it, so
-  // a record missing a key reads as `undefined` — and `undefined < 20` and
+  // `store.ts` cast parsed JSON to `SessionRecord` without validating it, so
+  // a record missing a key read as `undefined` — and `undefined < 20` and
   // `undefined < 0.5` are both false, which would walk a record past this gate
   // as a full-length, fully vouched-for capture. `NaN` does the same, and
   // slips `typeof === 'number'` too. Until KV-72 this was academic: the only
   // vitals reaching here came from a capture the main process had just
   // measured, where both fields are real numbers by construction. Pointing the
   // predicate at every record in the history file is what made the shape
-  // discipline load-bearing (KV-72 review).
+  // discipline load-bearing (KV-72 review). Since KV-181 the store checks every
+  // field as it reads (`checkRecord`), so a stored record can no longer reach
+  // here malformed; the guard stays, as the cheap one that holds whatever path
+  // a record took to get here.
   if (!(durationSec >= MIN_CAPTURE_SECONDS)) return 'too-short'
 
   // Unrated is not usable (KV-12). The SDK sometimes reports a rate without
