@@ -1498,10 +1498,11 @@ ruled out.
 - **Every signature rests on the check-in device's key**, which sits where its data sits:
   behind the operating system's account boundary and nothing more until #175 decides
   otherwise. Malware running as the person can sign forged cards that every viewer accepts.
-- **A dead check-in device loses the history.** The card recovers authority, not data: the
-  history, and with it the baseline the scorer compares against, goes with the device
-  unless it was exported or backed up (#21, #175). A replacement starts from zero check-ins,
-  "too early to compare" until it has enough.
+- **A dead check-in device loses the history, unless it was exported.** The card recovers
+  authority, not data: the history, and with it the baseline the scorer compares against,
+  goes with the device unless it was exported (KV-21) or backed up (#175). Restored from an
+  export, the history and its baseline come back as of that export. Otherwise a replacement
+  starts from zero check-ins, "too early to compare" until it has enough.
 - #36's T4 remains in part: the relay still sees when envelopes arrive and who is paired
   with whom; sending on a schedule rather than at capture time is noted, not required.
 
@@ -1666,6 +1667,118 @@ code that wrote it. What #30 asked, and what was decided:
   `toShared` refuses a record `checkRecord` refuses, so nothing leaves that a viewer would
   have to hold aside.
 
+### Exporting, deleting, and how long a history is kept (KV-21)
+
+Decided 2026-10-04, revised in review of #184. There was no way to export a person's
+history, no way to delete it, and no retention policy — `sessions.json` grew forever —
+and `README.md` was silent on all three. For an identified person's physiological data,
+"it's local" is necessary and not sufficient. It applies on one machine before anything is
+shared, and sits here because its tombstones are what sync will carry (#45). This is the
+policy; the change that builds it adds what is then true to the privacy section of
+`README.md`.
+
+- **Export is a restorable file, one per person.** Their records exactly as stored —
+  format, verdict and pain note included — inside a small container that says what it is
+  (its own `kind` and `version`, and when it was made), with the tombstones below. Not a
+  spreadsheet: a file someone can read but not restore would do nothing for KV-33's limit,
+  that a dead check-in device takes the history with it. This makes the history
+  recoverable **if the person exported it** — export is manual, so T14 stays a limit for
+  anyone who did not. **Nothing schedules or nags; the date is shown instead**: beside
+  the export control, "Last exported: never", or "Last exported 3 October (41 check-ins
+  since)", so how much a dead device would take is visible without a prompt an older adult
+  may not follow (review of #184). A readable form can come later, on top. **Seeded demo
+  days are not exported**: they are about nobody. **The pain note goes with its
+  check-in**: it is the person's own data, exported at their own device.
+- **Restoring writes everything it accepts, or nothing, and says which.** A restore that
+  stopped halfway would look like success, so the file is read in full before anything is
+  written, in this order (review of #184):
+  1. **The container's `kind` and `version`.** Not a Kinvue export: refused. A newer
+     container: refused as *made by a newer version of Kinvue, which can restore it*.
+  2. **Each record's format** (KV-30). One newer than this build reads: the whole file is
+     refused with the same newer-version sentence, never entry by entry — the person needs
+     a newer app, not a list of entries.
+  3. **Every field of every record** (`checkRecord`, KV-181) **and every tombstone.** Any
+     refusal refuses the file, naming the entry and the field.
+
+  Then records are merged by id: one already here is the same record (`sameRecord`, KV-30)
+  and changes nothing; a different one under an id already held refuses the file. **A
+  record this device has a tombstone for is skipped, and the screen says so** — "None
+  restored: all 60 check-ins in this file were deleted on this device on 3 October, and
+  stay deleted", or "Restored 12; 3 others were deleted here and stay deleted". Skipped is
+  an outcome reported, not a partial write. A refused restore changes nothing, and offers
+  nothing that would: the history already here is never set aside to make room (the
+  mistake #182's review took out of the store). Restoring the same file twice changes
+  nothing.
+- **The three version numbers answer three questions.** The store file's `version`
+  (KV-13) is the shape of `sessions.json`; an export's container `version` is the shape of
+  an export; each record's `format` (KV-30) is the shape of a record, the same inside both.
+  Each moves on its own, and each is read before the thing it describes.
+- **Deleting: one check-in, every check-in before a date, or a person's whole history.**
+  "Before a date" is one instant — midnight at the start of that date, in the device's own
+  zone when the person deletes — compared with each `capturedAt`, so a record from before
+  KV-28, which has no local day (`localDateOf` answers null), is decided like any other
+  rather than left behind by an unstated rule; and the screen shows how many check-ins it
+  will delete, and when the last of them was taken, before anything goes. It is the
+  person's action, at their own device, confirmed on screen, which says it
+  **cannot be undone, not even by restoring an export** — the export it offers first is a
+  copy to keep, not an undo (review of #184). The record is removed from the store, not
+  hidden in it; what a disk keeps of a file rewritten over is a cost below. What is kept
+  is a **tombstone**: the record's id, whose it was, and when it was deleted — no reading,
+  no answer, no note — so a deletion can travel (#45) and outlast an export. **Tombstones
+  live in `sessions.json`, beside the records.** **A seeded day leaves none**: it never
+  leaves the device, so there is nothing to tell, and its id repeats across installs —
+  a tombstone for `seed-demo-margaret-4`, exported and restored elsewhere, would delete
+  another install's demo day the file never mentioned (review of #184).
+- **A tombstone wins over the record it names, whichever arrives first — for a copy that
+  comes back through the app.** A restored export, or a record arriving by sync, cannot
+  bring a deleted check-in back; and a tombstone arriving in a restored file removes the
+  record it names. This is KV-30's rule, made concrete: a deletion an export can undo is
+  not one. **Not against a rollback of the file itself** (review of #184): restore
+  yesterday's `sessions.json` from File History, Time Machine or a sync client's version
+  history, and the records come back with the tombstones gone in the same step — nothing
+  is left to win. That is the operating system's backups doing what they do, and it is
+  T7's limit, below; #175 decides what protects the store at rest.
+- **Verdicts already given stand.** A card is a record of what the app said (KV-138).
+  Deleting a day does not rescore the cards that were compared against it: they keep their
+  stored verdicts and counts. Check-ins after it are compared against what remains. A card
+  whose usual included the deleted day may gain a drift line, which says the verdict would
+  differ now and not why — the same line a change of rules produces. Rescoring was
+  rejected: it would rewrite what a caregiver had already been told. **The confirm screen
+  says so** (review of #184): older cards compared against these days may note that they
+  would read differently now — so a line appearing on a settled card, on a day when
+  nothing about the person changed, has been explained before it appears.
+- **Kept until the person deletes it, deliberately.** No automatic window. A person's own
+  log, on a device they control, deleted on a schedule nobody chose, would surprise more
+  than protect; and the usual reaches back by count (14 usable check-ins), not by age, so
+  age is not what makes old data matter. What is held elsewhere has its own limits — the
+  relay keeps ciphertext at most 14 days (KV-33) — and protection at rest is #175's.
+- **The pain note shares its check-in's lifecycle.** Exported, kept and deleted with it. It
+  is already treated apart where that matters — sent only to a viewer the person chose
+  (KV-32) — and how it is protected at rest is #175's question. Deleting only the note
+  would edit a record, which is never done.
+
+**What it costs.**
+- **Anyone at the device can export or delete.** The app has no notion of who is at a
+  shared computer: the same limit #40 meets for approving a viewer, and #175 for data at
+  rest (T2, T7).
+- **An exported file is the whole history in plain JSON**, wherever it is put — a USB
+  stick, a synced folder, an email — outside `userData` and any account boundary. The
+  screen that makes one says so. Its own row: T16.
+- **What a disk keeps of a deleted record.** A deletion rewrites `sessions.json` through a
+  temporary file and a rename, so the old file's blocks are released, not overwritten:
+  reachable for a while from free space, a filesystem journal, an SSD's spare area, a
+  shadow copy, or a sync client's version history. Until #175 decides protection at rest
+  there is nothing to make that residue unreadable (T7). "Deleted" means gone from the
+  app and from the store, not from the disk.
+- **Tombstones outlive a whole-history delete, and say something** (review of #184). A
+  person who deletes everything leaves one entry per check-in they ever took, with whose
+  it was and the day they erased them — at a shared computer (T2), in a plain file (T7),
+  that is how many check-ins there were and when they were wiped. They cannot be removed:
+  they are what stops an export made earlier, or a copy arriving by sync, bringing the
+  records back. The confirm screen says so before a whole-history delete. They accumulate,
+  one small entry per deleted check-in, for as long as a copy could exist — which on one
+  machine is indefinitely.
+
 ### What must hold before real check-ins are stored
 
 Each is owned by a Phase 1 ticket that has to land before the check-in flow (#2) stores
@@ -1678,8 +1791,9 @@ three hold:
   cannot produce the same one (#25). The same record arriving twice is one record
   (KV-30). Seeded ids repeat across installs, which is acceptable only because seeded
   records never leave the device (#37). When a record is
-  removed — by deletion, or by whatever retention #21 settles on — sync must carry that
-  as a tombstone, not as silence. (#45)
+  removed — by the person, since KV-21 settled on no automatic retention — sync must
+  carry that as a tombstone, not as silence, and the tombstone wins over the record
+  whichever comes back first through restore or sync (KV-21, #45).
 - **Vitals originate in the main process and nowhere else.** This holds: `submit` takes
   the id of a capture main is holding, never the numbers. The rule, and what else that
   held capture is pinned to, is under *Why the API key lives in the main process*. (#25)
@@ -1742,10 +1856,11 @@ to check a card against. Integrity is protected as deliberately as confidentiali
 | T9 | A malicious release reaches installs through the update channel or a dependency | Supply-chain attacker | **Today:** Electron and the SDK pinned exactly, each bump alone and launched before merge (KV-131, KV-145). **Not yet:** signed installers and signed updates, which wait on there being an installer and an update channel (#19); which dependencies may run install scripts (#147); and the caregiver app's native shell and its plugins — code on the phone holding the viewer's keys — pinned and reviewed, with its web code kept in the signed bundle (KV-34, #179). | #19, #147, #179 | Partly done; open on #19, #147, #179 |
 | T10 | **The SDK's own traffic reveals the routine:** the licence meter carries each session's times and per-metric datapoint counts to the vendor, today, whatever Kinvue builds | The SDK vendor; whoever breaches it | Not mitigable in the app: a capture cannot run without it (KV-65). Established from the runtime's own schema, not by decrypting the traffic; *when* each report is sent is only partly known, but a report carrying the session's times says when the check-in happened whenever it arrives. `README.md` says so. Whether a third party receiving it is acceptable, and what users must be told, is a legal question. | #35 | **Accepted, disclosed; → #35** |
 | T11 | The pain note, the most personal field, reaches people the person did not mean it for | Any viewer | Off by default; turned on per viewer by the person; the note field says who will read it as they type (KV-32). | #31, #37, #40 | Decided |
-| T12 | Data the person deleted, or withdrew, survives elsewhere | Any copy holder | Deletion travels as a tombstone; a revoked viewer's app deletes its copy on next contact, and one that never reconnects keeps it — a limit; partial deletion is tested as a flow because it looks like success. | #21, #45 | Planned |
+| T12 | Data the person deleted, or withdrew, survives elsewhere | Any copy holder | Deletion travels as a tombstone; a revoked viewer's app deletes its copy on next contact, and one that never reconnects keeps it — a limit; partial deletion is tested as a flow because it looks like success. | #21, #45, #175 | Decided (KV-21: a tombstone wins over a copy coming back through restore or sync); #21, #45 to build. A rollback of the store file restores records and tombstones together — T7's limit |
 | T13 | **A delivered card is altered, fabricated, replayed or dropped**, so a viewer reads a day that did not happen, or misses one that did | The relay; a network attacker; whoever breaches the relay | A per-viewer envelope — viewer id, stream number, previous envelope's hash, record — signed by the check-in device (Ed25519) and verified on the viewer's device before it is shown, so drops, renumbering, replays and reordering show, and a gap is shown as one (with #44); the pairing code derived from all four public keys; the daily summary composed from verified records only (KV-33). **Rests on the check-in device's signing key**, which is protected only as T7's data is: malware running as the person can sign forgeries. | #33, #39, #40, #42, #43, #175 | Decided; rests on #175 |
-| T14 | **The check-in device is lost, broken, wiped or replaced**, and with it every share's authority: nothing can be revoked, and the person cannot see who still holds their check-ins | Accident; theft | A printed recovery card that can see who has access and end every share, never approve anyone new; using it is delayed 72 hours and announced to every viewer, and can be cancelled from the check-in device if it still exists, so a card misused to cut the person off alerts every caregiver instead of silencing them (KV-33). A replacement device starts fresh, each viewer approved again at it. **The history is not recovered:** it goes with the device unless exported or backed up (#21, #175), and the baseline restarts from zero. | #33, #40, #45, #21 | Decided; #40, #45 to build; history loss a limit |
+| T14 | **The check-in device is lost, broken, wiped or replaced**, and with it every share's authority: nothing can be revoked, and the person cannot see who still holds their check-ins | Accident; theft | A printed recovery card that can see who has access and end every share, never approve anyone new; using it is delayed 72 hours and announced to every viewer, and can be cancelled from the check-in device if it still exists, so a card misused to cut the person off alerts every caregiver instead of silencing them (KV-33). A replacement device starts fresh, each viewer approved again at it. **The history is recovered only if it was exported:** a restored export brings back the history and its baseline as of that export (KV-21); without one it goes with the device, or a backup (#175), and the baseline restarts from zero. | #33, #40, #45, #21 | Decided; #40, #45 to build; history loss a limit, unless exported (KV-21) |
 | T15 | **The SmartSpectra API key at rest.** In development it is plain text in `.env`, beside `sessions.json`; a packaged install has no route to a key yet. A stolen key means vendor account abuse and billing, and reaches the metered record of when check-ins happen (T10) | The same actors as T7 | **Today**, only the operating system's account boundary, as for T7. How a packaged install receives and holds its key is #19's, and it is a data-at-rest question in the same sense as #175's. | #19, #175 | **Gap → #19** |
+| T16 | **An exported history, read where it was put.** A complete, identified physiological history in plain JSON, copied by the person to a USB stick, a synced folder or an email (KV-21) — outside `userData`, so outside even T7's account boundary | Whoever finds or receives the file; the services it passes through | The screen that makes an export says it is the whole history, unprotected, and that it should be kept as carefully as the device. Whether an export is encrypted with a passphrase the person chooses is a question for #175, beside the store's own protection at rest. | #21, #175 | **A limit**; encryption → #175 |
 
 Four of these are the ones most likely to be argued with. **T10 is live now**, not a Phase 5
 risk: the vendor already receives when each check-in happened. **T2, T7 and T15 are the
