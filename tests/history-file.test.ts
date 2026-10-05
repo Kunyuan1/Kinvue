@@ -2,12 +2,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { mkdtemp, rm, truncate, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import {
-  exportFileName,
-  MAX_EXPORT_BYTES,
-  NOT_AN_EXPORT,
-  readExport,
-} from '../app/main/history-file'
+import { exportFileName, MAX_EXPORT_BYTES, readExport } from '../app/main/history-file'
 
 /** Reading and naming an exported history (KV-21), in plain node. */
 
@@ -27,19 +22,28 @@ afterEach(async () => {
 describe('readExport', () => {
   it('reads a file as JSON, leaving what it holds for planRestore to check', async () => {
     expect(await readExport(await fileWith('{"kind":"kinvue-history"}'))).toEqual({
-      kind: 'kinvue-history',
+      kind: 'read',
+      contents: { kind: 'kinvue-history' },
     })
   })
 
   it('answers "not an export" for a file that is not JSON', async () => {
-    expect(await readExport(await fileWith('a photo, perhaps'))).toBe(NOT_AN_EXPORT)
+    expect(await readExport(await fileWith('a photo, perhaps'))).toEqual({ kind: 'not-an-export' })
   })
 
   it('answers "not an export" for a file too large to be one, without reading it', async () => {
     const path = await fileWith('')
     // Sparse: as large as the cap says, without writing 50 MB to find out.
     await truncate(path, MAX_EXPORT_BYTES + 1)
-    expect(await readExport(path)).toBe(NOT_AN_EXPORT)
+    expect(await readExport(path)).toEqual({ kind: 'not-an-export' })
+  })
+
+  it('says a file that would not open would not open, not that it is no export', async () => {
+    // A directory stands in for a locked file: reading it fails the way a refused read does.
+    const dir = await mkdtemp(join(tmpdir(), 'kinvue-export-'))
+    dirs.push(dir)
+    expect(await readExport(dir)).toEqual({ kind: 'unopenable', code: 'EISDIR' })
+    expect(await readExport(join(dir, 'gone.json'))).toEqual({ kind: 'unopenable', code: 'ENOENT' })
   })
 })
 

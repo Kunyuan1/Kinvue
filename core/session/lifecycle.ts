@@ -1,5 +1,5 @@
 import { checkRecord, checkTombstone, isInstant } from './check'
-import { checkFormat, sameRecord } from './format'
+import { checkFormat, RECORD_FORMAT, sameRecord } from './format'
 import type { SessionRecord, Tombstone } from './types'
 
 /**
@@ -137,7 +137,14 @@ export function exportOf(history: History, personId: string, now: Date): History
 /** Why a file cannot be restored. Nothing is written for any of these. */
 export type RestoreRefusal =
   | { kind: 'not-an-export' }
-  | { kind: 'newer' }
+  /** The file could not be opened — held by another program, or refused by its permissions. */
+  | { kind: 'unopenable'; code: string | undefined }
+  /**
+   * Made by a newer version: its container (`export`) or one of its records
+   * (`record`), with the version it says — named in the sentence, as the store
+   * names its own (review of #185).
+   */
+  | { kind: 'newer'; of: 'export' | 'record'; version: number }
   | { kind: 'someone-else' }
   | { kind: 'unreadable'; why: string }
   | { kind: 'entry'; position: number; total: number; why: string }
@@ -150,10 +157,15 @@ export interface RestoreOutcome {
   alreadyHere: number
   /** Check-ins in the file deleted on this device, and so not restored. */
   stayDeleted: number
-  /** When those were deleted, as tombstone times — for the sentence. */
+  /** When those were deleted here, as tombstone times — for the sentence. */
   deletedAt: string[]
-  /** Check-ins here that the file says were deleted where it was made. */
-  removedByFile: number
+  /**
+   * Check-ins in the file that the file itself says were deleted where it was
+   * made, and so not restored. Kept apart from `stayDeleted`: these were not
+   * deleted on this device, and the sentence must not say they were (review
+   * of #185).
+   */
+  deletedThere: number
 }
 
 export type RestorePlan =
@@ -179,15 +191,21 @@ const refuse = (refusal: RestoreRefusal): RestorePlan => ({ ok: false, refusal }
  * the container's kind and version; then each record's format, refused as a
  * whole file when newer, never entry by entry; then every field of every record
  * and every tombstone. Then the merge, by id: the same record is already here;
- * a different one under a held id refuses the file; a record this device has
- * a tombstone for stays deleted; and a tombstone in the file removes the record
- * it names here. A refusal changes nothing.
+ * a different one under a held id refuses the file; a record with a tombstone,
+ * here or in the file, is not restored.
+ *
+ * **Restoring never deletes** (review of #185). A tombstone in the file is kept
+ * here only to stop that check-in arriving later — so an older export cannot
+ * bring back what this one says was deleted — and is ignored for a check-in this
+ * device holds. Deleting stays one action: the person's own, confirmed on
+ * screen. A file is not signed (T16), so a restore that could delete would hand
+ * that to whoever could edit the file. A refusal changes nothing.
  */
 export function planRestore(history: History, personId: string, file: unknown): RestorePlan {
   if (!isObject(file) || file.kind !== EXPORT_KIND) return refuse({ kind: 'not-an-export' })
   const { version } = file
   if (typeof version === 'number' && Number.isFinite(version) && version > EXPORT_VERSION) {
-    return refuse({ kind: 'newer' })
+    return refuse({ kind: 'newer', of: 'export', version })
   }
   if (version !== EXPORT_VERSION) {
     return refuse({ kind: 'unreadable', why: 'it does not say which version of an export it is' })
@@ -199,8 +217,9 @@ export function planRestore(history: History, personId: string, file: unknown): 
 
   const records: unknown[] = file.records
   const tombstones: unknown[] = file.removed
-  if (records.some((r) => isObject(r) && checkFormat(r) === 'newer')) {
-    return refuse({ kind: 'newer' })
+  const newer = records.find((r) => isObject(r) && checkFormat(r) === 'newer')
+  if (newer !== undefined) {
+    return refuse({ kind: 'newer', of: 'record', version: (newer as { format: number }).format })
   }
 
   const total = records.length + tombstones.length
@@ -228,18 +247,23 @@ export function planRestore(history: History, personId: string, file: unknown): 
   const added: SessionRecord[] = []
   const deletedAt: string[] = []
   let alreadyHere = 0
+  let deletedWhereMade = 0
   for (const [i, record] of incoming.entries()) {
     // A tombstone wins over the record it names, whichever arrives first.
-    const tombstone = deletedHere.get(record.id) ?? deletedThere.get(record.id)
-    if (tombstone !== undefined) {
-      deletedAt.push(tombstone.removedAt)
+    const here = deletedHere.get(record.id)
+    if (here !== undefined) {
+      deletedAt.push(here.removedAt)
       continue
     }
-    const here = held.get(record.id)
-    if (here === undefined) {
+    if (deletedThere.has(record.id)) {
+      deletedWhereMade++
+      continue
+    }
+    const stored = held.get(record.id)
+    if (stored === undefined) {
       added.push(record)
       held.set(record.id, record)
-    } else if (sameRecord(here, record)) {
+    } else if (sameRecord(stored, record)) {
       alreadyHere++
     } else {
       return refuse({
@@ -251,18 +275,20 @@ export function planRestore(history: History, personId: string, file: unknown): 
     }
   }
 
-  const newTombstones = theirDeletions.filter((t) => !deletedHere.has(t.id))
-  const removedHere = new Set(newTombstones.map((t) => t.id))
-  const sessions = [...history.sessions, ...added].filter((r) => !removedHere.has(r.id))
+  // Kept to block, never to remove: one naming a check-in held here is ignored.
+  const blocking = theirDeletions.filter((t) => !deletedHere.has(t.id) && !held.has(t.id))
   return {
     ok: true,
-    history: { sessions, removed: [...history.removed, ...newTombstones] },
+    history: {
+      sessions: [...history.sessions, ...added],
+      removed: [...history.removed, ...blocking],
+    },
     outcome: {
       restored: added.length,
       alreadyHere,
       stayDeleted: deletedAt.length,
       deletedAt,
-      removedByFile: history.sessions.filter((r) => removedHere.has(r.id)).length,
+      deletedThere: deletedWhereMade,
     },
   }
 }
@@ -280,30 +306,34 @@ const stays = (n: number): string => (n === 1 ? 'stays' : 'stay')
  * the clock and the zone and is tested as words.
  */
 export function describeRestore(outcome: RestoreOutcome, day: (instant: string) => string): string {
-  const { restored, alreadyHere, stayDeleted, deletedAt, removedByFile } = outcome
+  const { restored, alreadyHere, stayDeleted, deletedAt, deletedThere } = outcome
   const days = [...new Set(deletedAt.map(day))]
   const when = days.length === 1 ? ` on ${days[0]!}` : ''
-  const deletedHere = `deleted on this device${when}, and ${stays(stayDeleted)} deleted.`
-  const parts: string[] = []
-  if (restored === 0 && stayDeleted > 0 && alreadyHere === 0) {
-    parts.push(`None restored: ${the(stayDeleted)} in this file ${was(stayDeleted)} ${deletedHere}`)
-  } else if (restored === 0 && stayDeleted === 0) {
-    parts.push(
-      alreadyHere === 0
-        ? 'Nothing to restore: this file holds no check-ins.'
-        : `Nothing to restore: ${the(alreadyHere)} in this file ${is(alreadyHere)} already here.`,
-    )
-  } else {
-    parts.push(`Restored ${checkIns(restored)}.`)
-    if (alreadyHere > 0) parts.push(`${checkIns(alreadyHere)} ${was(alreadyHere)} already here.`)
-    if (stayDeleted > 0) parts.push(`${checkIns(stayDeleted)} ${was(stayDeleted)} ${deletedHere}`)
+  const deletedHere = `deleted on this device${when}, and ${stays(stayDeleted)} deleted`
+  const there = `deleted where the file was made, and ${is(deletedThere)} not restored`
+  if (restored === 0) {
+    // Never "Restored 0 check-ins" (review of #185): what nothing was added for.
+    if (alreadyHere + stayDeleted + deletedThere === 0) {
+      return 'Nothing to restore: this file holds no check-ins.'
+    }
+    if (stayDeleted === 0 && deletedThere === 0) {
+      return `Nothing to restore: ${the(alreadyHere)} in this file ${is(alreadyHere)} already here.`
+    }
+    if (alreadyHere === 0 && deletedThere === 0) {
+      return `None restored: ${the(stayDeleted)} in this file ${was(stayDeleted)} ${deletedHere}.`
+    }
+    const here = `${checkIns(alreadyHere)} in this file ${is(alreadyHere)} already here`
+    const why = [
+      alreadyHere > 0 ? here : null,
+      stayDeleted > 0 ? `${checkIns(stayDeleted)} ${was(stayDeleted)} ${deletedHere}` : null,
+      deletedThere > 0 ? `${checkIns(deletedThere)} ${was(deletedThere)} ${there}` : null,
+    ].filter((part) => part !== null)
+    return `None restored: ${why.join('; ')}.`
   }
-  if (removedByFile > 0) {
-    parts.push(
-      `${checkIns(removedByFile)} here ${was(removedByFile)} deleted where this file was ` +
-        `made, and ${is(removedByFile)} now deleted here too.`,
-    )
-  }
+  const parts = [`Restored ${checkIns(restored)}.`]
+  if (alreadyHere > 0) parts.push(`${checkIns(alreadyHere)} ${was(alreadyHere)} already here.`)
+  if (stayDeleted > 0) parts.push(`${checkIns(stayDeleted)} ${was(stayDeleted)} ${deletedHere}.`)
+  if (deletedThere > 0) parts.push(`${checkIns(deletedThere)} in it ${was(deletedThere)} ${there}.`)
   return parts.join(' ')
 }
 
@@ -313,8 +343,26 @@ export function describeRefusal(refusal: RestoreRefusal): string {
   switch (refusal.kind) {
     case 'not-an-export':
       return 'That file is not a Kinvue history export.' + unchanged
-    case 'newer':
-      return 'That file was made by a newer version of Kinvue, which can restore it.' + unchanged
+    case 'unopenable':
+      return (
+        `That file could not be opened${refusal.code === undefined ? '' : ` (${refusal.code})`}. ` +
+        'Another program may be using it, or its permissions may need checking; it is worth ' +
+        'another go.' + unchanged
+      )
+    case 'newer': {
+      // Split, as `NewerStoreError` is: "a newer version of Kinvue, which can
+      // restore it" read as a claim about this app (review of #185).
+      const [what, unit, ours] =
+        refusal.of === 'export'
+          ? ['export version', 'version', EXPORT_VERSION]
+          : ['record format', 'format', RECORD_FORMAT]
+      const versions = `${what} ${String(refusal.version)}; this one reads ${unit} ${String(ours)}`
+      return (
+        `That file was made by a newer version of Kinvue (${versions}).` +
+        unchanged +
+        ' The newer version can restore it.'
+      )
+    }
     case 'someone-else':
       return 'That file is someone else’s history, not this one.' + unchanged
     case 'unreadable':

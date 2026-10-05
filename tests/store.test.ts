@@ -735,6 +735,18 @@ describe('exporting, restoring and deleting (KV-21)', () => {
     expect(await readFile(path, 'utf8')).toBe(text)
   })
 
+  it('names the list, not an entry it lacks, when the deletions are not a list', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, fileOf({ version: 1, sessions: [], removed: {} }), 'utf8')
+    const listed = await createJsonSessionStore(path).list('test-person').catch((e: unknown) => e)
+    expect(listed).toBeInstanceOf(UnrecognisedRecordError)
+    expect(String(listed)).toContain(
+      `The list of deleted check-ins in the check-in history at ${path} cannot be read ` +
+        '(it is not a list)',
+    )
+    expect(String(listed)).not.toMatch(/record 1 of 1/)
+  })
+
   it('restores an export into another store exactly, and again changes nothing', async () => {
     const from = createJsonSessionStore((await storeIn()).path)
     await from.append(session({ id: 'a', capturedAt: day(0) }))
@@ -763,7 +775,7 @@ describe('exporting, restoring and deleting (KV-21)', () => {
     await store.append(session({ id: 'a' }))
     const before = await readFile(path, 'utf8')
     const plan = await store.restore('test-person', { kind: 'kinvue-history', version: 2 })
-    expect(plan).toEqual({ ok: false, refusal: { kind: 'newer' } })
+    expect(plan).toEqual({ ok: false, refusal: { kind: 'newer', of: 'export', version: 2 } })
     expect(await readFile(path, 'utf8')).toBe(before)
   })
 
@@ -779,6 +791,13 @@ describe('exporting, restoring and deleting (KV-21)', () => {
     await store.markExported('test-person', AT)
     expect(await store.lastExported('test-person')).toBe(AT.toISOString())
     expect(await store.lastExported('another-person')).toBeNull()
+  })
+
+  it('replaces a last-export record that is not one, rather than writing junk back', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, fileOf({ version: 1, sessions: [], lastExported: '2026-10-01' }), 'utf8')
+    await createJsonSessionStore(path).markExported('test-person', AT)
+    expect((await onDisk(path)).lastExported).toEqual({ 'test-person': AT.toISOString() })
   })
 
   it('reads a last-export date it cannot read as never, not as a refusal', async () => {

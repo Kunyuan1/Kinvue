@@ -240,17 +240,21 @@ export class UnrecognisedRecordError extends Error {
    * `why` is `checkRecord`'s reason, or `checkTombstone`'s, naming the field:
    * whoever opens the file needs it. `of` says which list the entry is in — a
    * deletion record is load-bearing too (KV-21), since it is what keeps a
-   * deleted check-in deleted.
+   * deleted check-in deleted. `position` is null when it is the list itself
+   * that cannot be read, which has no entry to point at (review of #185).
    */
   constructor(
     path: string,
-    position: number,
+    position: number | null,
     total: number,
     why: string,
     of: 'check-ins' | 'deletions',
   ) {
     const what =
-      of === 'deletions'
+      position === null
+        ? `The list of deleted check-ins in the check-in history at ${path} cannot be read ` +
+          `(${why})`
+        : of === 'deletions'
         ? `Deletion record ${String(position)} of ${String(total)} in the check-in history at ` +
           `${path} cannot be read (${why})`
         : `Entry ${String(position)} of ${String(total)} in the check-in history at ${path} ` +
@@ -366,7 +370,7 @@ async function read(path: string): Promise<FileShape> {
   const removed: unknown = (parsed as { removed?: unknown }).removed
   if (removed !== undefined) {
     if (!Array.isArray(removed)) {
-      throw new UnrecognisedRecordError(path, 1, 1, 'it is not a list', 'deletions')
+      throw new UnrecognisedRecordError(path, null, 0, 'it is not a list', 'deletions')
     }
     for (const [i, tombstone] of removed.entries()) {
       const why = checkTombstone(tombstone)
@@ -534,7 +538,10 @@ export function createJsonSessionStore(
     },
     async markExported(personId, at) {
       const data = await read(path)
-      const lastExported = { ...data.lastExported, [personId]: at.toISOString() }
+      // Kept only if it is the map it should be: a hand-edited string spread
+      // here would be written back as junk (review of #185).
+      const prior = isObject(data.lastExported) ? data.lastExported : {}
+      const lastExported = { ...prior, [personId]: at.toISOString() }
       await write(path, { ...data, lastExported })
     },
     async lastExported(personId) {
@@ -545,10 +552,10 @@ export function createJsonSessionStore(
       const data = await read(path)
       const plan = planRestore(historyOf(data), personId, file)
       if (!plan.ok) return plan
-      const { restored, removedByFile } = plan.outcome
       const newTombstones = plan.history.removed.length > historyOf(data).removed.length
-      // One write, whole — or none, when nothing would change.
-      if (restored > 0 || removedByFile > 0 || newTombstones) {
+      // One write, whole — or none, when nothing would change. Never a deletion:
+      // a restore only adds check-ins, and tombstones that block (review of #185).
+      if (plan.outcome.restored > 0 || newTombstones) {
         await write(path, withHistory(data, plan.history))
       }
       return plan

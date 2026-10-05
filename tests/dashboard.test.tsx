@@ -30,6 +30,7 @@ const drawControl = vi.hoisted(() => ({
   presentThrows: false,
   captureThrows: false,
   questionsThrow: false,
+  historyThrows: false,
 }))
 
 // The capture and question screens, as stand-ins: the real capture screen
@@ -71,6 +72,18 @@ vi.mock('@renderer/components/SessionCard', async (importOriginal) => {
   return {
     default: (props: Parameters<typeof Real>[0]) => {
       if (props.session.id === drawControl.cardThrowsFor) throw new Error('card failed to draw')
+      return <Real {...props} />
+    },
+  }
+})
+
+vi.mock('@renderer/components/HistoryPanel', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@renderer/components/HistoryPanel')>()
+  const Real = actual.default
+  return {
+    ...actual,
+    default: (props: Parameters<typeof Real>[0]) => {
+      if (drawControl.historyThrows) throw new Error('history panel failed to draw')
       return <Real {...props} />
     },
   }
@@ -134,6 +147,7 @@ beforeEach(() => {
   drawControl.presentThrows = false
   drawControl.captureThrows = false
   drawControl.questionsThrow = false
+  drawControl.historyThrows = false
   // The dashboard logs the original of anything it will not show.
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
 })
@@ -992,6 +1006,21 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     expect(document.body.textContent).toMatch(/pain notes included, and is not protected/)
   })
 
+  it('blames nothing on demo days when there are none (review of #185)', async () => {
+    listSessions.mockResolvedValue([])
+    render(<App />)
+    expect(await screen.findByText('Nothing to export yet.')).toBeTruthy()
+    expect(screen.queryByText(/demo days are not exported/)).toBeNull()
+  })
+
+  it('keeps one region for what the panel says, there before it says anything', async () => {
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    await screen.findByText('Last exported: never.')
+    const region = document.querySelector('section [aria-live="polite"]')
+    expect(region?.textContent).toBe('')
+  })
+
   it('offers no export when there is nothing real to export', async () => {
     listSessions.mockResolvedValue(days().map((r) => ({ ...r, seeded: true as const })))
     render(<App />)
@@ -1017,7 +1046,7 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     await screen.findByText('Last exported: never.')
     restoreHistory.mockResolvedValueOnce({
       ok: true,
-      outcome: { restored: 0, alreadyHere: 0, stayDeleted: 2, deletedAt: [], removedByFile: 0 },
+      outcome: { restored: 0, alreadyHere: 0, stayDeleted: 2, deletedAt: [], deletedThere: 0 },
     })
     const loads = listSessions.mock.calls.length
     fireEvent.click(screen.getByText(/Restore from an export/))
@@ -1029,7 +1058,10 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     ).toBeTruthy()
     expect(listSessions.mock.calls.length).toBe(loads + 1)
 
-    restoreHistory.mockResolvedValueOnce({ ok: false, refusal: { kind: 'newer' } })
+    restoreHistory.mockResolvedValueOnce({
+      ok: false,
+      refusal: { kind: 'newer', of: 'export', version: 2 },
+    })
     fireEvent.click(screen.getByText(/Restore from an export/))
     expect(await screen.findByText(/made by a newer version of Kinvue/)).toBeTruthy()
   })
@@ -1043,6 +1075,9 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     fireEvent.click(first!)
     expect(screen.getByText('This cannot be undone, not even by restoring an export.')).toBeTruthy()
     expect(screen.getByText(/may note that they would read differently now/)).toBeTruthy()
+    expect(
+      screen.getByText('An export is a copy to keep: restoring it will not bring these back.'),
+    ).toBeTruthy()
     expect(document.activeElement?.textContent).toBe('Keep them')
 
     fireEvent.click(screen.getByText('Keep them'))
@@ -1057,6 +1092,20 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
       kind: 'one',
       id: records.at(-1)!.id,
     })
+  })
+
+  it('says what "Export first" did, beside the Delete, and updates the panel (#185)', async () => {
+    listSessions.mockResolvedValue(days())
+    exportHistory.mockResolvedValue({ count: 3 })
+    render(<App />)
+    await screen.findByText('Last exported: never.')
+    fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+    lastExported.mockResolvedValue('2026-10-05T10:00:00.000Z')
+    fireEvent.click(screen.getByText('Export first'))
+    const said = await screen.findByText('Exported 3 check-ins.')
+    expect(said.closest('[role="group"]')).not.toBeNull()
+    expect(await screen.findByText(/Last exported .* \(0 check-ins since\)\./)).toBeTruthy()
+    expect(screen.queryByText('Last exported: never.')).toBeNull()
   })
 
   it('previews a deletion before a date, from midnight on this device', async () => {
@@ -1098,6 +1147,24 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     fireEvent.click(screen.getByText('Delete'))
     expect(await screen.findByText('Deleted 3 check-ins.')).toBeTruthy()
     expect(removeCheckIns).toHaveBeenCalledWith(DEMO_PERSON_ID, { kind: 'all' })
+  })
+
+  it('leaves a sentence, and the cards, when the panel cannot be drawn (KV-163)', async () => {
+    drawControl.historyThrows = true
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    expect(
+      await screen.findByText(/Exporting, restoring and deleting could not be shown here/),
+    ).toBeTruthy()
+    expect(screen.getAllByText(/Delete this check-in/)).toHaveLength(3)
+  })
+
+  it('promises no note of demo days, which leave none (review of #185)', async () => {
+    listSessions.mockResolvedValue(days().map((r) => ({ ...r, seeded: true as const })))
+    render(<App />)
+    fireEvent.click(await screen.findByText(/Delete the whole history/))
+    expect(screen.queryByText(/stays on this computer/)).toBeNull()
+    expect(screen.getByText('These are demo days, so nothing is kept of them.')).toBeTruthy()
   })
 
   it('says a deletion that failed did nothing, the way any other failure is said', async () => {

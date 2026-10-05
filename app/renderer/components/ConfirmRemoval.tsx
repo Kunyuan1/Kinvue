@@ -39,8 +39,12 @@ export default function ConfirmRemoval({
   sessions: readonly SessionRecord[]
   personId: string
   which: Removal
-  /** Makes an export, from the screen that offers one first. */
-  onExport: () => Promise<void>
+  /**
+   * Makes an export, from the screen that offers one first: the dashboard's
+   * one export, resolving to what to say, shown here beside the Delete it
+   * precedes (review of #185), or null when there is nothing to say.
+   */
+  onExport: () => Promise<string | null>
   /** Called with how many were deleted, once they are. */
   onDone: (removed: number) => Promise<void>
   onCancel: () => void
@@ -49,10 +53,14 @@ export default function ConfirmRemoval({
 }) {
   const heading = useId()
   const [busy, setBusy] = useState(false)
+  const [exported, setExported] = useState<string | null>(null)
   const chosen = chosenFor(sessions, personId, which)
   const last = chosen.at(-1)
   if (last === undefined) return null
   const count = chosen.length === 1 ? 'this check-in' : `${String(chosen.length)} check-ins`
+  // A demo day leaves no tombstone, so the note is promised only when a real
+  // check-in is going (review of #185) — on a fresh install, none is.
+  const leavesANote = chosen.some((r) => r.seeded !== true)
 
   const run = async (step: () => Promise<void>): Promise<void> => {
     setBusy(true)
@@ -81,12 +89,13 @@ export default function ConfirmRemoval({
           Older cards compared against {chosen.length === 1 ? 'this day' : 'these days'} may
           note that they would read differently now.
         </li>
-        {which.kind === 'all' && (
+        {which.kind === 'all' && leavesANote && (
           <li>
             A note of which check-ins were deleted, and when, stays on this computer, so that an
             export made earlier cannot bring them back. It holds no readings and no answers.
           </li>
         )}
+        {!leavesANote && <li>These are demo days, so nothing is kept of them.</li>}
       </ul>
       <div className="mt-3 flex flex-wrap gap-2">
         <button
@@ -101,7 +110,11 @@ export default function ConfirmRemoval({
         <button
           type="button"
           disabled={busy}
-          onClick={() => void run(onExport)}
+          onClick={() =>
+            void run(async () => {
+              setExported(await onExport())
+            })
+          }
           className={`${BUTTON} border-(--color-line)`}
         >
           Export first
@@ -119,6 +132,15 @@ export default function ConfirmRemoval({
           Delete
         </button>
       </div>
+      {/* Said on the screen, not only in ARCHITECTURE.md (review of #185): beside
+          "not even by restoring an export", the offer would read as an undo. */}
+      <p className="mt-2 text-xs text-(--color-muted)">
+        An export is a copy to keep: restoring it will not bring these back.
+      </p>
+      {/* Always there, so what an export says is announced when it arrives. */}
+      <p aria-live="polite" className="mt-2 min-h-5 text-(--color-muted)">
+        {exported}
+      </p>
     </div>
   )
 }

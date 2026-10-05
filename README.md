@@ -381,8 +381,9 @@ them checkable:
   - **An export is the whole history in plain JSON** — every check-in, pain notes
     included, unprotected wherever it is saved. The screen says so, and shows when the last
     one was made. Demo days are not exported.
-  - **Restoring writes everything it accepts, or nothing.** Every check-in in the file is
-    checked first; one this app cannot read refuses the file, and nothing changes.
+  - **Restoring writes everything it accepts, or nothing, and never deletes.** Every
+    check-in in the file is checked first; one this app cannot read refuses the file, and
+    nothing changes. A restore only adds: deleting is always the person's own action.
   - **Deleting cannot be undone, not even by restoring an export.** A deleted check-in is
     removed from the store, and a small note of which one and when is kept — no reading, no
     answer, no note — so an export made earlier cannot bring it back (nor, once sharing

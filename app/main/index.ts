@@ -28,7 +28,7 @@ import {
   resolveCaptureSeconds,
 } from "./capture-length";
 import { loadDotEnv } from "./env";
-import { exportFileName, NOT_AN_EXPORT, readExport } from "./history-file";
+import { exportFileName, readExport } from "./history-file";
 import { captureVitals } from "./vitals";
 import { ERR_ABORTED, loadFailureMessage, showWhenReady } from "./window-show";
 import { isAppUrl, isTrustedSender, resolveAppPage } from "./security";
@@ -380,11 +380,10 @@ function registerIpc(): void {
     "history:export",
     async (event, personId: unknown): Promise<{ count: number } | null> => {
       const id = personFor("history:export", personId);
-      const now = new Date();
-      const file = await store.exportFor(id, now);
       const options = {
         title: "Export check-in history",
-        defaultPath: exportFileName(now),
+        // A suggestion, from when the dialog opened; the person can change it.
+        defaultPath: exportFileName(new Date()),
         filters: [historyFilter],
       };
       const window = BrowserWindow.fromWebContents(event.sender);
@@ -393,6 +392,11 @@ function registerIpc(): void {
           ? await dialog.showSaveDialog(options)
           : await dialog.showSaveDialog(window, options);
       if (chosen.canceled || chosen.filePath === undefined) return null;
+      // The clock after the dialog, not before (review of #185): opened at 23:58
+      // and saved at 00:03, the export is from the day it was saved, and so is
+      // the line beside the control. Read then too, so it holds what is there now.
+      const now = new Date();
+      const file = await store.exportFor(id, now);
       await writeFile(chosen.filePath, JSON.stringify(file, null, 2), "utf8");
       // Only once the file is written: the line beside the control must not
       // claim an export that did not happen.
@@ -418,8 +422,11 @@ function registerIpc(): void {
       const path = chosen.filePaths[0];
       if (chosen.canceled || path === undefined) return null;
       const file = await readExport(path);
-      if (file === NOT_AN_EXPORT) return { ok: false, refusal: { kind: "not-an-export" } };
-      const plan = await store.restore(id, file);
+      if (file.kind === "not-an-export") return { ok: false, refusal: { kind: "not-an-export" } };
+      if (file.kind === "unopenable") {
+        return { ok: false, refusal: { kind: "unopenable", code: file.code } };
+      }
+      const plan = await store.restore(id, file.contents);
       // The outcome, not the merged history: the screen reads the history the
       // way it always does.
       return plan.ok ? { ok: true, outcome: plan.outcome } : { ok: false, refusal: plan.refusal };

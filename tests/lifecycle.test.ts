@@ -148,7 +148,11 @@ describe('planRestore: everything it accepts, or nothing, and in this order (KV-
   it('refuses what is not an export, and a newer one as newer', () => {
     expect(refusal({ sessions: [] })).toEqual({ kind: 'not-an-export' })
     expect(refusal('text')).toEqual({ kind: 'not-an-export' })
-    expect(refusal(file({ version: EXPORT_VERSION + 1 }))).toEqual({ kind: 'newer' })
+    expect(refusal(file({ version: EXPORT_VERSION + 1 }))).toEqual({
+      kind: 'newer',
+      of: 'export',
+      version: EXPORT_VERSION + 1,
+    })
     expect(refusal(file({ version: '1' }))).toEqual({
       kind: 'unreadable',
       why: 'it does not say which version of an export it is',
@@ -165,7 +169,7 @@ describe('planRestore: everything it accepts, or nothing, and in this order (KV-
 
   it('refuses a record in a newer format as a whole file, before naming any broken entry', () => {
     const records = [{ ...on(0), vitals: null }, { ...on(1), format: 2 }]
-    expect(refusal(file({ records }))).toEqual({ kind: 'newer' })
+    expect(refusal(file({ records }))).toEqual({ kind: 'newer', of: 'record', version: 2 })
   })
 
   it('names the first entry it cannot read, and why', () => {
@@ -229,7 +233,7 @@ describe('planRestore: everything it accepts, or nothing, and in this order (KV-
       alreadyHere: 0,
       stayDeleted: 3,
       deletedAt: Array(3).fill('2026-10-03T10:00:00.000Z'),
-      removedByFile: 0,
+      deletedThere: 0,
     })
   })
 
@@ -243,12 +247,37 @@ describe('planRestore: everything it accepts, or nothing, and in this order (KV-
     expect(plan.ok && plan.outcome).toMatchObject({ restored: 2, stayDeleted: 1 })
   })
 
-  it('lets a tombstone in the file remove the record it names here', () => {
+  it('never deletes: a tombstone in the file for a check-in held here is ignored', () => {
+    // Device A deleted d-1 and exported; device B still holds d-1 (review of #185).
     const there = remove(historyOf([on(0), on(1)]), PERSON, { kind: 'one', id: 'd-1' }, NOW).history
     const plan = planRestore(historyOf([on(0), on(1)]), PERSON, exportOf(there, PERSON, NOW))
-    expect(plan.ok && plan.history.sessions.map((r) => r.id)).toEqual(['d-0'])
-    expect(plan.ok && plan.history.removed.map((t) => t.id)).toEqual(['d-1'])
-    expect(plan.ok && plan.outcome).toMatchObject({ alreadyHere: 1, removedByFile: 1 })
+    expect(plan.ok && plan.history.sessions.map((r) => r.id)).toEqual(['d-0', 'd-1'])
+    expect(plan.ok && plan.history.removed).toEqual([])
+    expect(plan.ok && plan.outcome).toMatchObject({ alreadyHere: 1, restored: 0 })
+  })
+
+  it('keeps a file\u2019s tombstone for one not held here: an older export cannot bring it', () => {
+    const start = historyOf([on(0), on(1)])
+    const older = exportOf(start, PERSON, NOW)
+    const pruned = remove(start, PERSON, { kind: 'one', id: 'd-1' }, NOW).history
+    const newer = exportOf(pruned, PERSON, NOW)
+    // A new device restores the newer export, then the older one.
+    const first = planRestore(historyOf([]), PERSON, newer)
+    if (!first.ok) throw new Error('refused')
+    expect(first.history.removed.map((t) => t.id)).toEqual(['d-1'])
+    const second = planRestore(first.history, PERSON, older)
+    expect(second.ok && second.history.sessions.map((r) => r.id)).toEqual(['d-0'])
+    expect(second.ok && second.outcome).toMatchObject({ alreadyHere: 1, stayDeleted: 1 })
+  })
+
+  it('does not restore a check-in the file itself says was deleted, and says where', () => {
+    const file = exportOf(historyOf([on(0)]), PERSON, NOW)
+    const inconsistent = {
+      ...file,
+      removed: [{ id: 'd-0', personId: PERSON, removedAt: NOW.toISOString() }],
+    }
+    const plan = planRestore(historyOf([]), PERSON, inconsistent)
+    expect(plan.ok && plan.outcome).toMatchObject({ restored: 0, stayDeleted: 0, deletedThere: 1 })
   })
 })
 
@@ -258,7 +287,7 @@ describe('what the screens say (KV-21)', () => {
     alreadyHere: 0,
     stayDeleted: 0,
     deletedAt: [],
-    removedByFile: 0,
+    deletedThere: 0,
     ...over,
   })
   const deleted = (n: number): string[] => Array<string>(n).fill('2026-10-03T10:00:00.000Z')
@@ -279,9 +308,19 @@ describe('what the screens say (KV-21)', () => {
     expect(describeRestore(outcome({ alreadyHere: 60 }), day)).toBe(
       'Nothing to restore: all 60 check-ins in this file are already here.',
     )
-    expect(describeRestore(outcome({ alreadyHere: 1, removedByFile: 1 }), day)).toBe(
-      'Nothing to restore: the check-in in this file is already here. 1 check-in here was ' +
-        'deleted where this file was made, and is now deleted here too.',
+    expect(describeRestore(outcome({ alreadyHere: 1, deletedThere: 1 }), day)).toBe(
+      'None restored: 1 check-in in this file is already here; 1 check-in was deleted where ' +
+        'the file was made, and is not restored.',
+    )
+    // Export 5, delete the 3 oldest, restore the same file (review of #185).
+    const pruned = outcome({ alreadyHere: 2, stayDeleted: 3, deletedAt: deleted(3) })
+    expect(describeRestore(pruned, day)).toBe(
+      'None restored: 2 check-ins in this file are already here; 3 check-ins were deleted on ' +
+        'this device on 2026-10-03, and stay deleted.',
+    )
+    expect(describeRestore(outcome({ restored: 2, deletedThere: 1 }), day)).toBe(
+      'Restored 2 check-ins. 1 check-in in it was deleted where the file was made, and is not ' +
+        'restored.',
     )
   })
 
@@ -293,9 +332,18 @@ describe('what the screens say (KV-21)', () => {
   })
 
   it('says why a file was refused, and that nothing changed', () => {
-    expect(describeRefusal({ kind: 'newer' })).toBe(
-      'That file was made by a newer version of Kinvue, which can restore it. ' +
-        'Nothing has been changed.',
+    expect(describeRefusal({ kind: 'newer', of: 'export', version: 2 })).toBe(
+      'That file was made by a newer version of Kinvue (export version 2; this one reads ' +
+        'version 1). Nothing has been changed. The newer version can restore it.',
+    )
+    expect(describeRefusal({ kind: 'newer', of: 'record', version: 3 })).toBe(
+      'That file was made by a newer version of Kinvue (record format 3; this one reads ' +
+        'format 1). Nothing has been changed. The newer version can restore it.',
+    )
+    // A file that would not open may open next time, and is not called "no export" (#185).
+    expect(describeRefusal({ kind: 'unopenable', code: 'EBUSY' })).toBe(
+      'That file could not be opened (EBUSY). Another program may be using it, or its ' +
+        'permissions may need checking; it is worth another go. Nothing has been changed.',
     )
     const why = 'capturedAt is not a time'
     const entry = { kind: 'entry' as const, position: 3, total: 60, why }

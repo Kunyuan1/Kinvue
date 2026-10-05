@@ -12,20 +12,35 @@ import { readFile, stat } from 'node:fs/promises'
  */
 export const MAX_EXPORT_BYTES = 50 * 1024 * 1024
 
-/** What `readExport` gives back for a file that is not an export at all. */
-export const NOT_AN_EXPORT = Symbol('not an export')
+/**
+ * What `readExport` found: the file's parsed contents; a file that is not an
+ * export at all; or one that could not be opened. The last is kept apart
+ * (review of #185): a file another program is holding, or whose permissions
+ * refuse this app, may open next time, and calling it "not an export" would
+ * send someone looking for the wrong problem — KV-95's distinction, for the
+ * store, here for a file the person chose.
+ */
+export type ExportRead =
+  | { kind: 'read'; contents: unknown }
+  | { kind: 'not-an-export' }
+  | { kind: 'unopenable'; code: string | undefined }
 
 /**
- * The parsed contents of the file at `path`, or `NOT_AN_EXPORT` when it is too
- * large to be one or is not JSON. What it holds is checked by `planRestore`,
- * not here: this only gets it off the disk.
+ * The file at `path`, read and parsed. What it holds is checked by
+ * `planRestore`, not here: this only gets it off the disk.
  */
-export async function readExport(path: string): Promise<unknown> {
-  if ((await stat(path)).size > MAX_EXPORT_BYTES) return NOT_AN_EXPORT
+export async function readExport(path: string): Promise<ExportRead> {
+  let text: string
   try {
-    return JSON.parse(await readFile(path, 'utf8')) as unknown
+    if ((await stat(path)).size > MAX_EXPORT_BYTES) return { kind: 'not-an-export' }
+    text = await readFile(path, 'utf8')
+  } catch (err) {
+    return { kind: 'unopenable', code: (err as NodeJS.ErrnoException).code }
+  }
+  try {
+    return { kind: 'read', contents: JSON.parse(text) as unknown }
   } catch {
-    return NOT_AN_EXPORT
+    return { kind: 'not-an-export' }
   }
 }
 

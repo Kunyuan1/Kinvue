@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { SessionRecord } from '@core/session/types'
 import {
   chosenFor,
@@ -30,38 +30,34 @@ export const deviceDay = (instant: string): string =>
 export default function HistoryPanel({
   personId,
   sessions,
+  lastExported,
+  onExport,
   onChanged,
   onFailure,
 }: {
   personId: string
   sessions: readonly SessionRecord[]
+  /** When the last export was made, null for never, undefined until known. */
+  lastExported: string | null | undefined
+  /**
+   * The dashboard's one export, shared with the confirm screen (review of
+   * #185): it refreshes `lastExported` whichever button made it, and resolves
+   * to what to say, or null when the person cancelled or it failed (said).
+   */
+  onExport: () => Promise<string | null>
   /** After a restore or a deletion: reloads the list. */
   onChanged: () => Promise<void>
   onFailure: (e: unknown, fallback: string) => void
 }) {
-  const [lastExported, setLastExported] = useState<string | null | undefined>(undefined)
   const [said, setSaid] = useState<string | null>(null)
   const [before, setBefore] = useState('')
   const [removing, setRemoving] = useState<Removal | null>(null)
   const [busy, setBusy] = useState(false)
   const real = sessions.filter((r) => r.seeded !== true)
 
-  const loadLastExported = useCallback(async (): Promise<void> => {
-    setLastExported(await window.kinvue.lastExported(personId))
-  }, [personId])
-
-  useEffect(() => {
-    // Not worth a screen: the line beside the export control is all it feeds.
-    void loadLastExported().catch((e: unknown) => {
-      console.error('Could not read when the history was last exported.', e)
-    })
-  }, [loadLastExported])
-
   const exportHistory = async (): Promise<void> => {
-    const made = await window.kinvue.exportHistory(personId)
-    if (made === null) return
-    await loadLastExported()
-    setSaid(`Exported ${String(made.count)} check-in${made.count === 1 ? '' : 's'}.`)
+    const exported = await onExport()
+    if (exported !== null) setSaid(exported)
   }
 
   const step = async (run: () => Promise<void>, fallback: string): Promise<void> => {
@@ -119,9 +115,11 @@ export default function HistoryPanel({
           Export history&hellip;
         </button>
         <p className="mt-2 text-(--color-muted)">
-          {real.length === 0
-            ? 'Nothing to export yet: demo days are not exported.'
-            : lastExported === undefined
+          {sessions.length === 0
+            ? 'Nothing to export yet.'
+            : real.length === 0
+              ? 'Nothing to export yet: demo days are not exported.'
+              : lastExported === undefined
               ? null
               : describeLastExport(lastExported, sessions, deviceDay)}
         </p>
@@ -181,7 +179,7 @@ export default function HistoryPanel({
           sessions={sessions}
           personId={personId}
           which={removing}
-          onExport={() => step(exportHistory, 'The history could not be exported.')}
+          onExport={onExport}
           onCancel={() => setRemoving(null)}
           onFailure={(e) =>
             onFailure(e, 'The check-ins could not be deleted. Nothing has been changed.')
@@ -194,11 +192,11 @@ export default function HistoryPanel({
         />
       )}
 
-      {said !== null && (
-        <p role="status" className="mt-4 text-(--color-muted)">
-          {said}
-        </p>
-      )}
+      {/* Always there, as `CaptureScreen`'s is: a region created with its text
+          is announced unreliably, and this says what a deletion or restore did. */}
+      <p aria-live="polite" className="mt-4 min-h-5 text-(--color-muted)">
+        {said}
+      </p>
     </section>
   )
 }
