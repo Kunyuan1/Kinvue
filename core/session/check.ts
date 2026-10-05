@@ -9,6 +9,7 @@ import type {
   MoodAnswer,
   SessionRecord,
   SleepAnswer,
+  Tombstone,
   UncomparedMetric,
   Vitals,
   WithheldReason,
@@ -164,10 +165,9 @@ const id: Check = (v, at) =>
  * same fixed-width UTC form.
  */
 const ISO_INSTANT = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
-const instant: Check = (v, at) =>
+export const isInstant = (v: unknown): v is string =>
   typeof v === 'string' && ISO_INSTANT.test(v) && new Date(v).toISOString() === v
-    ? null
-    : `${at} is not a time`
+const instant: Check = (v, at) => (isInstant(v) ? null : `${at} is not a time`)
 /**
  * A format that is there. `checkFormat` reads an absent one as 1, which is
  * right for a record and wrong for this check, which only runs on a format
@@ -342,4 +342,16 @@ export function checkRecord(value: unknown): string | null {
     return `it is in a newer format (${said}) than this app reads (${String(RECORD_FORMAT)})`
   }
   return checkShape(RECORD_SPEC, value, '')
+}
+
+export const TOMBSTONE_SPEC: Spec<Tombstone> = {
+  id,
+  personId: id,
+  removedAt: instant,
+}
+
+/** Why `value` is not a deletion record (KV-21), or null when it is one. */
+export function checkTombstone(value: unknown): string | null {
+  if (!isObject(value)) return 'it is not a record of a deletion'
+  return checkShape(TOMBSTONE_SPEC, value, '')
 }

@@ -10,6 +10,7 @@ import {
   UnrecognisedRecordError,
 } from '@core/session/store'
 import { classifyDashboardError, classifySubmitError } from '@core/capture/failure'
+import type { SessionRecord } from '@core/session/types'
 import { session, sessionBeforeKV16 } from './helpers'
 
 /**
@@ -654,5 +655,141 @@ describe('records that make sense on their own (KV-30)', () => {
     await expect(clash).rejects.toThrow(/already holds a different check-in with the id taken/)
     await expect(clash).rejects.toThrow(/Nothing has been changed/)
     expect(await readFile(path, 'utf8')).toBe(before)
+  })
+})
+
+describe('exporting, restoring and deleting (KV-21)', () => {
+  const AT = new Date('2026-10-05T12:00:00.000Z')
+  const day = (n: number): string => new Date(Date.UTC(2026, 8, 1 + n, 9)).toISOString()
+  const fileOf = (data: unknown): string => JSON.stringify(data)
+  type OnDisk = { sessions: SessionRecord[]; removed?: unknown[]; lastExported?: unknown }
+  const onDisk = async (path: string): Promise<OnDisk> =>
+    JSON.parse(await readFile(path, 'utf8')) as OnDisk
+
+  it('deletes in one write, with a tombstone per real check-in, none for demo', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'a', capturedAt: day(0) }))
+    await store.append(session({ id: 'b', capturedAt: day(1) }))
+    await store.append(session({ id: 'seed-x', capturedAt: day(2), seeded: true }))
+
+    expect(await store.remove('test-person', { kind: 'all' }, AT)).toBe(3)
+    expect(await onDisk(path)).toMatchObject({
+      sessions: [],
+      removed: [
+        { id: 'a', personId: 'test-person', removedAt: AT.toISOString() },
+        { id: 'b', personId: 'test-person', removedAt: AT.toISOString() },
+      ],
+    })
+  })
+
+  it('writes nothing for a deletion naming nothing, adding no list to a file', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'a' }))
+    const before = await readFile(path, 'utf8')
+    expect(await store.remove('test-person', { kind: 'one', id: 'nope' }, AT)).toBe(0)
+    expect(await readFile(path, 'utf8')).toBe(before)
+    expect(await onDisk(path)).not.toHaveProperty('removed')
+  })
+
+  it('adds no deletion list to the file when what it deleted were demo days', async () => {
+    // Demo days leave no tombstones, so there is nothing to list — and a file
+    // nothing real was deleted from is written as it always was.
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'seed-x', seeded: true }))
+    expect(await store.remove('test-person', { kind: 'all' }, AT)).toBe(1)
+    expect(await onDisk(path)).toEqual({ version: 1, sessions: [] })
+  })
+
+  it('keeps a deleted check-in deleted when it arrives again, and writes nothing', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    const record = session({ id: 'a' })
+    await store.append(record)
+    await store.remove('test-person', { kind: 'one', id: 'a' }, AT)
+    const before = await readFile(path, 'utf8')
+    await store.append(record)
+    expect(await readFile(path, 'utf8')).toBe(before)
+    expect(await store.list('test-person')).toEqual([])
+  })
+
+  it('refuses a deletion record it cannot read, naming it, never setting it aside', async () => {
+    const { path } = await storeIn()
+    const text = fileOf({
+      version: 1,
+      sessions: [session({ id: 'a' })],
+      removed: [{ id: 'gone', personId: 'test-person', removedAt: 'yesterday' }],
+    })
+    await writeFile(path, text, 'utf8')
+    const store = createJsonSessionStore(path, () => new Date(2026, 9, 5, 10, 0))
+    const listed = await store.list('test-person').catch((e: unknown) => e)
+    expect(listed).toBeInstanceOf(UnrecognisedRecordError)
+    expect(String(listed)).toContain(
+      `Deletion record 1 of 1 in the check-in history at ${path} cannot be read ` +
+        '(removedAt is not a time)',
+    )
+    expect(classifyDashboardError(listed)).toBe('store-record-unknown')
+    await expect(store.startNewHistory()).rejects.toBeInstanceOf(UnrecognisedRecordError)
+    expect(await readFile(path, 'utf8')).toBe(text)
+  })
+
+  it('restores an export into another store exactly, and again changes nothing', async () => {
+    const from = createJsonSessionStore((await storeIn()).path)
+    await from.append(session({ id: 'a', capturedAt: day(0) }))
+    await from.append(session({ id: 'b', capturedAt: day(1), timeZone: 'Europe/London' }))
+    await from.remove('test-person', { kind: 'one', id: 'a' }, AT)
+    const exported = JSON.parse(JSON.stringify(await from.exportFor('test-person', AT))) as unknown
+
+    const { path } = await storeIn()
+    const to = createJsonSessionStore(path)
+    const plan = await to.restore('test-person', exported)
+    expect(plan.ok && plan.outcome).toMatchObject({ restored: 1 })
+    expect(await to.list('test-person')).toEqual(await from.list('test-person'))
+    expect((await onDisk(path)).removed).toEqual([
+      { id: 'a', personId: 'test-person', removedAt: AT.toISOString() },
+    ])
+
+    const after = await readFile(path, 'utf8')
+    const again = await to.restore('test-person', exported)
+    expect(again.ok && again.outcome).toMatchObject({ restored: 0, alreadyHere: 1 })
+    expect(await readFile(path, 'utf8')).toBe(after)
+  })
+
+  it('writes nothing for a file it refuses', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'a' }))
+    const before = await readFile(path, 'utf8')
+    const plan = await store.restore('test-person', { kind: 'kinvue-history', version: 2 })
+    expect(plan).toEqual({ ok: false, refusal: { kind: 'newer' } })
+    expect(await readFile(path, 'utf8')).toBe(before)
+  })
+
+  it('exports without writing, and remembers when it last did once told', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'a' }))
+    const before = await readFile(path, 'utf8')
+    await store.exportFor('test-person', AT)
+    expect(await readFile(path, 'utf8')).toBe(before)
+
+    expect(await store.lastExported('test-person')).toBeNull()
+    await store.markExported('test-person', AT)
+    expect(await store.lastExported('test-person')).toBe(AT.toISOString())
+    expect(await store.lastExported('another-person')).toBeNull()
+  })
+
+  it('reads a last-export date it cannot read as never, not as a refusal', async () => {
+    const { path } = await storeIn()
+    await writeFile(
+      path,
+      fileOf({ version: 1, sessions: [session({ id: 'a' })], lastExported: { 'test-person': 5 } }),
+      'utf8',
+    )
+    const store = createJsonSessionStore(path)
+    expect(await store.lastExported('test-person')).toBeNull()
+    expect(await store.list('test-person')).toHaveLength(1)
   })
 })

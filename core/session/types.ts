@@ -290,3 +290,16 @@ export interface SessionRecord {
    */
   seeded?: boolean
 }
+
+/**
+ * What is kept of a deleted check-in (KV-21): which one, whose, and when — no
+ * reading, no answer, no note. It is what stops an export made earlier, or a
+ * copy arriving by sync (#45), bringing the check-in back. A seeded day leaves
+ * none: it never leaves the device, and its id repeats across installs.
+ */
+export interface Tombstone {
+  id: string
+  personId: string
+  /** When it was deleted, as `toISOString` writes it. */
+  removedAt: string
+}

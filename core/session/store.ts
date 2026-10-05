@@ -3,9 +3,17 @@ import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/pr
 import { dirname } from 'node:path'
 import { failureTag } from '../capture/failure'
 import { asAskedNow } from './answers'
-import { checkRecord, NOT_A_RECORD } from './check'
+import { checkRecord, checkTombstone, isInstant, NOT_A_RECORD } from './check'
 import { checkFormat, RECORD_FORMAT, sameRecord } from './format'
-import type { SessionRecord } from './types'
+import {
+  exportOf,
+  planRestore,
+  remove as removeFrom,
+  type HistoryExport,
+  type Removal,
+  type RestorePlan,
+} from './lifecycle'
+import type { SessionRecord, Tombstone } from './types'
 
 /**
  * MAIN PROCESS ONLY — this module imports node:fs. The renderer reaches
@@ -38,6 +46,22 @@ export interface SessionStore {
    * aside — see the implementation for why a readable file is never moved.
    */
   startNewHistory(): Promise<string | null>
+  /**
+   * Deletes the check-ins of `personId` that `which` names (KV-21), keeping a
+   * tombstone for each real one, in one write. Returns how many were deleted.
+   */
+  remove(personId: string, which: Removal, now: Date): Promise<number>
+  /** `personId`'s history as a restorable export. Reads; writes nothing. */
+  exportFor(personId: string, now: Date): Promise<HistoryExport>
+  /** Records that `personId`'s history was exported at `at`, for the line beside the control. */
+  markExported(personId: string, at: Date): Promise<void>
+  /** When `personId`'s history was last exported, or null for never. */
+  lastExported(personId: string): Promise<string | null>
+  /**
+   * Restores an export into `personId`'s history: everything it accepts, in one
+   * write, or nothing (KV-21). Returns what it did, or why it refused.
+   */
+  restore(personId: string, file: unknown): Promise<RestorePlan>
 }
 
 /**
@@ -67,6 +91,19 @@ const FILE_VERSION = 1
 interface FileShape {
   version: number
   sessions: SessionRecord[]
+  /**
+   * What is kept of deleted check-ins (KV-21), checked as they are read.
+   * Absent until the first deletion, so a file nothing was ever deleted from
+   * is written back exactly as before.
+   */
+  removed?: Tombstone[]
+  /**
+   * When each person's history was last exported (KV-21): display only, for
+   * the line beside the export control. Not checked: an entry that is not a
+   * time reads as "never", since refusing a whole history over a date that
+   * only feeds a sentence would cost far more than it protects.
+   */
+  lastExported?: Record<string, unknown>
 }
 
 /**
@@ -199,16 +236,30 @@ export class NewerStoreError extends Error {
  * is, so it cannot be left out of one person's history and not another's.
  */
 export class UnrecognisedRecordError extends Error {
-  /** `why` is `checkRecord`'s reason, naming the field: whoever opens the file needs it. */
-  constructor(path: string, position: number, total: number, why: string) {
+  /**
+   * `why` is `checkRecord`'s reason, or `checkTombstone`'s, naming the field:
+   * whoever opens the file needs it. `of` says which list the entry is in — a
+   * deletion record is load-bearing too (KV-21), since it is what keeps a
+   * deleted check-in deleted.
+   */
+  constructor(
+    path: string,
+    position: number,
+    total: number,
+    why: string,
+    of: 'check-ins' | 'deletions',
+  ) {
     const what =
-      why === NOT_A_RECORD
-        ? 'is not a check-in at all'
-        : `is a check-in this app cannot read (${why})`
+      of === 'deletions'
+        ? `Deletion record ${String(position)} of ${String(total)} in the check-in history at ` +
+          `${path} cannot be read (${why})`
+        : `Entry ${String(position)} of ${String(total)} in the check-in history at ${path} ` +
+          (why === NOT_A_RECORD
+            ? 'is not a check-in at all'
+            : `is a check-in this app cannot read (${why})`)
     super(
-      `${failureTag('store-record-unknown')}: Entry ${String(position)} of ${String(total)} in ` +
-        `the check-in history at ${path} ${what}. Nothing has been changed, and the rest of ` +
-        'the history is intact; the file needs someone to look at that entry.',
+      `${failureTag('store-record-unknown')}: ${what}. Nothing has been changed, and the rest ` +
+        'of the history is intact; the file needs someone to look at that entry.',
     )
     this.name = 'UnrecognisedRecordError'
   }
@@ -306,9 +357,42 @@ async function read(path: string): Promise<FileShape> {
   // record: an entry this build cannot read cannot say whose it is.
   for (const [i, record] of records.entries()) {
     const why = checkRecord(record)
-    if (why !== null) throw new UnrecognisedRecordError(path, i + 1, records.length, why)
+    if (why !== null) {
+      throw new UnrecognisedRecordError(path, i + 1, records.length, why, 'check-ins')
+    }
+  }
+  // What is kept of deleted check-ins, the same way (KV-21): a tombstone this
+  // build cannot read could not keep its check-in deleted.
+  const removed: unknown = (parsed as { removed?: unknown }).removed
+  if (removed !== undefined) {
+    if (!Array.isArray(removed)) {
+      throw new UnrecognisedRecordError(path, 1, 1, 'it is not a list', 'deletions')
+    }
+    for (const [i, tombstone] of removed.entries()) {
+      const why = checkTombstone(tombstone)
+      if (why !== null) {
+        throw new UnrecognisedRecordError(path, i + 1, removed.length, why, 'deletions')
+      }
+    }
   }
   return parsed
+}
+
+/** The history `read` returned, as the lifecycle functions take it. */
+const historyOf = (data: FileShape): { sessions: SessionRecord[]; removed: Tombstone[] } => ({
+  sessions: data.sessions,
+  removed: data.removed ?? [],
+})
+
+/** `data` with `history` in it, `removed` written only once there is something in it. */
+function withHistory(
+  data: FileShape,
+  history: { sessions: SessionRecord[]; removed: Tombstone[] },
+): FileShape {
+  const next: FileShape = { ...data, sessions: history.sessions }
+  if (history.removed.length > 0) next.removed = history.removed
+  else delete next.removed
+  return next
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -416,6 +500,9 @@ export function createJsonSessionStore(
      */
     async append(record) {
       const data = await read(path)
+      // A tombstone wins over the record it names (KV-21): a deleted check-in
+      // arriving again stays deleted, and nothing is written.
+      if ((data.removed ?? []).some((t) => t.id === record.id)) return
       const stored = data.sessions.find((s) => s.id === record.id)
       if (stored !== undefined) {
         // The same record again is the one already here: nothing to write.
@@ -434,6 +521,37 @@ export function createJsonSessionStore(
     async people() {
       const { sessions } = await read(path)
       return [...new Set(sessions.map((s) => s.personId))]
+    },
+    async remove(personId, which, at) {
+      const data = await read(path)
+      const done = removeFrom(historyOf(data), personId, which, at)
+      if (done.removed === 0) return 0
+      await write(path, withHistory(data, done.history))
+      return done.removed
+    },
+    async exportFor(personId, at) {
+      return exportOf(historyOf(await read(path)), personId, at)
+    },
+    async markExported(personId, at) {
+      const data = await read(path)
+      const lastExported = { ...data.lastExported, [personId]: at.toISOString() }
+      await write(path, { ...data, lastExported })
+    },
+    async lastExported(personId) {
+      const at = (await read(path)).lastExported?.[personId]
+      return isInstant(at) ? at : null
+    },
+    async restore(personId, file) {
+      const data = await read(path)
+      const plan = planRestore(historyOf(data), personId, file)
+      if (!plan.ok) return plan
+      const { restored, removedByFile } = plan.outcome
+      const newTombstones = plan.history.removed.length > historyOf(data).removed.length
+      // One write, whole — or none, when nothing would change.
+      if (restored > 0 || removedByFile > 0 || newTombstones) {
+        await write(path, withHistory(data, plan.history))
+      }
+      return plan
     },
     /**
      * Person-initiated, never automatic, and it never deletes a byte: the file

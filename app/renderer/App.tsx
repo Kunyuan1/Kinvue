@@ -13,6 +13,8 @@ import {
 } from '@core/capture/failure'
 import { CARD_BOX, CHART_BOX } from './components/boxes'
 import CaptureScreen from './components/CaptureScreen'
+import ConfirmRemoval from './components/ConfirmRemoval'
+import HistoryPanel from './components/HistoryPanel'
 import QuestionFlow from './components/QuestionFlow'
 import SectionBoundary from './components/SectionBoundary'
 import SessionCard from './components/SessionCard'
@@ -191,6 +193,8 @@ function Dashboard(): React.JSX.Element {
   const [submitFailure, setSubmitFailure] = useState<SubmitFailure | null>(null)
   const captureGeneration = useRef(0)
   const [reading, setReading] = useState<CaptureResult | null>(null)
+  // The card whose deletion is being confirmed under it (KV-21), if any.
+  const [deleting, setDeleting] = useState<string | null>(null)
 
   const refresh = useCallback(async (): Promise<void> => {
     setSessions(await window.kinvue.listSessions(DEMO_PERSON_ID))
@@ -601,9 +605,53 @@ function Dashboard(): React.JSX.Element {
             alreadyFailed={unshown.has(session.id)}
           >
             <SessionCard session={session} presentation={shown.get(session.id) ?? null} />
+            {/* Outside the card, which the caregiver's client draws too (KV-34):
+                deleting is the person's, at their own device (KV-21). */}
+            {deleting === session.id ? (
+              <ConfirmRemoval
+                sessions={sessions ?? []}
+                personId={DEMO_PERSON_ID}
+                which={{ kind: 'one', id: session.id }}
+                onExport={async () => {
+                  try {
+                    await window.kinvue.exportHistory(DEMO_PERSON_ID)
+                  } catch (e) {
+                    showFailure(e, 'The history could not be exported.')
+                  }
+                }}
+                onCancel={() => setDeleting(null)}
+                onFailure={(e) =>
+                  showFailure(e, 'The check-in could not be deleted. Nothing has been changed.')
+                }
+                onDone={async (removed) => {
+                  setDeleting(null)
+                  await refresh()
+                  setNotice(
+                    removed === 1 ? 'Deleted 1 check-in.' : `Deleted ${String(removed)} check-ins.`,
+                  )
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setDeleting(session.id)}
+                className="mt-2 text-xs text-(--color-muted) underline-offset-2 hover:underline"
+              >
+                Delete this check-in&hellip;
+              </button>
+            )}
           </SectionBoundary>
         ))}
       </div>
+
+      {sessions !== null && (
+        <HistoryPanel
+          personId={DEMO_PERSON_ID}
+          sessions={sessions}
+          onChanged={refresh}
+          onFailure={showFailure}
+        />
+      )}
     </main>
   )
 }

@@ -1673,9 +1673,10 @@ Decided 2026-10-04, revised in review of #184. There was no way to export a pers
 history, no way to delete it, and no retention policy — `sessions.json` grew forever —
 and `README.md` was silent on all three. For an identified person's physiological data,
 "it's local" is necessary and not sufficient. It applies on one machine before anything is
-shared, and sits here because its tombstones are what sync will carry (#45). This is the
-policy; the change that builds it adds what is then true to the privacy section of
-`README.md`.
+shared, and sits here because its tombstones are what sync will carry (#45). Built in
+`core/session/lifecycle.ts` (removal, export, the restore plan and the sentences the
+screens show), with tombstones in `store.ts` and the controls in `HistoryPanel` and
+`ConfirmRemoval`; `README.md`'s privacy section says what is true.
 
 - **Export is a restorable file, one per person.** Their records exactly as stored —
   format, verdict and pain note included — inside a small container that says what it is

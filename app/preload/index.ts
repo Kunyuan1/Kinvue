@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
+import type { Removal, RestoreResult } from '@core/session/lifecycle'
 import { fromCaptureReply } from '../shared/capture-reply'
 
 /**
@@ -44,6 +45,28 @@ const api = {
    * to where the old file now is, or null when there was nothing to set aside.
    */
   startNewHistory: (): Promise<string | null> => ipcRenderer.invoke('sessions:startNewHistory'),
+
+  /** When this person's history was last exported, or null for never (KV-21). */
+  lastExported: (personId: string): Promise<string | null> =>
+    ipcRenderer.invoke('history:lastExported', personId),
+
+  /**
+   * Asks where to save, then writes a restorable export there (KV-21).
+   * Resolves to how many check-ins it holds, or null when the person cancelled.
+   */
+  exportHistory: (personId: string): Promise<{ count: number } | null> =>
+    ipcRenderer.invoke('history:export', personId),
+
+  /**
+   * Asks which file, then restores it: everything it accepts, or nothing
+   * (KV-21). Null when the person cancelled.
+   */
+  restoreHistory: (personId: string): Promise<RestoreResult | null> =>
+    ipcRenderer.invoke('history:restore', personId),
+
+  /** Deletes the check-ins `which` names, keeping tombstones. Resolves to how many. */
+  removeCheckIns: (personId: string, which: Removal): Promise<number> =>
+    ipcRenderer.invoke('history:remove', personId, which),
 
   /** Returns an unsubscribe function. */
   onCaptureProgress: (fn: (elapsedSec: number) => void): (() => void) => {
