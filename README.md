@@ -133,6 +133,7 @@ app/
     device.ts            what the device can honestly say about its time zone
     frames.ts            camera frames → a small picture a screen can show
     env.ts               loads .env into process.env before anything reads it
+    history-file.ts      reads and names an exported history; no Electron (KV-21)
     vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk
   preload/
     index.ts             contextBridge surface. The API key never crosses this line.
@@ -146,6 +147,8 @@ app/
     components/
       CaptureScreen.tsx  the ~30s in front of the camera (settable) — the one screen the
                          cared-for person reads, not the caregiver
+      HistoryPanel.tsx   export, restore and delete, at the foot of the dashboard (KV-21)
+      ConfirmRemoval.tsx the step before a deletion: what goes, and what deleting means
       QuestionFlow.tsx   the four questions, also addressed to them
       SectionBoundary.tsx
                          a card, the chart or a screen that fails to draw leaves a
@@ -165,6 +168,7 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
     format.ts            what a record says about itself: its format, and when two
                          arriving are one record (KV-30)
     check.ts             every field of a record read, checked against its type (KV-181)
+    lifecycle.ts         export, restore and delete, with tombstones (KV-21)
     checkin.ts           holds a capture until its answers arrive, then scores and stores it
     time.ts              which local day a check-in belongs to, where it was taken
   baseline/index.ts      per-person trailing baseline + MIN_BASELINE_SESSIONS
@@ -370,6 +374,24 @@ them checkable:
   — no generic `invoke(channel, ...)` — so a compromised renderer cannot read it.
 - **Session data is local**, under Electron's `userData`, and `.gitignore` covers
   `sessions/` and video files so a check-in cannot be committed by accident.
+- **A history is kept until the person deletes it, and they can.** There is no automatic
+  retention window. At the foot of the dashboard a person can export their history,
+  restore an export, delete one check-in, every check-in before a date, or the whole
+  history (KV-21):
+  - **An export is the whole history in plain JSON** — every check-in, pain notes
+    included, unprotected wherever it is saved. The screen says so, and shows when the last
+    one was made. Demo days are not exported.
+  - **Restoring writes everything it accepts, or nothing, and never deletes.** Every
+    check-in in the file is checked first; one this app cannot read refuses the file, and
+    nothing changes. A restore only adds: deleting is always the person's own action.
+  - **Deleting cannot be undone, not even by restoring an export.** A deleted check-in is
+    removed from the store, and a small note of which one and when is kept — no reading, no
+    answer, no note — so an export made earlier cannot bring it back (nor, once sharing
+    exists, a caregiver's copy). That note survives deleting everything. Verdicts on other cards are not rescored.
+  - **"Deleted" means gone from the app, not from the disk.** The old file's blocks are
+    released, not overwritten, and the operating system's own backups (File History, Time
+    Machine, a sync client) keep what they kept: restoring `sessions.json` from one brings
+    deleted check-ins back. Protection at rest is #175's.
 - **Opt-in by design.** Capture runs only when someone presses the button. There is no
   background monitoring and no always-on camera.
 

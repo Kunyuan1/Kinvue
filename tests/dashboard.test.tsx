@@ -10,6 +10,7 @@ import {
   UnrecognisedRecordError,
 } from '@core/session/store'
 import { NOT_A_RECORD } from '@core/session/check'
+import type { Removal, RestoreResult } from '@core/session/lifecycle'
 import type { SessionRecord } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
 import { history, session } from './helpers'
@@ -29,6 +30,7 @@ const drawControl = vi.hoisted(() => ({
   presentThrows: false,
   captureThrows: false,
   questionsThrow: false,
+  historyThrows: false,
 }))
 
 // The capture and question screens, as stand-ins: the real capture screen
@@ -75,6 +77,18 @@ vi.mock('@renderer/components/SessionCard', async (importOriginal) => {
   }
 })
 
+vi.mock('@renderer/components/HistoryPanel', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@renderer/components/HistoryPanel')>()
+  const Real = actual.default
+  return {
+    ...actual,
+    default: (props: Parameters<typeof Real>[0]) => {
+      if (drawControl.historyThrows) throw new Error('history panel failed to draw')
+      return <Real {...props} />
+    },
+  }
+})
+
 vi.mock('@renderer/components/TrendChart', async (importOriginal) => {
   const { default: Real } = await importOriginal<typeof import('@renderer/components/TrendChart')>()
   return {
@@ -101,17 +115,29 @@ const fromMain = (err: Error, channel: string): Error =>
 let listSessions: ReturnType<typeof vi.fn<() => Promise<SessionRecord[]>>>
 let seedDemo: ReturnType<typeof vi.fn<() => Promise<number>>>
 let startNewHistory: ReturnType<typeof vi.fn<() => Promise<string | null>>>
+let lastExported: ReturnType<typeof vi.fn<() => Promise<string | null>>>
+let exportHistory: ReturnType<typeof vi.fn<() => Promise<{ count: number } | null>>>
+let restoreHistory: ReturnType<typeof vi.fn<() => Promise<RestoreResult | null>>>
+let removeCheckIns: ReturnType<typeof vi.fn<(personId: string, which: Removal) => Promise<number>>>
 
 beforeEach(() => {
   listSessions = vi.fn<() => Promise<SessionRecord[]>>()
   seedDemo = vi.fn<() => Promise<number>>()
   startNewHistory = vi.fn<() => Promise<string | null>>()
+  lastExported = vi.fn<() => Promise<string | null>>(() => Promise.resolve(null))
+  exportHistory = vi.fn<() => Promise<{ count: number } | null>>()
+  restoreHistory = vi.fn<() => Promise<RestoreResult | null>>()
+  removeCheckIns = vi.fn<(personId: string, which: Removal) => Promise<number>>()
   Object.defineProperty(window, 'kinvue', {
     configurable: true,
     value: {
       listSessions,
       seedDemo,
       startNewHistory,
+      lastExported,
+      exportHistory,
+      restoreHistory,
+      removeCheckIns,
       captureSeconds: vi.fn(() => Promise.resolve(90)),
       cancelCapture: vi.fn(() => Promise.resolve()),
     },
@@ -121,6 +147,7 @@ beforeEach(() => {
   drawControl.presentThrows = false
   drawControl.captureThrows = false
   drawControl.questionsThrow = false
+  drawControl.historyThrows = false
   // The dashboard logs the original of anything it will not show.
   vi.spyOn(console, 'error').mockImplementation(() => undefined)
 })
@@ -233,7 +260,7 @@ describe('starting a new history (KV-98)', () => {
     // until the review of #182.
     listSessions.mockRejectedValue(
       fromMain(
-        new UnrecognisedRecordError(PATH, 2, 18, NOT_A_RECORD),
+        new UnrecognisedRecordError(PATH, 2, 18, NOT_A_RECORD, 'check-ins'),
         'sessions:list',
       ),
     )
@@ -966,5 +993,188 @@ describe('one section that cannot be drawn (KV-163)', () => {
       .mocked(console.error)
       .mock.calls.filter(([first]) => first === 'A dashboard section could not be drawn.')
     expect(logged.length).toBe(1)
+  })
+})
+
+describe('exporting, restoring and deleting at the device (KV-21)', () => {
+  const days = (): SessionRecord[] => history(3).map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+
+  it('shows when the last export was made, and what the file is', async () => {
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    expect(await screen.findByText('Last exported: never.')).toBeTruthy()
+    expect(document.body.textContent).toMatch(/pain notes included, and is not protected/)
+  })
+
+  it('blames nothing on demo days when there are none (review of #185)', async () => {
+    listSessions.mockResolvedValue([])
+    render(<App />)
+    expect(await screen.findByText('Nothing to export yet.')).toBeTruthy()
+    expect(screen.queryByText(/demo days are not exported/)).toBeNull()
+  })
+
+  it('keeps one region for what the panel says, there before it says anything', async () => {
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    await screen.findByText('Last exported: never.')
+    const region = document.querySelector('section [aria-live="polite"]')
+    expect(region?.textContent).toBe('')
+  })
+
+  it('offers no export when there is nothing real to export', async () => {
+    listSessions.mockResolvedValue(days().map((r) => ({ ...r, seeded: true as const })))
+    render(<App />)
+    expect(await screen.findByText(/demo days are not exported/)).toBeTruthy()
+    expect((screen.getByText(/Export history/) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('exports, says how many, and updates the line', async () => {
+    listSessions.mockResolvedValue(days())
+    exportHistory.mockResolvedValue({ count: 3 })
+    render(<App />)
+    await screen.findByText('Last exported: never.')
+    lastExported.mockResolvedValue('2026-10-05T10:00:00.000Z')
+    fireEvent.click(screen.getByText(/Export history/))
+    expect(await screen.findByText('Exported 3 check-ins.')).toBeTruthy()
+    expect(exportHistory).toHaveBeenCalledWith(DEMO_PERSON_ID)
+    expect(await screen.findByText(/Last exported .* \(0 check-ins since\)\./)).toBeTruthy()
+  })
+
+  it('restores, reloads the list, and says what it did, or why it did not', async () => {
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    await screen.findByText('Last exported: never.')
+    restoreHistory.mockResolvedValueOnce({
+      ok: true,
+      outcome: { restored: 0, alreadyHere: 0, stayDeleted: 2, deletedAt: [], deletedThere: 0 },
+    })
+    const loads = listSessions.mock.calls.length
+    fireEvent.click(screen.getByText(/Restore from an export/))
+    expect(
+      await screen.findByText(
+        'None restored: all 2 check-ins in this file were deleted on this device, and stay ' +
+          'deleted.',
+      ),
+    ).toBeTruthy()
+    expect(listSessions.mock.calls.length).toBe(loads + 1)
+
+    restoreHistory.mockResolvedValueOnce({
+      ok: false,
+      refusal: { kind: 'newer', of: 'export', version: 2 },
+    })
+    fireEvent.click(screen.getByText(/Restore from an export/))
+    expect(await screen.findByText(/made by a newer version of Kinvue/)).toBeTruthy()
+  })
+
+  it('confirms one card’s deletion under it, with the safe choice focused', async () => {
+    const records = days()
+    listSessions.mockResolvedValue(records)
+    removeCheckIns.mockResolvedValue(1)
+    render(<App />)
+    const [first] = await screen.findAllByText(/Delete this check-in/)
+    fireEvent.click(first!)
+    expect(screen.getByText('This cannot be undone, not even by restoring an export.')).toBeTruthy()
+    expect(screen.getByText(/may note that they would read differently now/)).toBeTruthy()
+    expect(
+      screen.getByText('An export is a copy to keep: restoring it will not bring these back.'),
+    ).toBeTruthy()
+    expect(document.activeElement?.textContent).toBe('Keep them')
+
+    fireEvent.click(screen.getByText('Keep them'))
+    expect(screen.queryByText(/not even by restoring an export/)).toBeNull()
+    expect(removeCheckIns).not.toHaveBeenCalled()
+
+    fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+    fireEvent.click(screen.getByText('Delete'))
+    expect(await screen.findByText('Deleted 1 check-in.')).toBeTruthy()
+    // Newest first on screen, so the first card is the latest check-in.
+    expect(removeCheckIns).toHaveBeenCalledWith(DEMO_PERSON_ID, {
+      kind: 'one',
+      id: records.at(-1)!.id,
+    })
+  })
+
+  it('says what "Export first" did, beside the Delete, and updates the panel (#185)', async () => {
+    listSessions.mockResolvedValue(days())
+    exportHistory.mockResolvedValue({ count: 3 })
+    render(<App />)
+    await screen.findByText('Last exported: never.')
+    fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+    lastExported.mockResolvedValue('2026-10-05T10:00:00.000Z')
+    fireEvent.click(screen.getByText('Export first'))
+    const said = await screen.findByText('Exported 3 check-ins.')
+    expect(said.closest('[role="group"]')).not.toBeNull()
+    expect(await screen.findByText(/Last exported .* \(0 check-ins since\)\./)).toBeTruthy()
+    expect(screen.queryByText('Last exported: never.')).toBeNull()
+  })
+
+  it('previews a deletion before a date, from midnight on this device', async () => {
+    listSessions.mockResolvedValue(days())
+    removeCheckIns.mockResolvedValue(2)
+    render(<App />)
+    await screen.findByText('Last exported: never.')
+    fireEvent.change(screen.getByLabelText('Delete check-ins taken before'), {
+      target: { value: '2026-09-03' },
+    })
+    fireEvent.click(screen.getByText('Review'))
+    expect(await screen.findByText(/^Delete 2 check-ins, the last taken/)).toBeTruthy()
+    fireEvent.click(screen.getByText('Delete'))
+    expect(await screen.findByText('Deleted 2 check-ins.')).toBeTruthy()
+    expect(removeCheckIns).toHaveBeenCalledWith(DEMO_PERSON_ID, {
+      kind: 'before',
+      before: new Date('2026-09-03T00:00:00').toISOString(),
+    })
+  })
+
+  it('says so when nothing was taken before the date, and opens no confirm', async () => {
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    await screen.findByText('Last exported: never.')
+    fireEvent.change(screen.getByLabelText('Delete check-ins taken before'), {
+      target: { value: '2020-01-01' },
+    })
+    fireEvent.click(screen.getByText('Review'))
+    expect(await screen.findByText('No check-ins were taken before that date.')).toBeTruthy()
+    expect(screen.queryByText('Delete')).toBeNull()
+  })
+
+  it('says what is kept of a whole history before it is deleted', async () => {
+    listSessions.mockResolvedValue(days())
+    removeCheckIns.mockResolvedValue(3)
+    render(<App />)
+    fireEvent.click(await screen.findByText(/Delete the whole history/))
+    expect(screen.getByText(/stays on this computer, so that an export made earlier/)).toBeTruthy()
+    fireEvent.click(screen.getByText('Delete'))
+    expect(await screen.findByText('Deleted 3 check-ins.')).toBeTruthy()
+    expect(removeCheckIns).toHaveBeenCalledWith(DEMO_PERSON_ID, { kind: 'all' })
+  })
+
+  it('leaves a sentence, and the cards, when the panel cannot be drawn (KV-163)', async () => {
+    drawControl.historyThrows = true
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    expect(
+      await screen.findByText(/Exporting, restoring and deleting could not be shown here/),
+    ).toBeTruthy()
+    expect(screen.getAllByText(/Delete this check-in/)).toHaveLength(3)
+  })
+
+  it('promises no note of demo days, which leave none (review of #185)', async () => {
+    listSessions.mockResolvedValue(days().map((r) => ({ ...r, seeded: true as const })))
+    render(<App />)
+    fireEvent.click(await screen.findByText(/Delete the whole history/))
+    expect(screen.queryByText(/stays on this computer/)).toBeNull()
+    expect(screen.getByText('These are demo days, so nothing is kept of them.')).toBeTruthy()
+  })
+
+  it('says a deletion that failed did nothing, the way any other failure is said', async () => {
+    listSessions.mockResolvedValue(days())
+    removeCheckIns.mockRejectedValue(fromMain(new Error('EBUSY'), 'history:remove'))
+    render(<App />)
+    fireEvent.click(await screen.findByText(/Delete the whole history/))
+    fireEvent.click(screen.getByText('Delete'))
+    expect(
+      await screen.findByText('The check-ins could not be deleted. Nothing has been changed.'),
+    ).toBeTruthy()
   })
 })

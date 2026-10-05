@@ -1673,9 +1673,10 @@ Decided 2026-10-04, revised in review of #184. There was no way to export a pers
 history, no way to delete it, and no retention policy — `sessions.json` grew forever —
 and `README.md` was silent on all three. For an identified person's physiological data,
 "it's local" is necessary and not sufficient. It applies on one machine before anything is
-shared, and sits here because its tombstones are what sync will carry (#45). This is the
-policy; the change that builds it adds what is then true to the privacy section of
-`README.md`.
+shared, and sits here because its tombstones are what sync will carry (#45). Built in
+`core/session/lifecycle.ts` (removal, export, the restore plan and the sentences the
+screens show), with tombstones in `store.ts` and the controls in `HistoryPanel` and
+`ConfirmRemoval`; `README.md`'s privacy section says what is true.
 
 - **Export is a restorable file, one per person.** Their records exactly as stored —
   format, verdict and pain note included — inside a small container that says what it is
@@ -1731,9 +1732,19 @@ policy; the change that builds it adds what is then true to the privacy section 
   another install's demo day the file never mentioned (review of #184).
 - **A tombstone wins over the record it names, whichever arrives first — for a copy that
   comes back through the app.** A restored export, or a record arriving by sync, cannot
-  bring a deleted check-in back; and a tombstone arriving in a restored file removes the
-  record it names. This is KV-30's rule, made concrete: a deletion an export can undo is
-  not one. **Not against a rollback of the file itself** (review of #184): restore
+  bring a deleted check-in back. This is KV-30's rule, made concrete: a deletion an export
+  can undo is not one.
+- **Restoring never deletes** (review of #185). A tombstone that arrives in a restored file
+  is kept only to stop that check-in arriving later — so an older export cannot bring back
+  what a newer one says was deleted — and is ignored for a check-in this device holds.
+  Deleting stays one action: the person's own, confirmed on screen. An export is not
+  signed (T16), so a restore that could delete would hand that power to whoever could edit
+  the file on its way; and it would be a deletion reached by choosing a file, with no
+  confirm. When tombstones travel by sync (#45), they travel signed (KV-33).
+- **A tombstone does not yet say where the deletion happened** (review of #185). There is
+  no device identity to record until #40 brings device keys — KV-30 chose no device field
+  for records for the same reason. Adding one then is additive under KV-30's rule; the
+  tombstones written before it lack it, and read as unknown. **Not against a rollback of the file itself** (review of #184): restore
   yesterday's `sessions.json` from File History, Time Machine or a sync client's version
   history, and the records come back with the tombstones gone in the same step — nothing
   is left to win. That is the operating system's backups doing what they do, and it is
@@ -1860,7 +1871,7 @@ to check a card against. Integrity is protected as deliberately as confidentiali
 | T13 | **A delivered card is altered, fabricated, replayed or dropped**, so a viewer reads a day that did not happen, or misses one that did | The relay; a network attacker; whoever breaches the relay | A per-viewer envelope — viewer id, stream number, previous envelope's hash, record — signed by the check-in device (Ed25519) and verified on the viewer's device before it is shown, so drops, renumbering, replays and reordering show, and a gap is shown as one (with #44); the pairing code derived from all four public keys; the daily summary composed from verified records only (KV-33). **Rests on the check-in device's signing key**, which is protected only as T7's data is: malware running as the person can sign forgeries. | #33, #39, #40, #42, #43, #175 | Decided; rests on #175 |
 | T14 | **The check-in device is lost, broken, wiped or replaced**, and with it every share's authority: nothing can be revoked, and the person cannot see who still holds their check-ins | Accident; theft | A printed recovery card that can see who has access and end every share, never approve anyone new; using it is delayed 72 hours and announced to every viewer, and can be cancelled from the check-in device if it still exists, so a card misused to cut the person off alerts every caregiver instead of silencing them (KV-33). A replacement device starts fresh, each viewer approved again at it. **The history is recovered only if it was exported:** a restored export brings back the history and its baseline as of that export (KV-21); without one it goes with the device, or a backup (#175), and the baseline restarts from zero. | #33, #40, #45, #21 | Decided; #40, #45 to build; history loss a limit, unless exported (KV-21) |
 | T15 | **The SmartSpectra API key at rest.** In development it is plain text in `.env`, beside `sessions.json`; a packaged install has no route to a key yet. A stolen key means vendor account abuse and billing, and reaches the metered record of when check-ins happen (T10) | The same actors as T7 | **Today**, only the operating system's account boundary, as for T7. How a packaged install receives and holds its key is #19's, and it is a data-at-rest question in the same sense as #175's. | #19, #175 | **Gap → #19** |
-| T16 | **An exported history, read where it was put.** A complete, identified physiological history in plain JSON, copied by the person to a USB stick, a synced folder or an email (KV-21) — outside `userData`, so outside even T7's account boundary | Whoever finds or receives the file; the services it passes through | The screen that makes an export says it is the whole history, unprotected, and that it should be kept as carefully as the device. Whether an export is encrypted with a passphrase the person chooses is a question for #175, beside the store's own protection at rest. | #21, #175 | **A limit**; encryption → #175 |
+| T16 | **An exported history, read where it was put.** A complete, identified physiological history in plain JSON, copied by the person to a USB stick, a synced folder or an email (KV-21) — outside `userData`, so outside even T7's account boundary | Whoever finds or receives the file; the services it passes through | The screen that makes an export says it is the whole history, unprotected, and that it should be kept as carefully as the device. Restoring never deletes, so a file altered on its way can add check-ins, which are checked, but cannot remove any (review of #185). Whether an export is encrypted with a passphrase the person chooses is a question for #175, beside the store's own protection at rest. | #21, #175 | **A limit**; encryption → #175 |
 
 Four of these are the ones most likely to be argued with. **T10 is live now**, not a Phase 5
 risk: the vendor already receives when each check-in happened. **T2, T7 and T15 are the

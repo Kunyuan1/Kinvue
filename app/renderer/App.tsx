@@ -13,6 +13,8 @@ import {
 } from '@core/capture/failure'
 import { CARD_BOX, CHART_BOX } from './components/boxes'
 import CaptureScreen from './components/CaptureScreen'
+import ConfirmRemoval from './components/ConfirmRemoval'
+import HistoryPanel from './components/HistoryPanel'
 import QuestionFlow from './components/QuestionFlow'
 import SectionBoundary from './components/SectionBoundary'
 import SessionCard from './components/SessionCard'
@@ -191,6 +193,10 @@ function Dashboard(): React.JSX.Element {
   const [submitFailure, setSubmitFailure] = useState<SubmitFailure | null>(null)
   const captureGeneration = useRef(0)
   const [reading, setReading] = useState<CaptureResult | null>(null)
+  // The card whose deletion is being confirmed under it (KV-21), if any.
+  const [deleting, setDeleting] = useState<string | null>(null)
+  // When the history was last exported: null for never, undefined until known.
+  const [lastExported, setLastExported] = useState<string | null | undefined>(undefined)
 
   const refresh = useCallback(async (): Promise<void> => {
     setSessions(await window.kinvue.listSessions(DEMO_PERSON_ID))
@@ -224,6 +230,38 @@ function Dashboard(): React.JSX.Element {
       console.error('Could not read the capture length; using the default.', err)
     })
   }, [])
+
+  const loadLastExported = useCallback(async (): Promise<void> => {
+    setLastExported(await window.kinvue.lastExported(DEMO_PERSON_ID))
+  }, [])
+
+  useEffect(() => {
+    // Not worth a screen: the line beside the export control is all it feeds.
+    void loadLastExported().catch((e: unknown) => {
+      console.error('Could not read when the history was last exported.', e)
+    })
+  }, [loadLastExported])
+
+  /**
+   * The one export (KV-21), for the panel's button and the confirm screen's
+   * "Export first" alike (review of #185): the second used to say nothing, and
+   * leave the panel's line reading "never", on the screen before a deletion.
+   * Resolves to what to say, or null when cancelled — or when it failed, which
+   * it has already said.
+   */
+  const exportHistory = useCallback(async (): Promise<string | null> => {
+    try {
+      const made = await window.kinvue.exportHistory(DEMO_PERSON_ID)
+      if (made === null) return null
+      await loadLastExported().catch((e: unknown) => {
+        console.error('Could not read when the history was last exported.', e)
+      })
+      return `Exported ${String(made.count)} check-in${made.count === 1 ? '' : 's'}.`
+    } catch (e) {
+      showFailure(e, 'The history could not be exported.')
+      return null
+    }
+  }, [loadLastExported, showFailure])
 
   // KV-98. The caregiver's choice, never automatic. Main re-checks before it
   // moves anything, so a history that has become readable since the error was
@@ -601,9 +639,59 @@ function Dashboard(): React.JSX.Element {
             alreadyFailed={unshown.has(session.id)}
           >
             <SessionCard session={session} presentation={shown.get(session.id) ?? null} />
+            {/* Outside the card, which the caregiver's client draws too (KV-34):
+                deleting is the person's, at their own device (KV-21). */}
+            {deleting === session.id ? (
+              <ConfirmRemoval
+                sessions={sessions ?? []}
+                personId={DEMO_PERSON_ID}
+                which={{ kind: 'one', id: session.id }}
+                onExport={exportHistory}
+                onCancel={() => setDeleting(null)}
+                onFailure={(e) =>
+                  showFailure(e, 'The check-in could not be deleted. Nothing has been changed.')
+                }
+                onDone={async (removed) => {
+                  setDeleting(null)
+                  await refresh()
+                  setNotice(
+                    removed === 1 ? 'Deleted 1 check-in.' : `Deleted ${String(removed)} check-ins.`,
+                  )
+                }}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setDeleting(session.id)}
+                className="mt-2 text-xs text-(--color-muted) underline-offset-2 hover:underline"
+              >
+                Delete this check-in&hellip;
+              </button>
+            )}
           </SectionBoundary>
         ))}
       </div>
+
+      {sessions !== null && (
+        // Contained like every other section (KV-163, review of #185).
+        <SectionBoundary
+          fallback={
+            'Exporting, restoring and deleting could not be shown here. ' +
+            'The check-ins themselves are unchanged.'
+          }
+          className="mt-10"
+          resetKey={sessions}
+        >
+          <HistoryPanel
+            personId={DEMO_PERSON_ID}
+            sessions={sessions}
+            lastExported={lastExported}
+            onExport={exportHistory}
+            onChanged={refresh}
+            onFailure={showFailure}
+          />
+        </SectionBoundary>
+      )}
     </main>
   )
 }

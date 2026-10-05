@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
@@ -15,6 +16,7 @@ import { createJsonSessionStore } from "@core/session/store";
 import { createCheckIn } from "@core/session/checkin";
 import type { SessionRecord } from "@core/session/types";
 import { parseCheckInAnswers, parsePersonId } from "@core/session/validate";
+import { parseRemoval, type RestoreResult } from "@core/session/lifecycle";
 import { DEMO_PERSON_ID, seedDemoHistory } from "@core/seed/persona";
 import { createGuidanceGate } from "@core/capture/guidance";
 import { deviceTimeZone } from "./device";
@@ -26,6 +28,7 @@ import {
   resolveCaptureSeconds,
 } from "./capture-length";
 import { loadDotEnv } from "./env";
+import { exportFileName, readExport } from "./history-file";
 import { captureVitals } from "./vitals";
 import { ERR_ABORTED, loadFailureMessage, showWhenReady } from "./window-show";
 import { isAppUrl, isTrustedSender, resolveAppPage } from "./security";
@@ -354,6 +357,90 @@ function registerIpc(): void {
   handle(
     "sessions:startNewHistory",
     async (): Promise<string | null> => await store.startNewHistory(),
+  );
+
+  // KV-21. What a person may do with their own history at their own device:
+  // export it, restore it, delete from it. Each is one store write, or none,
+  // and every argument is checked here — a path never comes from the renderer,
+  // only from a dialog the person answered.
+  const historyFilter = { name: "Kinvue check-in history", extensions: ["json"] };
+  const personFor = (channel: string, personId: unknown): string => {
+    const id = parsePersonId(personId);
+    if (id === null) throw new Error(`${channel} needs a person id.`);
+    return id;
+  };
+
+  handle(
+    "history:lastExported",
+    async (_e, personId: unknown): Promise<string | null> =>
+      await store.lastExported(personFor("history:lastExported", personId)),
+  );
+
+  handle(
+    "history:export",
+    async (event, personId: unknown): Promise<{ count: number } | null> => {
+      const id = personFor("history:export", personId);
+      const options = {
+        title: "Export check-in history",
+        // A suggestion, from when the dialog opened; the person can change it.
+        defaultPath: exportFileName(new Date()),
+        filters: [historyFilter],
+      };
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const chosen =
+        window === null
+          ? await dialog.showSaveDialog(options)
+          : await dialog.showSaveDialog(window, options);
+      if (chosen.canceled || chosen.filePath === undefined) return null;
+      // The clock after the dialog, not before (review of #185): opened at 23:58
+      // and saved at 00:03, the export is from the day it was saved, and so is
+      // the line beside the control. Read then too, so it holds what is there now.
+      const now = new Date();
+      const file = await store.exportFor(id, now);
+      await writeFile(chosen.filePath, JSON.stringify(file, null, 2), "utf8");
+      // Only once the file is written: the line beside the control must not
+      // claim an export that did not happen.
+      await store.markExported(id, now);
+      return { count: file.records.length };
+    },
+  );
+
+  handle(
+    "history:restore",
+    async (event, personId: unknown): Promise<RestoreResult | null> => {
+      const id = personFor("history:restore", personId);
+      const options = {
+        title: "Restore check-in history",
+        properties: ["openFile" as const],
+        filters: [historyFilter],
+      };
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const chosen =
+        window === null
+          ? await dialog.showOpenDialog(options)
+          : await dialog.showOpenDialog(window, options);
+      const path = chosen.filePaths[0];
+      if (chosen.canceled || path === undefined) return null;
+      const file = await readExport(path);
+      if (file.kind === "not-an-export") return { ok: false, refusal: { kind: "not-an-export" } };
+      if (file.kind === "unopenable") {
+        return { ok: false, refusal: { kind: "unopenable", code: file.code } };
+      }
+      const plan = await store.restore(id, file.contents);
+      // The outcome, not the merged history: the screen reads the history the
+      // way it always does.
+      return plan.ok ? { ok: true, outcome: plan.outcome } : { ok: false, refusal: plan.refusal };
+    },
+  );
+
+  handle(
+    "history:remove",
+    async (_e, personId: unknown, which: unknown): Promise<number> => {
+      const id = personFor("history:remove", personId);
+      const removal = parseRemoval(which);
+      if (removal === null) throw new Error("history:remove received a malformed request.");
+      return await store.remove(id, removal, new Date());
+    },
   );
 
   // KV-8. Opt-in, and every record it writes is marked `seeded: true`.
