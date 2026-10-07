@@ -62,7 +62,67 @@ export interface SessionStore {
    * write, or nothing (KV-21). Returns what it did, or why it refused.
    */
   restore(personId: string, file: unknown): Promise<RestorePlan>
+  /**
+   * Seals a plain history with the cipher, where the cipher encrypts, in one
+   * write (KV-175): at start, so an install only read from does not stay plain.
+   * Resolves true if it wrote. A missing or already sealed history is left alone.
+   */
+  encryptAtRest(): Promise<boolean>
 }
+
+/**
+ * How the history is encrypted at rest (KV-175): handed to the store from
+ * `app/main`, where it is built from Electron's `safeStorage`, so `core/` never
+ * imports Electron (KV-15) and the tests run with a stand-in in plain node.
+ *
+ * Sealed text travels as base64, so nothing here handles a key or a buffer.
+ */
+export interface StoreCipher {
+  /**
+   * Whether this cipher encrypts at all: false where the operating system holds
+   * no real key store (Linux `basic_text`), and for the plain cipher. A history
+   * written through one that does not is written plain.
+   */
+  readonly encrypts: boolean
+  /**
+   * Whether the key store can be reached right now. Asked before opening, to
+   * tell "not available — it may be locked" (retryable, never set aside) from
+   * "answered, and still would not open" (review of #186).
+   */
+  available(): boolean
+  /**
+   * Whether this platform can fail to open a history for a locked key store in
+   * a way that looks like an answer — macOS, where a dismissed Keychain prompt
+   * may — so the undecryptable sentence says to try the next launch first.
+   */
+  readonly lockedLooksLikeForeign: boolean
+  /** `text` sealed, as base64. */
+  seal(text: string): string
+  /** The text `sealed` (base64) was sealed from. Throws when it will not open. */
+  open(sealed: string): string
+}
+
+/** No encryption: the cipher a store gets where nothing else is given, and the tests'. */
+export const PLAIN_CIPHER: StoreCipher = {
+  encrypts: false,
+  available: () => false,
+  lockedLooksLikeForeign: false,
+  seal: () => {
+    throw new Error('The plain cipher does not seal.')
+  },
+  open: () => {
+    throw new Error('The plain cipher does not open.')
+  },
+}
+
+/**
+ * The version an encrypted history's envelope says (KV-175). Above every plain
+ * file a build from before KV-175 knows, so such a build refuses it as written
+ * by a newer version and leaves it alone. Apart from `FILE_VERSION`, which the
+ * sealed file keeps inside: a change any older build must not read, at either
+ * level, raises this one (ARCHITECTURE.md, review of #186).
+ */
+const ENVELOPE_VERSION = 2
 
 /**
  * The version this code writes and is willing to read.
@@ -270,6 +330,72 @@ export class UnrecognisedRecordError extends Error {
 }
 
 /**
+ * The history is encrypted, and this computer's key store cannot be reached
+ * right now — locked, or not yet unlocked this session (KV-175, review of
+ * #186). It should open once it can be, so nothing is offered that would move
+ * it: setting it aside now would set aside a readable history, and the re-read
+ * that guards against that fails the same way while the key is out of reach.
+ */
+export class LockedStoreError extends Error {
+  constructor(path: string) {
+    super(
+      `${failureTag('store-locked')}: The check-in history at ${path} is encrypted, and this ` +
+        "computer's key store is not available just now. It may be locked. Nothing has been " +
+        'changed; it should open once the key store is available.',
+    )
+    this.name = 'LockedStoreError'
+  }
+}
+
+/**
+ * The key store answered, and the history still would not open with it
+ * (KV-175): encrypted for another account or computer, or that key is gone —
+ * after a password reset, a history can be readable nowhere. It will not open
+ * here, so *Start a new history* is offered under it, keeping the file as it is.
+ * Where a locked key store can look like this one (`lockedLooksLikeForeign`,
+ * macOS), the sentence says to try the next launch first.
+ */
+export class UndecryptableStoreError extends Error {
+  constructor(path: string, lockedLooksLikeForeign: boolean) {
+    super(
+      `${failureTag('store-undecryptable')}: The check-in history at ${path} could not be ` +
+        "opened with this account's key. It may have been encrypted for another account or " +
+        'computer, or that key may be gone, after a password reset. ' +
+        (lockedLooksLikeForeign
+          ? "If this computer's key store was locked, it may open on the next launch: try " +
+            'that first. '
+          : '') +
+        'Nothing has been changed. To move a history to another computer, restore an export ' +
+        'there.',
+    )
+    this.name = 'UndecryptableStoreError'
+  }
+}
+
+/**
+ * The plain file inside an encrypted history's envelope, parsed, for the
+ * ordinary checks to read as if it had been on disk (KV-175).
+ */
+function opened(path: string, envelope: Record<string, unknown>, cipher: StoreCipher): unknown {
+  const sealed = envelope.sealed
+  if (typeof sealed !== 'string' || sealed === '') {
+    throw new UnreadableStoreError(path, 'it says it is encrypted, and holds nothing to open')
+  }
+  if (!cipher.available()) throw new LockedStoreError(path)
+  let text: string
+  try {
+    text = cipher.open(sealed)
+  } catch {
+    throw new UndecryptableStoreError(path, cipher.lockedLooksLikeForeign)
+  }
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    throw new UnreadableStoreError(path, 'it opened, and what it holds is not valid JSON')
+  }
+}
+
+/**
  * Only what it actually checks: an object with a `sessions` array. The version
  * is checked separately, before this, and so is each record's format (KV-30),
  * after it, and then every field of each (KV-181, `checkRecord`). `isFileShape`
@@ -299,7 +425,7 @@ function describeVersion(version: unknown): string {
   return `it does not say which version it is, and this app writes version ${String(FILE_VERSION)}`
 }
 
-async function read(path: string): Promise<FileShape> {
+async function read(path: string, cipher: StoreCipher): Promise<FileShape> {
   let text: string
   try {
     text = await readFile(path, 'utf8')
@@ -332,6 +458,24 @@ async function read(path: string): Promise<FileShape> {
   }
   if (typeof parsed !== 'object' || parsed === null) {
     throw new UnreadableStoreError(path, 'it is not a check-in history file')
+  }
+
+  // An encrypted history (KV-175): opened first, then read as any file is.
+  // Known by its `sealed` field, not by its version, so the envelope's version
+  // and the plain file's `FILE_VERSION` stay two axes: a plain file of a later
+  // format is still refused as newer, below, and never mistaken for a sealed one.
+  if (isEnvelope(parsed)) {
+    const outer: unknown = parsed.version
+    if (typeof outer === 'number' && Number.isFinite(outer) && outer > ENVELOPE_VERSION) {
+      throw new NewerStoreError(path, outer, 'file')
+    }
+    if (outer !== ENVELOPE_VERSION) {
+      throw new UnreadableStoreError(path, 'it says it is encrypted, and not which way')
+    }
+    parsed = opened(path, parsed, cipher)
+    if (typeof parsed !== 'object' || parsed === null) {
+      throw new UnreadableStoreError(path, 'it opened, and what it holds is not a history')
+    }
   }
 
   // Version before shape, because a file from a later version is precisely the
@@ -407,11 +551,31 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
  * the history. Losing a day's check-in is recoverable; losing the baseline the
  * comparisons depend on is not.
  */
-async function write(path: string, data: FileShape): Promise<void> {
+async function write(path: string, data: FileShape, cipher: StoreCipher): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   const tmp = `${path}.tmp`
-  await writeFile(tmp, JSON.stringify(data, null, 2), 'utf8')
+  const plain = JSON.stringify(data, null, 2)
+  // Sealed where the cipher encrypts (KV-175), so the temporary file is
+  // ciphertext too: what a crash or a deletion leaves on disk is never plain.
+  const text = cipher.encrypts
+    ? JSON.stringify({ version: ENVELOPE_VERSION, sealed: cipher.seal(plain) }, null, 2)
+    : plain
+  await writeFile(tmp, text, 'utf8')
   await rename(tmp, path)
+}
+
+/** Whether `value` is an encrypted history's envelope: one with a `sealed` field. */
+const isEnvelope = (value: object): value is Record<string, unknown> =>
+  !Array.isArray(value) && Object.hasOwn(value, 'sealed')
+
+/** Whether the file at `path` holds an encrypted history, read without opening it. */
+async function sealedOnDisk(path: string): Promise<boolean> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
+    return typeof parsed === 'object' && parsed !== null && isEnvelope(parsed)
+  } catch {
+    return false
+  }
 }
 
 /** How many same-day names to try before giving up with a sentence rather than hanging. */
@@ -481,10 +645,22 @@ async function explainSetAside(path: string): Promise<void> {
 export function createJsonSessionStore(
   path: string,
   now: () => Date = () => new Date(),
+  cipher: StoreCipher = PLAIN_CIPHER,
 ): SessionStore {
+  // Every read-modify-write runs one at a time (KV-175). The seal that waits for
+  // the operating system's key can now land a few seconds after start, while a
+  // check-in or a deletion may be writing; two at once would have the later
+  // read miss the earlier write and drop it. In one process, never again.
+  let tail: Promise<unknown> = Promise.resolve()
+  const exclusive = <T>(work: () => Promise<T>): Promise<T> => {
+    const run = tail.then(work, work)
+    tail = run.catch(() => undefined)
+    return run
+  }
+
   return {
     async list(personId) {
-      const { sessions } = await read(path)
+      const { sessions } = await read(path, cipher)
       return sessions
         .filter((s) => s.personId === personId)
         .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
@@ -493,72 +669,79 @@ export function createJsonSessionStore(
         .map(asAskedNow)
     },
     /**
-     * Read-modify-write, with no lock.
+     * Read-modify-write, one at a time within this process (`exclusive`).
      *
-     * Safe at one record per person per day, which is what this app produces,
-     * and stated rather than left to be discovered: two appends genuinely at
-     * once would have the later read miss the earlier write and drop it. The
-     * single-window guard in `app/main` means there is one writer, so the
-     * assumption holds today rather than by luck — it stops holding the moment
-     * a second process writes here, which is #39's problem to inherit.
+     * Two writes genuinely at once would have the later read miss the earlier
+     * write and drop it; in this process they now queue (KV-175). The
+     * single-window guard in `app/main` means there is one process, so that is
+     * every writer today — it stops holding the moment a second process writes
+     * here, which is #39's problem to inherit.
      */
-    async append(record) {
-      const data = await read(path)
-      // A tombstone wins over the record it names (KV-21): a deleted check-in
-      // arriving again stays deleted, and nothing is written.
-      if ((data.removed ?? []).some((t) => t.id === record.id)) return
-      const stored = data.sessions.find((s) => s.id === record.id)
-      if (stored !== undefined) {
-        // The same record again is the one already here: nothing to write.
-        if (sameRecord(stored, record)) return
-        // Untagged, so it reads as `unknown` and invites a retry — which is
-        // right on the one path that appends: a submit tried again draws a new id.
-        throw new Error(
-          `The check-in history at ${path} already holds a different check-in with the id ` +
-            `${record.id}. Check-ins are never replaced, so it was not stored. Nothing has ` +
-            'been changed.',
-        )
-      }
-      data.sessions.push(record)
-      await write(path, data)
+    append(record) {
+      return exclusive(async () => {
+        const data = await read(path, cipher)
+        // A tombstone wins over the record it names (KV-21): a deleted check-in
+        // arriving again stays deleted, and nothing is written.
+        if ((data.removed ?? []).some((t) => t.id === record.id)) return
+        const stored = data.sessions.find((s) => s.id === record.id)
+        if (stored !== undefined) {
+          // The same record again is the one already here: nothing to write.
+          if (sameRecord(stored, record)) return
+          // Untagged, so it reads as `unknown` and invites a retry — which is
+          // right on the one path that appends: a submit tried again draws a new id.
+          throw new Error(
+            `The check-in history at ${path} already holds a different check-in with the id ` +
+              `${record.id}. Check-ins are never replaced, so it was not stored. Nothing has ` +
+              'been changed.',
+          )
+        }
+        data.sessions.push(record)
+        await write(path, data, cipher)
+      })
     },
     async people() {
-      const { sessions } = await read(path)
+      const { sessions } = await read(path, cipher)
       return [...new Set(sessions.map((s) => s.personId))]
     },
-    async remove(personId, which, at) {
-      const data = await read(path)
-      const done = removeFrom(historyOf(data), personId, which, at)
-      if (done.removed === 0) return 0
-      await write(path, withHistory(data, done.history))
-      return done.removed
+    remove(personId, which, at) {
+      return exclusive(async () => {
+        const data = await read(path, cipher)
+        const done = removeFrom(historyOf(data), personId, which, at)
+        if (done.removed === 0) return 0
+        await write(path, withHistory(data, done.history), cipher)
+        return done.removed
+      })
     },
     async exportFor(personId, at) {
-      return exportOf(historyOf(await read(path)), personId, at)
+      return exportOf(historyOf(await read(path, cipher)), personId, at)
     },
-    async markExported(personId, at) {
-      const data = await read(path)
-      // Kept only if it is the map it should be: a hand-edited string spread
-      // here would be written back as junk (review of #185).
-      const prior = isObject(data.lastExported) ? data.lastExported : {}
-      const lastExported = { ...prior, [personId]: at.toISOString() }
-      await write(path, { ...data, lastExported })
+    markExported(personId, at) {
+      return exclusive(async () => {
+        const data = await read(path, cipher)
+        // Kept only if it is the map it should be: a hand-edited string spread
+        // here would be written back as junk (review of #185).
+        const prior = isObject(data.lastExported) ? data.lastExported : {}
+        const lastExported = { ...prior, [personId]: at.toISOString() }
+        await write(path, { ...data, lastExported }, cipher)
+      })
     },
     async lastExported(personId) {
-      const at = (await read(path)).lastExported?.[personId]
+      const at = (await read(path, cipher)).lastExported?.[personId]
       return isInstant(at) ? at : null
     },
-    async restore(personId, file) {
-      const data = await read(path)
-      const plan = planRestore(historyOf(data), personId, file)
-      if (!plan.ok) return plan
-      const newTombstones = plan.history.removed.length > historyOf(data).removed.length
-      // One write, whole — or none, when nothing would change. Never a deletion:
-      // a restore only adds check-ins, and tombstones that block (review of #185).
-      if (plan.outcome.restored > 0 || newTombstones) {
-        await write(path, withHistory(data, plan.history))
-      }
-      return plan
+    restore(personId, file) {
+      return exclusive(async () => {
+        const data = await read(path, cipher)
+        const plan = planRestore(historyOf(data), personId, file)
+        if (!plan.ok) return plan
+        const newTombstones = plan.history.removed.length > historyOf(data).removed.length
+        // One write, whole — or none, when nothing would change. Never a deletion:
+        // a restore only adds check-ins, and tombstones that block (review of #185).
+        if (plan.outcome.restored > 0 || newTombstones) {
+          await write(path, withHistory(data, plan.history), cipher)
+        }
+        return plan
+      })
     },
     /**
      * Person-initiated, never automatic, and it never deletes a byte: the file
@@ -578,14 +761,30 @@ export function createJsonSessionStore(
      * newer version of the app (`NewerStoreError`) is rethrown too: it is a whole
      * history, not a broken one, and setting it aside would strand it.
      */
-    async startNewHistory() {
-      try {
-        await read(path)
-        return null
-      } catch (err) {
-        if (!(err instanceof UnreadableStoreError)) throw err
-      }
-      return await setAside(path, now())
+    startNewHistory() {
+      return exclusive(async () => {
+        try {
+          await read(path, cipher)
+          return null
+        } catch (err) {
+          // A history that will not open with this account's key may be set aside
+          // too (KV-175); one whose key store is only out of reach may not.
+          if (!(err instanceof UnreadableStoreError || err instanceof UndecryptableStoreError)) {
+            throw err
+          }
+        }
+        return await setAside(path, now())
+      })
+    },
+    encryptAtRest() {
+      return exclusive(async () => {
+        if (!cipher.encrypts || (await sealedOnDisk(path))) return false
+        const data = await read(path, cipher)
+        // Nothing on disk yet: the first write will be sealed anyway.
+        if (data.sessions.length === 0 && data.removed === undefined) return false
+        await write(path, data, cipher)
+        return true
+      })
     },
   }
 }

@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
-import type { Removal, RestoreResult } from '@core/session/lifecycle'
+import type { Removal, RestoreResult, RestoreStep } from '@core/session/lifecycle'
+import type { Protection } from '../main/cipher'
 import { fromCaptureReply } from '../shared/capture-reply'
 
 /**
@@ -46,23 +47,41 @@ const api = {
    */
   startNewHistory: (): Promise<string | null> => ipcRenderer.invoke('sessions:startNewHistory'),
 
+  /**
+   * Where the history's protection stands (KV-175): encrypted with this
+   * computer's key, waiting for that key to reach the disk, or no key store.
+   */
+  historyProtection: (): Promise<Protection> => ipcRenderer.invoke('store:protection'),
+
   /** When this person's history was last exported, or null for never (KV-21). */
   lastExported: (personId: string): Promise<string | null> =>
     ipcRenderer.invoke('history:lastExported', personId),
 
   /**
-   * Asks where to save, then writes a restorable export there (KV-21).
-   * Resolves to how many check-ins it holds, or null when the person cancelled.
+   * Asks where to save, then writes a restorable export there (KV-21) —
+   * protected with `passphrase` when one is given (KV-175). Resolves to how
+   * many check-ins it holds, or null when the person cancelled.
    */
-  exportHistory: (personId: string): Promise<{ count: number } | null> =>
-    ipcRenderer.invoke('history:export', personId),
+  exportHistory: (
+    personId: string,
+    passphrase?: string,
+  ): Promise<{ count: number; protected: boolean } | null> =>
+    ipcRenderer.invoke('history:export', personId, passphrase),
 
   /**
    * Asks which file, then restores it: everything it accepts, or nothing
-   * (KV-21). Null when the person cancelled.
+   * (KV-21). For a protected export, asks for its passphrase instead (KV-175).
+   * Null when the person cancelled.
    */
-  restoreHistory: (personId: string): Promise<RestoreResult | null> =>
+  restoreHistory: (personId: string): Promise<RestoreStep | null> =>
     ipcRenderer.invoke('history:restore', personId),
+
+  /** Opens the protected export waiting in main with `passphrase`, and restores it. */
+  restoreProtected: (personId: string, passphrase: string): Promise<RestoreResult> =>
+    ipcRenderer.invoke('history:restoreProtected', personId, passphrase),
+
+  /** Lets go of a protected export waiting for its passphrase. */
+  cancelRestore: (): Promise<void> => ipcRenderer.invoke('history:cancelRestore'),
 
   /** Deletes the check-ins `which` names, keeping tombstones. Resolves to how many. */
   removeCheckIns: (personId: string, which: Removal): Promise<number> =>

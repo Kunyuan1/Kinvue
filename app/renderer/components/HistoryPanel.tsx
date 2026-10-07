@@ -8,8 +8,23 @@ import {
   type Removal,
 } from '@core/session/lifecycle'
 import ConfirmRemoval from './ConfirmRemoval'
+import ExportChoice from './ExportChoice'
 
 const BUTTON = 'rounded-lg border border-(--color-line) px-4 py-2 hover:bg-(--color-raised)'
+
+/** Where the history's protection stands (KV-175), as the main process reports it. */
+export type Protection = Awaited<ReturnType<Window['kinvue']['historyProtection']>>
+
+/** What each state says, including what encryption here does not cover. */
+const PROTECTION: Record<Protection, string> = {
+  encrypted:
+    "Kept encrypted with this computer's key for this account. Anyone signed in as this " +
+    'account can still open it.',
+  'waiting-for-key':
+    "Encryption with this computer's key is being set up. Until it is, the history is kept " +
+    'as it was, unencrypted.',
+  'no-key-store': 'This computer offers no key store, so the history here is not encrypted.',
+}
 
 /**
  * A day on this device: "3 October". Exports and deletions happen here, not
@@ -24,13 +39,19 @@ export const deviceDay = (instant: string): string =>
  *
  * The export line says when the last one was made and how many check-ins have
  * come since, so how much a dead device would take is visible without a prompt
- * or a schedule. The note beside it says what the file is: the whole history,
- * pain notes included, unprotected wherever it is put (T16).
+ * or a schedule. Exporting asks first whether to protect the file with a
+ * passphrase (KV-175, T16); without one it is the whole history, pain notes
+ * included, readable wherever it is put, and the note beside it says so.
+ *
+ * It also says whether the history here is encrypted with this computer's key
+ * (KV-175), and what that does not cover — or that it is not encrypted, where
+ * the computer offers no key store.
  */
 export default function HistoryPanel({
   personId,
   sessions,
   lastExported,
+  protection,
   onExport,
   onChanged,
   onFailure,
@@ -39,12 +60,15 @@ export default function HistoryPanel({
   sessions: readonly SessionRecord[]
   /** When the last export was made, null for never, undefined until known. */
   lastExported: string | null | undefined
+  /** Where the history's protection stands; undefined until known. */
+  protection: Protection | undefined
   /**
    * The dashboard's one export, shared with the confirm screen (review of
    * #185): it refreshes `lastExported` whichever button made it, and resolves
    * to what to say, or null when the person cancelled or it failed (said).
+   * Protected with `passphrase` when one is given (KV-175).
    */
-  onExport: () => Promise<string | null>
+  onExport: (passphrase?: string) => Promise<string | null>
   /** After a restore or a deletion: reloads the list. */
   onChanged: () => Promise<void>
   onFailure: (e: unknown, fallback: string) => void
@@ -53,12 +77,11 @@ export default function HistoryPanel({
   const [before, setBefore] = useState('')
   const [removing, setRemoving] = useState<Removal | null>(null)
   const [busy, setBusy] = useState(false)
+  const [choosing, setChoosing] = useState(false)
+  // A protected export waiting in main for its passphrase (KV-175).
+  const [unlocking, setUnlocking] = useState(false)
+  const [passphrase, setPassphrase] = useState('')
   const real = sessions.filter((r) => r.seeded !== true)
-
-  const exportHistory = async (): Promise<void> => {
-    const exported = await onExport()
-    if (exported !== null) setSaid(exported)
-  }
 
   const step = async (run: () => Promise<void>, fallback: string): Promise<void> => {
     setBusy(true)
@@ -75,6 +98,11 @@ export default function HistoryPanel({
     step(async () => {
       const result = await window.kinvue.restoreHistory(personId)
       if (result === null) return
+      if ('needsPassphrase' in result) {
+        setUnlocking(true)
+        setSaid('This export is protected. Enter its passphrase to restore it.')
+        return
+      }
       if (!result.ok) {
         setSaid(describeRefusal(result.refusal))
         return
@@ -82,6 +110,31 @@ export default function HistoryPanel({
       await onChanged()
       setSaid(describeRestore(result.outcome, deviceDay))
     }, 'The file could not be restored. Nothing has been changed.')
+
+  const openProtected = (): Promise<void> =>
+    step(async () => {
+      const typed = passphrase
+      setPassphrase('')
+      const result = await window.kinvue.restoreProtected(personId, typed)
+      if (!result.ok) {
+        // A wrong passphrase leaves the file waiting for another try.
+        if (result.refusal.kind !== 'wrong-passphrase') setUnlocking(false)
+        setSaid(describeRefusal(result.refusal))
+        return
+      }
+      setUnlocking(false)
+      await onChanged()
+      setSaid(describeRestore(result.outcome, deviceDay))
+    }, 'The file could not be restored. Nothing has been changed.')
+
+  const cancelProtected = (): void => {
+    setUnlocking(false)
+    setPassphrase('')
+    setSaid(null)
+    void window.kinvue.cancelRestore().catch((e: unknown) => {
+      console.error('Could not let go of the protected export.', e)
+    })
+  }
 
   const reviewBefore = (): void => {
     setSaid(null)
@@ -105,11 +158,18 @@ export default function HistoryPanel({
         Your history
       </h2>
 
+      {protection !== undefined && (
+        <p className="mt-2 text-(--color-muted)">{PROTECTION[protection]}</p>
+      )}
+
       <div className="mt-4">
         <button
           type="button"
-          disabled={busy || real.length === 0}
-          onClick={() => void step(exportHistory, 'The history could not be exported.')}
+          disabled={busy || choosing || real.length === 0}
+          onClick={() => {
+            setSaid(null)
+            setChoosing(true)
+          }}
           className={BUTTON}
         >
           Export history&hellip;
@@ -124,9 +184,19 @@ export default function HistoryPanel({
               : describeLastExport(lastExported, sessions, deviceDay)}
         </p>
         <p className="mt-1 text-(--color-muted)">
-          The file holds every check-in, pain notes included, and is not protected. Keep it as
-          carefully as this computer.
+          Without a passphrase, the file holds every check-in, pain notes included, unprotected.
+          Keep it as carefully as this computer.
         </p>
+        {choosing && (
+          <ExportChoice
+            onExport={onExport}
+            onCancel={() => setChoosing(false)}
+            onDone={(exported) => {
+              setChoosing(false)
+              if (exported !== null) setSaid(exported)
+            }}
+          />
+        )}
       </div>
 
       <div className="mt-4">
@@ -138,6 +208,31 @@ export default function HistoryPanel({
         >
           Restore from an export&hellip;
         </button>
+        {unlocking && (
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <label htmlFor="restore-passphrase">Passphrase</label>
+            <input
+              id="restore-passphrase"
+              type="password"
+              autoComplete="current-password"
+              autoFocus
+              value={passphrase}
+              onChange={(e) => setPassphrase(e.target.value)}
+              className="rounded-lg border border-(--color-line) bg-transparent px-2 py-1"
+            />
+            <button
+              type="button"
+              disabled={busy || passphrase === ''}
+              onClick={() => void openProtected()}
+              className={BUTTON}
+            >
+              Open and restore
+            </button>
+            <button type="button" disabled={busy} onClick={cancelProtected} className={BUTTON}>
+              Cancel
+            </button>
+          </div>
+        )}
       </div>
 
       {sessions.length > 0 && (

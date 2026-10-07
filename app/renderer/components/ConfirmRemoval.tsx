@@ -1,6 +1,7 @@
 import { useId, useState } from 'react'
 import type { SessionRecord } from '@core/session/types'
 import { chosenFor, type Removal } from '@core/session/lifecycle'
+import ExportChoice from './ExportChoice'
 
 const BUTTON = 'rounded-lg border px-4 py-2 hover:bg-(--color-raised)'
 
@@ -44,7 +45,7 @@ export default function ConfirmRemoval({
    * one export, resolving to what to say, shown here beside the Delete it
    * precedes (review of #185), or null when there is nothing to say.
    */
-  onExport: () => Promise<string | null>
+  onExport: (passphrase?: string) => Promise<string | null>
   /** Called with how many were deleted, once they are. */
   onDone: (removed: number) => Promise<void>
   onCancel: () => void
@@ -54,6 +55,8 @@ export default function ConfirmRemoval({
   const heading = useId()
   const [busy, setBusy] = useState(false)
   const [exported, setExported] = useState<string | null>(null)
+  // "Export first" asks the same question the panel does (KV-175).
+  const [choosing, setChoosing] = useState(false)
   const chosen = chosenFor(sessions, personId, which)
   const last = chosen.at(-1)
   if (last === undefined) return null
@@ -109,12 +112,8 @@ export default function ConfirmRemoval({
         </button>
         <button
           type="button"
-          disabled={busy}
-          onClick={() =>
-            void run(async () => {
-              setExported(await onExport())
-            })
-          }
+          disabled={busy || choosing}
+          onClick={() => setChoosing(true)}
           className={`${BUTTON} border-(--color-line)`}
         >
           Export first
@@ -132,6 +131,16 @@ export default function ConfirmRemoval({
           Delete
         </button>
       </div>
+      {choosing && (
+        <ExportChoice
+          onExport={onExport}
+          onCancel={() => setChoosing(false)}
+          onDone={(said) => {
+            setChoosing(false)
+            setExported(said)
+          }}
+        />
+      )}
       {/* Said on the screen, not only in ARCHITECTURE.md (review of #185): beside
           "not even by restoring an export", the offer would read as an undo. */}
       <p className="mt-2 text-xs text-(--color-muted)">

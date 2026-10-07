@@ -108,6 +108,13 @@ export const EXPORT_KIND = 'kinvue-history'
  */
 export const EXPORT_VERSION = 1
 
+/**
+ * The shortest passphrase a protected export takes (KV-175): it is the whole
+ * defence. Here, not in `protect.ts`, so the screens can check it without
+ * pulling `node:crypto` into the renderer.
+ */
+export const MIN_PASSPHRASE_LENGTH = 8
+
 /** A person's history as it is exported: restorable by `planRestore`. */
 export interface HistoryExport {
   kind: typeof EXPORT_KIND
@@ -139,6 +146,11 @@ export type RestoreRefusal =
   | { kind: 'not-an-export' }
   /** The file could not be opened — held by another program, or refused by its permissions. */
   | { kind: 'unopenable'; code: string | undefined }
+  /**
+   * A protected export (KV-175) the passphrase did not open: the wrong one, or a
+   * file changed since it was made — AES-GCM cannot say which, so both are said.
+   */
+  | { kind: 'wrong-passphrase' }
   /**
    * Made by a newer version: its container (`export`) or one of its records
    * (`record`), with the version it says — named in the sentence, as the store
@@ -180,6 +192,13 @@ export type RestorePlan =
 export type RestoreResult =
   | { ok: true; outcome: RestoreOutcome }
   | { ok: false; refusal: RestoreRefusal }
+
+/**
+ * The first step of a restore: a result, or — for a protected export (KV-175) —
+ * a passphrase to ask for. The file waits in the main process for it; the
+ * renderer is never handed the file.
+ */
+export type RestoreStep = RestoreResult | { needsPassphrase: true }
 
 const refuse = (refusal: RestoreRefusal): RestorePlan => ({ ok: false, refusal })
 
@@ -343,6 +362,11 @@ export function describeRefusal(refusal: RestoreRefusal): string {
   switch (refusal.kind) {
     case 'not-an-export':
       return 'That file is not a Kinvue history export.' + unchanged
+    case 'wrong-passphrase':
+      return (
+        'That passphrase does not open this file, or the file has changed since it was made.' +
+        unchanged
+      )
     case 'unopenable':
       return (
         `That file could not be opened${refusal.code === undefined ? '' : ` (${refusal.code})`}. ` +

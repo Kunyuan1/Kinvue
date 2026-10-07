@@ -10,7 +10,7 @@ import {
   UnrecognisedRecordError,
 } from '@core/session/store'
 import { NOT_A_RECORD } from '@core/session/check'
-import type { Removal, RestoreResult } from '@core/session/lifecycle'
+import type { Removal, RestoreResult, RestoreStep } from '@core/session/lifecycle'
 import type { SessionRecord } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
 import { history, session } from './helpers'
@@ -116,18 +116,30 @@ let listSessions: ReturnType<typeof vi.fn<() => Promise<SessionRecord[]>>>
 let seedDemo: ReturnType<typeof vi.fn<() => Promise<number>>>
 let startNewHistory: ReturnType<typeof vi.fn<() => Promise<string | null>>>
 let lastExported: ReturnType<typeof vi.fn<() => Promise<string | null>>>
-let exportHistory: ReturnType<typeof vi.fn<() => Promise<{ count: number } | null>>>
-let restoreHistory: ReturnType<typeof vi.fn<() => Promise<RestoreResult | null>>>
+let exportHistory: ReturnType<
+  typeof vi.fn<() => Promise<{ count: number; protected: boolean } | null>>
+>
+let restoreHistory: ReturnType<typeof vi.fn<() => Promise<RestoreStep | null>>>
 let removeCheckIns: ReturnType<typeof vi.fn<(personId: string, which: Removal) => Promise<number>>>
+let historyProtection: ReturnType<
+  typeof vi.fn<() => Promise<'encrypted' | 'waiting-for-key' | 'no-key-store'>>
+>
+let restoreProtected: ReturnType<typeof vi.fn<() => Promise<RestoreResult>>>
+let cancelRestore: ReturnType<typeof vi.fn<() => Promise<void>>>
 
 beforeEach(() => {
   listSessions = vi.fn<() => Promise<SessionRecord[]>>()
   seedDemo = vi.fn<() => Promise<number>>()
   startNewHistory = vi.fn<() => Promise<string | null>>()
   lastExported = vi.fn<() => Promise<string | null>>(() => Promise.resolve(null))
-  exportHistory = vi.fn<() => Promise<{ count: number } | null>>()
-  restoreHistory = vi.fn<() => Promise<RestoreResult | null>>()
+  exportHistory = vi.fn<() => Promise<{ count: number; protected: boolean } | null>>()
+  restoreHistory = vi.fn<() => Promise<RestoreStep | null>>()
   removeCheckIns = vi.fn<(personId: string, which: Removal) => Promise<number>>()
+  historyProtection = vi.fn<() => Promise<'encrypted' | 'waiting-for-key' | 'no-key-store'>>(
+    () => Promise.resolve('encrypted'),
+  )
+  restoreProtected = vi.fn<() => Promise<RestoreResult>>()
+  cancelRestore = vi.fn<() => Promise<void>>(() => Promise.resolve())
   Object.defineProperty(window, 'kinvue', {
     configurable: true,
     value: {
@@ -138,6 +150,9 @@ beforeEach(() => {
       exportHistory,
       restoreHistory,
       removeCheckIns,
+      historyProtection,
+      restoreProtected,
+      cancelRestore,
       captureSeconds: vi.fn(() => Promise.resolve(90)),
       cancelCapture: vi.fn(() => Promise.resolve()),
     },
@@ -1003,7 +1018,9 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     listSessions.mockResolvedValue(days())
     render(<App />)
     expect(await screen.findByText('Last exported: never.')).toBeTruthy()
-    expect(document.body.textContent).toMatch(/pain notes included, and is not protected/)
+    expect(document.body.textContent).toMatch(
+      /Without a passphrase, the file holds every check-in, pain notes included, unprotected/,
+    )
   })
 
   it('blames nothing on demo days when there are none (review of #185)', async () => {
@@ -1030,13 +1047,14 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
 
   it('exports, says how many, and updates the line', async () => {
     listSessions.mockResolvedValue(days())
-    exportHistory.mockResolvedValue({ count: 3 })
+    exportHistory.mockResolvedValue({ count: 3, protected: false })
     render(<App />)
     await screen.findByText('Last exported: never.')
     lastExported.mockResolvedValue('2026-10-05T10:00:00.000Z')
     fireEvent.click(screen.getByText(/Export history/))
-    expect(await screen.findByText('Exported 3 check-ins.')).toBeTruthy()
-    expect(exportHistory).toHaveBeenCalledWith(DEMO_PERSON_ID)
+    fireEvent.click(screen.getByText(/Export without one/))
+    expect(await screen.findByText('Exported 3 check-ins, without a passphrase.')).toBeTruthy()
+    expect(exportHistory).toHaveBeenCalledWith(DEMO_PERSON_ID, undefined)
     expect(await screen.findByText(/Last exported .* \(0 check-ins since\)\./)).toBeTruthy()
   })
 
@@ -1096,13 +1114,14 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
 
   it('says what "Export first" did, beside the Delete, and updates the panel (#185)', async () => {
     listSessions.mockResolvedValue(days())
-    exportHistory.mockResolvedValue({ count: 3 })
+    exportHistory.mockResolvedValue({ count: 3, protected: false })
     render(<App />)
     await screen.findByText('Last exported: never.')
     fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
     lastExported.mockResolvedValue('2026-10-05T10:00:00.000Z')
     fireEvent.click(screen.getByText('Export first'))
-    const said = await screen.findByText('Exported 3 check-ins.')
+    fireEvent.click(screen.getByText(/Export without one/))
+    const said = await screen.findByText('Exported 3 check-ins, without a passphrase.')
     expect(said.closest('[role="group"]')).not.toBeNull()
     expect(await screen.findByText(/Last exported .* \(0 check-ins since\)\./)).toBeTruthy()
     expect(screen.queryByText('Last exported: never.')).toBeNull()
@@ -1176,5 +1195,110 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     expect(
       await screen.findByText('The check-ins could not be deleted. Nothing has been changed.'),
     ).toBeTruthy()
+  })
+})
+
+describe('encryption at rest and protected exports (KV-175)', () => {
+  const days = (): SessionRecord[] => history(3).map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+
+  it('says whether the history here is encrypted, and what that does not cover', async () => {
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    expect(await screen.findByText(/Kept encrypted with this computer's key/)).toBeTruthy()
+    expect(document.body.textContent).toMatch(/Anyone signed in as this account can still open it/)
+
+    cleanup()
+    historyProtection.mockResolvedValue('no-key-store')
+    render(<App />)
+    expect(
+      await screen.findByText(
+        'This computer offers no key store, so the history here is not encrypted.',
+      ),
+    ).toBeTruthy()
+  })
+
+  it('says encryption is being set up until the key is on disk, then that it is done', async () => {
+    listSessions.mockResolvedValue(days())
+    historyProtection.mockResolvedValueOnce('waiting-for-key').mockResolvedValue('encrypted')
+    render(<App />)
+    expect(
+      await screen.findByText(/Encryption with this computer's key is being set up/),
+    ).toBeTruthy()
+    expect(
+      await screen.findByText(/Kept encrypted with this computer's key/, {}, { timeout: 5000 }),
+    ).toBeTruthy()
+  })
+
+  it('exports with a passphrase only once it is long enough and typed the same twice', async () => {
+    listSessions.mockResolvedValue(days())
+    exportHistory.mockResolvedValue({ count: 3, protected: true })
+    render(<App />)
+    fireEvent.click(await screen.findByText(/Export history/))
+    const protectedButton = (): HTMLButtonElement =>
+      screen.getByText(/Export with this passphrase/) as HTMLButtonElement
+    expect(protectedButton().disabled).toBe(true)
+
+    fireEvent.change(screen.getByLabelText('Passphrase'), { target: { value: 'short' } })
+    expect(screen.getByText('A passphrase needs at least 8 characters.')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Passphrase'), { target: { value: 'blue kettle' } })
+    fireEvent.change(screen.getByLabelText('The same passphrase again'), {
+      target: { value: 'blue kettel' },
+    })
+    expect(screen.getByText('The two passphrases do not match.')).toBeTruthy()
+    expect(protectedButton().disabled).toBe(true)
+
+    fireEvent.change(screen.getByLabelText('The same passphrase again'), {
+      target: { value: 'blue kettle' },
+    })
+    fireEvent.click(protectedButton())
+    expect(
+      await screen.findByText('Exported 3 check-ins, protected with the passphrase.'),
+    ).toBeTruthy()
+    expect(exportHistory).toHaveBeenCalledWith(DEMO_PERSON_ID, 'blue kettle')
+  })
+
+  it('asks for a passphrase, again after a wrong one, and then restores', async () => {
+    listSessions.mockResolvedValue(days())
+    restoreHistory.mockResolvedValue({ needsPassphrase: true })
+    render(<App />)
+    fireEvent.click(await screen.findByText(/Restore from an export/))
+    expect(
+      await screen.findByText('This export is protected. Enter its passphrase to restore it.'),
+    ).toBeTruthy()
+
+    restoreProtected.mockResolvedValueOnce({ ok: false, refusal: { kind: 'wrong-passphrase' } })
+    fireEvent.change(screen.getByLabelText('Passphrase'), { target: { value: 'wrong one' } })
+    fireEvent.click(screen.getByText('Open and restore'))
+    expect(await screen.findByText(/That passphrase does not open this file/)).toBeTruthy()
+    expect((screen.getByLabelText('Passphrase') as HTMLInputElement).value).toBe('')
+
+    restoreProtected.mockResolvedValueOnce({
+      ok: true,
+      outcome: { restored: 3, alreadyHere: 0, stayDeleted: 0, deletedAt: [], deletedThere: 0 },
+    })
+    fireEvent.change(screen.getByLabelText('Passphrase'), { target: { value: 'blue kettle' } })
+    fireEvent.click(screen.getByText('Open and restore'))
+    expect(await screen.findByText('Restored 3 check-ins.')).toBeTruthy()
+    expect(restoreProtected).toHaveBeenLastCalledWith(DEMO_PERSON_ID, 'blue kettle')
+    expect(screen.queryByText('Open and restore')).toBeNull()
+  })
+
+  it('lets go of a waiting protected export when the person cancels', async () => {
+    listSessions.mockResolvedValue(days())
+    restoreHistory.mockResolvedValue({ needsPassphrase: true })
+    render(<App />)
+    fireEvent.click(await screen.findByText(/Restore from an export/))
+    await screen.findByText('Open and restore')
+    fireEvent.click(screen.getAllByText('Cancel').at(-1)!)
+    expect(cancelRestore).toHaveBeenCalled()
+    expect(screen.queryByText('Open and restore')).toBeNull()
+  })
+
+  it('offers the same choice from "Export first", before a deletion', async () => {
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+    fireEvent.click(screen.getByText('Export first'))
+    expect(screen.getByText('Protect this file with a passphrase?')).toBeTruthy()
   })
 })
