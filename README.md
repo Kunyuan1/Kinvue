@@ -387,18 +387,21 @@ them checkable:
   no key store (Linux without a keyring), the history stays unencrypted, and the dashboard
   says so. A plain history is encrypted within seconds of the first start, once the
   operating system's key is safely on disk — never before, so a crash in between cannot
-  leave a history sealed with a key that is gone. On Windows that key is kept, protected by
+  leave a history sealed with a key that is gone; until then the dashboard says it is not
+  yet encrypted. A check-in finished inside those seconds is written plain first, and its
+  blocks stay on the disk like any deletion's. On Windows that key is kept, protected by
   DPAPI, in the app's own `Local State` file beside the history: a backup of
   `sessions.json` without it cannot be opened, even on the same account. A history that
-  will not open says which of two things is wrong: the key store is not available just now (it may be
-  locked; try again), or the key that sealed it is not this account's — then, and only
-  then, *Start a new history* is offered, keeping the old file.
+  will not open says which of two things is wrong: the key store is not available just
+  now (it may be locked; try again), or the key that sealed it is not this account's —
+  then, and only then, *Start a new history* is offered, keeping the old file.
 - **A history is kept until the person deletes it, and they can.** There is no automatic
   retention window. At the foot of the dashboard a person can export their history,
   restore an export, delete one check-in, every check-in before a date, or the whole
   history (KV-21):
   - **An export can be protected with a passphrase** (KV-175): scrypt, then AES-256-GCM.
     Forget it, and that copy cannot be opened; the history on the device is unaffected.
+    The suggested name ends `-protected.json`, so it can be told from a plain one.
     **Without one, an export is the whole history in plain JSON** — every check-in, pain
     notes included, readable wherever it is saved — and the screen says so. It also shows
     when the last one was made. Demo days are not exported.

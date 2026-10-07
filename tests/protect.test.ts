@@ -59,22 +59,54 @@ describe('protect and unprotect', () => {
   })
 
   it('refuses a header that asks for more than it may, before spending on it', async () => {
-    const crafted: ProtectedExport = {
+    const crafted = (N: number, r: number, p: number): ProtectedExport => ({
       kind: 'kinvue-history',
       version: PROTECTED_EXPORT_VERSION,
       protection: {
         kdf: 'scrypt',
-        N: 2 ** 30,
-        r: 8,
-        p: 1,
+        N,
+        r,
+        p,
         salt: 'AA==',
         cipher: 'aes-256-gcm',
         iv: 'AA==',
         tag: 'AA==',
       },
       sealed: 'AA==',
+    })
+    // Each within any one parameter's reach, and too costly together (review
+    // of #187): N = 2^20, r = 32 took two minutes and 3.5 GB. Refused at once,
+    // or this test would time out rather than pass.
+    for (const [N, r, p] of [
+      [2 ** 30, 8, 1],
+      [2 ** 20, 32, 1],
+      [2 ** 17, 8, 16],
+      [2 ** 20, 8, 1],
+      [2 ** 32, 1, 1],
+    ] as const) {
+      expect(await unprotect(crafted(N, r, p), PASSPHRASE)).toMatchObject({
+        ok: false,
+        why: 'unreadable',
+      })
     }
-    expect(await unprotect(crafted, PASSPHRASE)).toMatchObject({ ok: false, why: 'unreadable' })
+  })
+
+  it('still opens a file made at up to four times its own cost', SLOW, async () => {
+    // Forward room: a later build may raise the cost. Here the header is the
+    // app's own with r doubled — the tag fails, so it reaches scrypt and the
+    // passphrase check, and is not refused for its cost.
+    const sealed = await protect(file, PASSPHRASE)
+    const raised = { ...sealed, protection: { ...sealed.protection, r: 16 } }
+    expect(await unprotect(raised, PASSPHRASE)).toEqual({ ok: false, why: 'wrong-passphrase' })
+  })
+
+  it('opens with its keys in another order, as a sorting formatter leaves it', SLOW, async () => {
+    const sealed = await protect(file, PASSPHRASE)
+    const sort = (o: Record<string, unknown>): Record<string, unknown> =>
+      Object.fromEntries(Object.entries(o).sort(([a], [b]) => (a < b ? 1 : -1)))
+    const sorted = sort({ ...sealed, protection: sort({ ...sealed.protection }) })
+    expect(Object.keys(sorted.protection as object)).not.toEqual(Object.keys(sealed.protection))
+    expect((await unprotect(sorted as unknown as ProtectedExport, PASSPHRASE)).ok).toBe(true)
   })
 
   it('reads a passphrase typed in either Unicode form as the same one', SLOW, async () => {

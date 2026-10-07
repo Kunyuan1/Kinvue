@@ -1873,6 +1873,14 @@ export (T16) is the same history outside even that boundary.
   seal lands as soon as the key has, the dashboard saying meanwhile that encryption is
   being set up. On macOS and Linux the Keychain or the keyring keeps the key itself. Every
   write to the store now runs one at a time, so that seal cannot race a check-in's.
+- **"Encrypted" is said of the file, not of the key** (review of #187). The line on the
+  dashboard is a statement about `sessions.json`, so it is read from what is on disk —
+  sealed, plain, or nothing yet — never from whether the key is ready: the key can be
+  ready while the seal has not landed, or has failed (a rename refused while another
+  program holds the file), and the app must not say "encrypted" over a plain file. The
+  seal is tried until it holds — every two seconds at first, then every thirty, never
+  given up — and any write once the key is down is sealed anyway. Asking where
+  protection stands changes nothing: the seal is the main process's own timer's to make.
 - **A history that cannot be opened is one of two things, and they are not said alike**
   (review of #186). `safeStorage` fails the same way for a key that is not this account's
   and for a key it cannot reach *right now* — a Linux keyring not yet unlocked this
@@ -1905,6 +1913,15 @@ export (T16) is the same history outside even that boundary.
   scrypt parameters and sealed bytes in place of the records. A build that knows no
   protection then refuses it as made by a newer version — true — not as "not a Kinvue
   export", about a file Kinvue made.
+
+  Opening one is bounded by what it may cost, not parameter by parameter (review of
+  #187): the file names its own scrypt parameters, and limits on each alone let through
+  one that took two minutes and 3.5 GB. Four times the app's own cost is the most a file
+  may ask. The header the tag covers is read field by field in a fixed order, so a
+  formatter that sorts keys does not turn the right passphrase into a wrong one. The
+  suggested name says `-protected`, so the copy whose passphrase must be remembered is
+  told apart unopened; and an export copied over `sessions.json` is named as an export,
+  not mistaken for a history sealed with a key that is gone.
 
 **What it costs.**
 - **Same login, malware, a same-account rollback: unprotected**, as above — the limits T7
@@ -1966,12 +1983,17 @@ three hold:
   which matters once records arrive from another device (#166).
 
 **And a fourth, since KV-175: the history encrypted at rest, where the computer holds a
-key.** This holds. Plaintext written to disk cannot be repaired afterwards either — its
-blocks, and every backup taken of it, stay plain — so the same reasoning applied (review
-of #186). The development machine's history was past that already, and is residue; an
-install a household uses encrypts before its first check-in, since the app does so at
-start. Where the computer offers no key store, it holds only as a limit, and the
-dashboard says so.
+key.** This holds, with one gap said here rather than left to be found (review of #187).
+Plaintext written to disk cannot be repaired afterwards either — its blocks, and every
+backup taken of it, stay plain — so the same reasoning applied (review of #186). The
+development machine's history was past that already, and is residue. On macOS and Linux
+an install a household uses encrypts before its first check-in, since the app seals at
+start. On Windows it seals once the key is in `Local State`, seconds after the first
+start (measured: by fifteen): a check-in finished inside that gap is written plain, and
+the seal that follows writes a new file rather than over the old one, so those plain
+blocks are left on the disk, the residue described above. A capture and its questions
+take longer than the gap, so it is unlikely; it is not impossible. Where the computer
+offers no key store, it holds only as a limit, and the dashboard says so.
 
 ### What is still open
 

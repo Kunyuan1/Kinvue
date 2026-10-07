@@ -28,8 +28,15 @@ export const PROTECTED_EXPORT_VERSION = 2
  */
 const SCRYPT = { N: 2 ** 17, r: 8, p: 1 }
 
-/** The most scrypt may be asked to use reading a file: bounds what a crafted header can demand. */
-const MAX_N = 2 ** 20
+/**
+ * The most a file may ask scrypt to spend opening it: four times the app's own
+ * cost, so a later build can raise it and still be opened here. Bounded as a
+ * whole, not parameter by parameter (review of #187): time grows with N × r × p
+ * and memory with N × r, and limits on each alone let N = 2^20, r = 32 through
+ * — two minutes and 3.5 GB, measured. At this bound, about four seconds and
+ * 512 MiB at most.
+ */
+const MAX_COST = 4 * SCRYPT.N * SCRYPT.r * SCRYPT.p
 
 export interface ProtectedExport {
   kind: typeof EXPORT_KIND
@@ -69,10 +76,17 @@ const deriveKey = (
  * What the GCM tag also covers: everything in the file but the sealed bytes,
  * so a header changed to other parameters fails to open rather than opening
  * with them.
+ *
+ * Named field by field, in an order fixed here, not the order the file carries
+ * them (review of #187): an editor that sorts keys on save, or a formatter run
+ * to look at the file, changes no value, and must not turn the right
+ * passphrase into a wrong one.
  */
 const additionalData = (file: Omit<ProtectedExport, 'sealed'>): Buffer => {
-  const { tag: _tag, ...header } = file.protection
-  return Buffer.from(JSON.stringify({ kind: file.kind, version: file.version, ...header }))
+  const { kdf, N, r, p, salt, cipher, iv } = file.protection
+  return Buffer.from(
+    JSON.stringify({ kind: file.kind, version: file.version, kdf, N, r, p, salt, cipher, iv }),
+  )
 }
 
 /** `file` sealed with a key derived from `passphrase`. */
@@ -135,25 +149,31 @@ const isPowerOfTwo = (n: number): boolean => Number.isInteger(n) && n > 1 && (n 
 export async function unprotect(file: ProtectedExport, passphrase: string): Promise<Unprotected> {
   const { kdf, N, r, p, salt, cipher, iv, tag } = file.protection
   // The header is the file's word, so it is bounded before scrypt is asked to
-  // honour it: a crafted N would otherwise take as much memory as it named.
+  // honour it: a crafted one would otherwise take as much as it named.
   if (
     kdf !== 'scrypt' ||
     cipher !== 'aes-256-gcm' ||
     !isPowerOfTwo(N) ||
-    N > MAX_N ||
     !Number.isInteger(r) ||
     r < 1 ||
-    r > 32 ||
     !Number.isInteger(p) ||
     p < 1 ||
-    p > 16 ||
+    N * r * p > MAX_COST ||
     typeof salt !== 'string' ||
     typeof iv !== 'string' ||
     typeof tag !== 'string'
   ) {
     return { ok: false, why: 'unreadable', detail: 'its protection is not one this app knows' }
   }
-  const key = await deriveKey(passphrase, Buffer.from(salt, 'base64'), N, r, p)
+  let key: Buffer
+  try {
+    key = await deriveKey(passphrase, Buffer.from(salt, 'base64'), N, r, p)
+  } catch {
+    // Not the passphrase's fault, and not to escape as an unclassified throw:
+    // scrypt failing — memory it could not have — is said like any file that
+    // would not open (review of #187).
+    return { ok: false, why: 'unreadable', detail: 'it could not be opened on this computer' }
+  }
   try {
     const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'))
     decipher.setAAD(additionalData(file))

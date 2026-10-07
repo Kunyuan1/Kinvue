@@ -47,9 +47,13 @@ export async function readExport(path: string): Promise<ExportRead> {
 /**
  * The name the save dialog suggests: the local day it was made, which is what
  * the person will look for among several — `kinvue-history-2026-10-05.json`.
+ *
+ * A protected export says so in its name (review of #187) —
+ * `kinvue-history-2026-10-05-protected.json` — so the copy whose passphrase
+ * must be remembered can be told from a plain one without opening it.
  */
-export function exportFileName(now: Date): string {
+export function exportFileName(now: Date, isProtected = false): string {
   const pad = (n: number): string => String(n).padStart(2, '0')
   const day = `${String(now.getFullYear())}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-  return `kinvue-history-${day}.json`
+  return `kinvue-history-${day}${isProtected ? '-protected' : ''}.json`
 }

@@ -6,6 +6,7 @@ import {
   holdsAKey,
   localStateHoldsKey,
   osCipher,
+  protectionOf,
   type SafeStorageLike,
 } from '../app/main/cipher'
 
@@ -47,69 +48,94 @@ describe('holdsAKey', () => {
 
 describe('osCipher', () => {
   it('seals as base64 and opens what it sealed', () => {
-    const cipher = osCipher(storage(), 'win32', () => true)
+    const cipher = osCipher(storage(), 'win32', async () => true)
     const sealed = cipher.seal('a history')
     expect(Buffer.from(sealed, 'base64').toString()).toBe('sealed:a history')
     expect(cipher.open(sealed)).toBe('a history')
   })
 
-  it('decides whether it encrypts once, and asks whether the key is there each time', () => {
+  it('decides whether it encrypts once, and asks whether the key is there each time', async () => {
     let up = true
-    const cipher = osCipher(storage({ isEncryptionAvailable: () => up }), 'darwin', () => true)
+    const available = storage({ isEncryptionAvailable: () => up })
+    const cipher = osCipher(available, 'darwin', async () => true)
+    expect(await cipher.keyLanded()).toBe(true)
     up = false
+    expect(cipher.holdsKey).toBe(true)
     expect(cipher.encrypts).toBe(true)
     expect(cipher.available()).toBe(false)
   })
 
   it('says only macOS can mistake a locked key store for a foreign key', () => {
-    expect(osCipher(storage(), 'darwin', () => true).lockedLooksLikeForeign).toBe(true)
-    expect(osCipher(storage(), 'win32', () => true).lockedLooksLikeForeign).toBe(false)
-    expect(osCipher(storage(), 'linux', () => true).lockedLooksLikeForeign).toBe(false)
+    expect(osCipher(storage(), 'darwin', async () => true).lockedLooksLikeForeign).toBe(true)
+    expect(osCipher(storage(), 'win32', async () => true).lockedLooksLikeForeign).toBe(false)
+    expect(osCipher(storage(), 'linux', async () => true).lockedLooksLikeForeign).toBe(false)
   })
 })
 
 describe('the key on disk before anything is sealed (KV-175)', () => {
-  it('seals nothing until the key is on disk, then seals, and stops asking', () => {
+  it('seals nothing until the key is on disk, then seals, and stops asking', async () => {
     let onDisk = false
     let asked = 0
-    const cipher = osCipher(storage(), 'win32', () => {
+    const cipher = osCipher(storage(), 'win32', async () => {
       asked++
       return onDisk
     })
+    expect(await cipher.keyLanded()).toBe(false)
     expect(cipher.encrypts).toBe(false)
-    expect(cipher.protection()).toBe('waiting-for-key')
     onDisk = true
+    // Reading `encrypts` asks nothing (review of #187): only `keyLanded` looks.
+    expect(cipher.encrypts).toBe(false)
+    expect(asked).toBe(1)
+    expect(await cipher.keyLanded()).toBe(true)
     expect(cipher.encrypts).toBe(true)
-    expect(cipher.protection()).toBe('encrypted')
     const after = asked
     onDisk = false
+    expect(await cipher.keyLanded()).toBe(true)
     expect(cipher.encrypts).toBe(true)
     expect(asked).toBe(after)
   })
 
-  it('says there is no key store where there is none, whatever is on disk', () => {
+  it('never encrypts where there is no key store, whatever is on disk', async () => {
     const basic = storage({ getSelectedStorageBackend: () => 'basic_text' })
-    const cipher = osCipher(basic, 'linux', () => true)
+    const cipher = osCipher(basic, 'linux', async () => true)
+    expect(await cipher.keyLanded()).toBe(false)
+    expect(cipher.holdsKey).toBe(false)
     expect(cipher.encrypts).toBe(false)
-    expect(cipher.protection()).toBe('no-key-store')
+  })
+})
+
+describe('protectionOf: what the line says, from the file on disk (review of #187)', () => {
+  it('says encrypted only of a sealed file, or of nothing the next write would seal', () => {
+    expect(protectionOf(true, true, 'sealed')).toBe('encrypted')
+    expect(protectionOf(true, true, 'nothing')).toBe('encrypted')
+    // The key ready and the file still plain: the seal not landed, or failed.
+    expect(protectionOf(true, true, 'plain')).toBe('not-yet-encrypted')
+    expect(protectionOf(true, false, 'plain')).toBe('not-yet-encrypted')
+    expect(protectionOf(true, false, 'nothing')).toBe('not-yet-encrypted')
+  })
+
+  it('says no key store of a plain file, and encrypted of a sealed one regardless', () => {
+    expect(protectionOf(false, false, 'plain')).toBe('no-key-store')
+    expect(protectionOf(false, false, 'nothing')).toBe('no-key-store')
+    expect(protectionOf(false, false, 'sealed')).toBe('encrypted')
   })
 })
 
 describe('localStateHoldsKey: whether Chromium has written the key down (Windows)', () => {
-  it('answers true only once Local State holds a key, and false for anything less', () => {
+  it('answers true only once Local State holds a key, and false for anything less', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'kinvue-state-'))
     try {
       const path = join(dir, 'Local State')
       const onDisk = localStateHoldsKey(path)
-      expect(onDisk()).toBe(false)
+      expect(await onDisk()).toBe(false)
       writeFileSync(path, JSON.stringify({ browser: {} }))
-      expect(onDisk()).toBe(false)
+      expect(await onDisk()).toBe(false)
       writeFileSync(path, '{ not json')
-      expect(onDisk()).toBe(false)
+      expect(await onDisk()).toBe(false)
       writeFileSync(path, JSON.stringify({ os_crypt: { encrypted_key: '' } }))
-      expect(onDisk()).toBe(false)
+      expect(await onDisk()).toBe(false)
       writeFileSync(path, JSON.stringify({ os_crypt: { encrypted_key: 'RFBBUEkBAAAA' } }))
-      expect(onDisk()).toBe(true)
+      expect(await onDisk()).toBe(true)
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

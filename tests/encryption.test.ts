@@ -177,6 +177,30 @@ describe('the envelope itself', () => {
     }
   })
 
+  it('names an export copied over the history as an export, not a key that is gone', async () => {
+    // A protected export carries `sealed` and version 2, as the envelope does
+    // (review of #187); a plain one has neither. Both are said for what they are.
+    const protectedExport = {
+      kind: 'kinvue-history',
+      version: 2,
+      protection: { kdf: 'scrypt' },
+      sealed: 'abc',
+    }
+    const plainExport = { kind: 'kinvue-history', version: 1, records: [] }
+    for (const contents of [protectedExport, plainExport]) {
+      const path = await fileOf(contents)
+      const listed = await listing(path)
+      expect(listed, JSON.stringify(contents)).toBeInstanceOf(UnreadableStoreError)
+      expect(String(listed)).toMatch(/it is an export, not the history itself/)
+      expect(classifyDashboardError(listed)).toBe('store-unreadable')
+      // And it is not taken for a sealed history: the seal reads it, and refuses,
+      // rather than passing it over as already encrypted.
+      await expect(
+        createJsonSessionStore(path, ON, cipherFor('mine')).encryptAtRest(),
+      ).rejects.toBeInstanceOf(UnreadableStoreError)
+    }
+  })
+
   it('leaves no plain temporary file behind a sealed write', async () => {
     const path = await storePath()
     await createJsonSessionStore(path, ON, cipherFor('mine')).append(noted)
@@ -184,6 +208,52 @@ describe('the envelope itself', () => {
     for (const name of await readdir(dir)) {
       expect(await readFile(join(dir, name), 'utf8'), name).not.toContain('left hip')
     }
+  })
+})
+
+describe('atRest: what is on disk, read without opening it (review of #187)', () => {
+  it('says sealed only of an envelope, and nothing of a history with nothing in it', async () => {
+    const path = await storePath()
+    const at = (): Promise<string> => createJsonSessionStore(path, ON, cipherFor('mine')).atRest()
+    expect(await at()).toBe('nothing')
+    await writeFile(path, '', 'utf8')
+    expect(await at()).toBe('nothing')
+    await writeFile(path, JSON.stringify({ version: 1, sessions: [] }), 'utf8')
+    expect(await at()).toBe('nothing')
+    await createJsonSessionStore(path).append(noted)
+    expect(await at()).toBe('plain')
+    await createJsonSessionStore(path, ON, cipherFor('mine')).encryptAtRest()
+    expect(await at()).toBe('sealed')
+  })
+
+  it('never says sealed of what it cannot make sense of, or of an export', async () => {
+    const path = await storePath()
+    const at = (): Promise<string> => createJsonSessionStore(path, ON, cipherFor('mine')).atRest()
+    for (const text of [
+      '{ not json',
+      '[]',
+      JSON.stringify({ version: 1, sessions: [], removed: [{ id: 'x' }] }),
+      JSON.stringify({ kind: 'kinvue-history', version: 2, protection: {}, sealed: 'abc' }),
+    ]) {
+      await writeFile(path, text, 'utf8')
+      expect(await at(), text).toBe('plain')
+    }
+  })
+
+  it('stays plain where the cipher does not encrypt yet, until a write after it does', async () => {
+    // The key not yet on disk (Windows): a check-in is written plain, and the
+    // dashboard must hear "plain", not what the key store is about to be.
+    const path = await storePath()
+    let ready = false
+    const cipher = cipherFor('mine')
+    const later: StoreCipher = { ...cipher, get encrypts() { return ready } }
+    const store = createJsonSessionStore(path, ON, later)
+    await store.append(noted)
+    expect(await store.atRest()).toBe('plain')
+    ready = true
+    expect(await store.atRest()).toBe('plain')
+    expect(await store.encryptAtRest()).toBe(true)
+    expect(await store.atRest()).toBe('sealed')
   })
 })
 

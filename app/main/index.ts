@@ -37,11 +37,12 @@ import {
 } from "./capture-length";
 import { loadDotEnv } from "./env";
 import { exportFileName, readExport } from "./history-file";
-import { localStateHoldsKey, osCipher, type Protection } from "./cipher";
+import { localStateHoldsKey, osCipher, protectionOf } from "./cipher";
 import { captureVitals } from "./vitals";
 import { ERR_ABORTED, loadFailureMessage, showWhenReady } from "./window-show";
 import { isAppUrl, isTrustedSender, resolveAppPage } from "./security";
 import { toCaptureReply, type CaptureReply } from "../shared/capture-reply";
+import type { Protection } from "../shared/protection";
 
 /**
  * The SmartSpectra key lives in `.env` during development and reaches the SDK
@@ -197,7 +198,7 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-function registerIpc(store: SessionStore, protection: () => Protection): void {
+function registerIpc(store: SessionStore, protection: () => Promise<Protection>): void {
   // Holds each capture until its answers arrive; the rules live in core so they
   // are tested. Everything the renderer sends is validated here first.
   const checkIn = createCheckIn({
@@ -390,10 +391,20 @@ function registerIpc(store: SessionStore, protection: () => Protection): void {
   // A protected export waiting for its passphrase (KV-175): held here, so the
   // renderer is never handed the file, and dropped once restored or cancelled.
   let waiting: { personId: string; file: ProtectedExport } | null = null;
+  // Passphrase tries, one at a time (review of #187): each is about a second of
+  // scrypt and 128 MiB, and a renderer — compromised, T8 — sending many at once
+  // would otherwise run them all together, against main's memory.
+  let unlocking: Promise<unknown> = Promise.resolve();
+  const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
+    const run = unlocking.then(work, work);
+    unlocking = run.catch(() => undefined);
+    return run;
+  };
 
   // KV-175. Where the history's protection stands, for the line that says so:
-  // encrypted, waiting for the key to reach the disk, or no key store at all.
-  handle("store:protection", (): Protection => protection());
+  // what the file on disk is, not what the key is (review of #187). A query, so
+  // it changes nothing: the seal is main's own timer's to make.
+  handle("store:protection", (): Promise<Protection> => protection());
 
   handle(
     "history:lastExported",
@@ -417,7 +428,7 @@ function registerIpc(store: SessionStore, protection: () => Protection): void {
       const options = {
         title: "Export check-in history",
         // A suggestion, from when the dialog opened; the person can change it.
-        defaultPath: exportFileName(new Date()),
+        defaultPath: exportFileName(new Date(), secret !== null),
         filters: [historyFilter],
       };
       const window = BrowserWindow.fromWebContents(event.sender);
@@ -475,26 +486,32 @@ function registerIpc(store: SessionStore, protection: () => Protection): void {
 
   handle(
     "history:restoreProtected",
-    async (_e, personId: unknown, passphrase: unknown): Promise<RestoreResult> => {
+    (_e, personId: unknown, passphrase: unknown): Promise<RestoreResult> => {
       const id = personFor("history:restoreProtected", personId);
       if (typeof passphrase !== "string") {
         throw new Error("history:restoreProtected needs a passphrase.");
       }
-      if (waiting === null || waiting.personId !== id) {
-        throw new Error("history:restoreProtected has no protected file waiting.");
-      }
-      const opened = await unprotect(waiting.file, passphrase);
-      if (!opened.ok) {
-        // A wrong passphrase keeps the file waiting for another try.
-        if (opened.why === "wrong-passphrase") {
-          return { ok: false, refusal: { kind: "wrong-passphrase" } };
+      return oneAtATime(async () => {
+        // Asked once its turn comes: a try queued behind one that restored
+        // finds nothing waiting, and says so.
+        if (waiting === null || waiting.personId !== id) {
+          throw new Error("history:restoreProtected has no protected file waiting.");
+        }
+        const opened = await unprotect(waiting.file, passphrase);
+        if (!opened.ok) {
+          // A wrong passphrase keeps the file waiting for another try.
+          if (opened.why === "wrong-passphrase") {
+            return { ok: false, refusal: { kind: "wrong-passphrase" } };
+          }
+          waiting = null;
+          return { ok: false, refusal: { kind: "unreadable", why: opened.detail } };
         }
         waiting = null;
-        return { ok: false, refusal: { kind: "unreadable", why: opened.detail } };
-      }
-      waiting = null;
-      const plan = await store.restore(id, opened.contents);
-      return plan.ok ? { ok: true, outcome: plan.outcome } : { ok: false, refusal: plan.refusal };
+        const plan = await store.restore(id, opened.contents);
+        return plan.ok
+          ? { ok: true, outcome: plan.outcome }
+          : { ok: false, refusal: plan.refusal };
+      });
     },
   );
 
@@ -550,10 +567,9 @@ void app.whenReady().then(async () => {
 
   // KV-175. The history encrypted with the operating system's key, where it
   // holds one — asked here, after `ready`, when `safeStorage` can answer. A
-  // plain history is sealed now, before any handler can write, so the sealing
-  // write cannot race a check-in's; not on the next check-in, so an install
-  // only read from does not stay plain. A failure is logged and the app goes
-  // on: the dashboard's first read says what is wrong, in the store's words.
+  // plain history is sealed as soon as it can be, not on the next check-in, so
+  // an install only read from does not stay plain. The store queues its writes,
+  // so a seal landing later cannot race a check-in's.
   //
   // Never with a key that is not on disk yet: on Windows the key lives in this
   // app's own `Local State`, which Chromium writes seconds after the key is made,
@@ -563,37 +579,56 @@ void app.whenReady().then(async () => {
   const keyOnDisk =
     process.platform === "win32"
       ? localStateHoldsKey(join(app.getPath("userData"), "Local State"))
-      : (): boolean => true;
+      : async (): Promise<boolean> => true;
   const cipher = osCipher(safeStorage, process.platform, keyOnDisk);
   const store = createJsonSessionStore(storePath(), undefined, cipher);
-  const seal = (): Promise<void> =>
-    store.encryptAtRest().then(
-      () => undefined,
-      (err: unknown) => console.error("The history could not be encrypted.", err),
-    );
-  if (cipher.protection() === "waiting-for-key") {
-    try {
-      safeStorage.encryptString("kinvue");
-    } catch (err) {
-      console.error("The key store would not make a key.", err);
-    }
-    // Asked every two seconds, for two minutes: Chromium writes the file within
-    // a quarter of that, and a key that never lands leaves the history plain,
-    // which the dashboard says.
-    let tries = 0;
-    const waiting = setInterval(() => {
-      tries += 1;
-      if (cipher.protection() === "encrypted") {
-        clearInterval(waiting);
-        void seal();
-      } else if (tries >= 60) {
-        clearInterval(waiting);
-      }
-    }, 2000);
-  }
-  await seal();
+  const protection = async (): Promise<Protection> =>
+    protectionOf(cipher.holdsKey, cipher.encrypts, await store.atRest());
 
-  registerIpc(store, cipher.protection);
+  // Whether there is nothing left to seal: the key on disk, and the file sealed
+  // or holding nothing yet. A failed seal — a rename refused while another
+  // program holds the file, say — is logged once and tried again next time.
+  let failedBefore = false;
+  const settled = async (): Promise<boolean> => {
+    if (!(await cipher.keyLanded())) return false;
+    try {
+      await store.encryptAtRest();
+    } catch (err) {
+      if (!failedBefore) console.error("The history could not be encrypted yet.", err);
+      failedBefore = true;
+    }
+    return (await store.atRest()) !== "plain";
+  };
+  if (cipher.holdsKey) {
+    if (!(await cipher.keyLanded())) {
+      try {
+        safeStorage.encryptString("kinvue");
+      } catch (err) {
+        console.error("The key store would not make a key.", err);
+      }
+    }
+    // Tried until it holds, never given up on (review of #187): every two
+    // seconds for two minutes — Chromium writes the key within a quarter of
+    // that — then every thirty. Meanwhile the dashboard says the history is not
+    // yet encrypted, because it reads the file; and any write once the key is
+    // down is sealed anyway, timer or not.
+    if (!(await settled())) {
+      let tries = 0;
+      const again = (): void => {
+        tries += 1;
+        setTimeout(
+          () =>
+            void settled().then((done) => {
+              if (!done) again();
+            }),
+          tries <= 60 ? 2000 : 30_000,
+        );
+      };
+      again();
+    }
+  }
+
+  registerIpc(store, protection);
   createWindow();
 
   app.on("activate", () => {

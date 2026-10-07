@@ -122,7 +122,7 @@ let exportHistory: ReturnType<
 let restoreHistory: ReturnType<typeof vi.fn<() => Promise<RestoreStep | null>>>
 let removeCheckIns: ReturnType<typeof vi.fn<(personId: string, which: Removal) => Promise<number>>>
 let historyProtection: ReturnType<
-  typeof vi.fn<() => Promise<'encrypted' | 'waiting-for-key' | 'no-key-store'>>
+  typeof vi.fn<() => Promise<'encrypted' | 'not-yet-encrypted' | 'no-key-store'>>
 >
 let restoreProtected: ReturnType<typeof vi.fn<() => Promise<RestoreResult>>>
 let cancelRestore: ReturnType<typeof vi.fn<() => Promise<void>>>
@@ -135,7 +135,7 @@ beforeEach(() => {
   exportHistory = vi.fn<() => Promise<{ count: number; protected: boolean } | null>>()
   restoreHistory = vi.fn<() => Promise<RestoreStep | null>>()
   removeCheckIns = vi.fn<(personId: string, which: Removal) => Promise<number>>()
-  historyProtection = vi.fn<() => Promise<'encrypted' | 'waiting-for-key' | 'no-key-store'>>(
+  historyProtection = vi.fn<() => Promise<'encrypted' | 'not-yet-encrypted' | 'no-key-store'>>(
     () => Promise.resolve('encrypted'),
   )
   restoreProtected = vi.fn<() => Promise<RestoreResult>>()
@@ -1217,9 +1217,9 @@ describe('encryption at rest and protected exports (KV-175)', () => {
     ).toBeTruthy()
   })
 
-  it('says encryption is being set up until the key is on disk, then that it is done', async () => {
+  it('says encryption is being set up until the file is sealed, then that it is', async () => {
     listSessions.mockResolvedValue(days())
-    historyProtection.mockResolvedValueOnce('waiting-for-key').mockResolvedValue('encrypted')
+    historyProtection.mockResolvedValueOnce('not-yet-encrypted').mockResolvedValue('encrypted')
     render(<App />)
     expect(
       await screen.findByText(/Encryption with this computer's key is being set up/),
@@ -1283,6 +1283,21 @@ describe('encryption at rest and protected exports (KV-175)', () => {
     expect(screen.queryByText('Open and restore')).toBeNull()
   })
 
+  it('starts no second restore while a protected export waits for its passphrase', async () => {
+    // A second restore would drop the file main holds, and leave the field
+    // asking for a passphrase to nothing (review of #187).
+    listSessions.mockResolvedValue(days())
+    restoreHistory.mockResolvedValue({ needsPassphrase: true })
+    render(<App />)
+    const restoreButton = (): HTMLButtonElement =>
+      screen.getByText(/Restore from an export/) as HTMLButtonElement
+    fireEvent.click(await screen.findByText(/Restore from an export/))
+    await screen.findByText('Open and restore')
+    expect(restoreButton().disabled).toBe(true)
+    fireEvent.click(screen.getAllByText('Cancel').at(-1)!)
+    expect(restoreButton().disabled).toBe(false)
+  })
+
   it('lets go of a waiting protected export when the person cancels', async () => {
     listSessions.mockResolvedValue(days())
     restoreHistory.mockResolvedValue({ needsPassphrase: true })
@@ -1300,5 +1315,36 @@ describe('encryption at rest and protected exports (KV-175)', () => {
     fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
     fireEvent.click(screen.getByText('Export first'))
     expect(screen.getByText('Protect this file with a passphrase?')).toBeTruthy()
+  })
+
+  it('keeps Delete off while "Export first" is unfinished, and on again after', async () => {
+    // The copy is the safeguard; Delete must not cut it short (review of #187).
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+    const deleteButton = (): HTMLButtonElement => screen.getByText('Delete') as HTMLButtonElement
+    expect(deleteButton().disabled).toBe(false)
+    fireEvent.click(screen.getByText('Export first'))
+    expect(deleteButton().disabled).toBe(true)
+    fireEvent.click(screen.getAllByText('Cancel').at(-1)!)
+    expect(deleteButton().disabled).toBe(false)
+  })
+
+  it('will not export without a passphrase once one is typed', async () => {
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    fireEvent.click(await screen.findByText(/Export history/))
+    const plainButton = (): HTMLButtonElement =>
+      screen.getByText(/Export without one/) as HTMLButtonElement
+    expect(plainButton().disabled).toBe(false)
+    fireEvent.change(screen.getByLabelText('Passphrase'), { target: { value: 'blue kettle' } })
+    expect(plainButton().disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('Passphrase'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('The same passphrase again'), {
+      target: { value: 'x' },
+    })
+    expect(plainButton().disabled).toBe(true)
+    fireEvent.change(screen.getByLabelText('The same passphrase again'), { target: { value: '' } })
+    expect(plainButton().disabled).toBe(false)
   })
 })

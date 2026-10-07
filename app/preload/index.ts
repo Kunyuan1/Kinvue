@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
 import type { Removal, RestoreResult, RestoreStep } from '@core/session/lifecycle'
-import type { Protection } from '../main/cipher'
+import type { Protection } from '../shared/protection'
 import { fromCaptureReply } from '../shared/capture-reply'
 
 /**

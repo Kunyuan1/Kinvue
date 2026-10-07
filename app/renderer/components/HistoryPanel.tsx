@@ -7,20 +7,18 @@ import {
   describeRestore,
   type Removal,
 } from '@core/session/lifecycle'
+import type { Protection } from '../../shared/protection'
 import ConfirmRemoval from './ConfirmRemoval'
 import ExportChoice from './ExportChoice'
 
 const BUTTON = 'rounded-lg border border-(--color-line) px-4 py-2 hover:bg-(--color-raised)'
-
-/** Where the history's protection stands (KV-175), as the main process reports it. */
-export type Protection = Awaited<ReturnType<Window['kinvue']['historyProtection']>>
 
 /** What each state says, including what encryption here does not cover. */
 const PROTECTION: Record<Protection, string> = {
   encrypted:
     "Kept encrypted with this computer's key for this account. Anyone signed in as this " +
     'account can still open it.',
-  'waiting-for-key':
+  'not-yet-encrypted':
     "Encryption with this computer's key is being set up. Until it is, the history is kept " +
     'as it was, unencrypted.',
   'no-key-store': 'This computer offers no key store, so the history here is not encrypted.',
@@ -103,6 +101,10 @@ export default function HistoryPanel({
         setSaid('This export is protected. Enter its passphrase to restore it.')
         return
       }
+      // Main holds no protected file once another restore has run, so no
+      // passphrase field may outlive it (review of #187).
+      setUnlocking(false)
+      setPassphrase('')
       if (!result.ok) {
         setSaid(describeRefusal(result.refusal))
         return
@@ -200,9 +202,11 @@ export default function HistoryPanel({
       </div>
 
       <div className="mt-4">
+        {/* Not while a protected export waits for its passphrase: a second
+            restore would drop the file main is holding (review of #187). */}
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || unlocking}
           onClick={() => void restore()}
           className={BUTTON}
         >

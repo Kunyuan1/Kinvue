@@ -6,6 +6,7 @@ import { asAskedNow } from './answers'
 import { checkRecord, checkTombstone, isInstant, NOT_A_RECORD } from './check'
 import { checkFormat, RECORD_FORMAT, sameRecord } from './format'
 import {
+  EXPORT_KIND,
   exportOf,
   planRestore,
   remove as removeFrom,
@@ -68,7 +69,18 @@ export interface SessionStore {
    * Resolves true if it wrote. A missing or already sealed history is left alone.
    */
   encryptAtRest(): Promise<boolean>
+  /**
+   * What is on disk, read without opening it (review of #187): sealed, plain,
+   * or nothing yet — no file, an empty one, or a history with no check-ins and
+   * no deletions. What the dashboard's protection line is a statement about.
+   * Anything it cannot make sense of is `plain`: it never says "sealed" of a
+   * file it does not know is.
+   */
+  atRest(): Promise<AtRest>
 }
+
+/** What `atRest` found on disk. */
+export type AtRest = 'sealed' | 'plain' | 'nothing'
 
 /**
  * How the history is encrypted at rest (KV-175): handed to the store from
@@ -460,6 +472,18 @@ async function read(path: string, cipher: StoreCipher): Promise<FileShape> {
     throw new UnreadableStoreError(path, 'it is not a check-in history file')
   }
 
+  // An export where the history should be (review of #187): both are `.json`,
+  // and a protected one carries `sealed` as the envelope does. Named for what
+  // it is, before anything takes it for an envelope and blames a key — and the
+  // sentence says the way back, which the button beside it begins.
+  if ((parsed as { kind?: unknown }).kind === EXPORT_KIND) {
+    throw new UnreadableStoreError(
+      path,
+      'it is an export, not the history itself. Start a new history, then restore the export ' +
+        'into it',
+    )
+  }
+
   // An encrypted history (KV-175): opened first, then read as any file is.
   // Known by its `sealed` field, not by its version, so the envelope's version
   // and the plain file's `FILE_VERSION` stay two axes: a plain file of a later
@@ -564,18 +588,34 @@ async function write(path: string, data: FileShape, cipher: StoreCipher): Promis
   await rename(tmp, path)
 }
 
-/** Whether `value` is an encrypted history's envelope: one with a `sealed` field. */
+/**
+ * Whether `value` is an encrypted history's envelope: one with a `sealed`
+ * field, and no `kind` — a protected export has `sealed` too, and says what it
+ * is (review of #187).
+ */
 const isEnvelope = (value: object): value is Record<string, unknown> =>
-  !Array.isArray(value) && Object.hasOwn(value, 'sealed')
+  !Array.isArray(value) && Object.hasOwn(value, 'sealed') && !Object.hasOwn(value, 'kind')
 
-/** Whether the file at `path` holds an encrypted history, read without opening it. */
-async function sealedOnDisk(path: string): Promise<boolean> {
+/** What the file at `path` holds, read without opening it: see `SessionStore.atRest`. */
+async function atRest(path: string): Promise<AtRest> {
+  let text: string
   try {
-    const parsed: unknown = JSON.parse(await readFile(path, 'utf8'))
-    return typeof parsed === 'object' && parsed !== null && isEnvelope(parsed)
-  } catch {
-    return false
+    text = await readFile(path, 'utf8')
+  } catch (err) {
+    return (err as { code?: unknown }).code === 'ENOENT' ? 'nothing' : 'plain'
   }
+  if (text.trim() === '') return 'nothing'
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return 'plain'
+  }
+  if (!isObject(parsed)) return 'plain'
+  if (isEnvelope(parsed)) return 'sealed'
+  const { sessions, removed } = parsed
+  const none = (list: unknown): boolean => Array.isArray(list) && list.length === 0
+  return none(sessions) && (removed === undefined || none(removed)) ? 'nothing' : 'plain'
 }
 
 /** How many same-day names to try before giving up with a sentence rather than hanging. */
@@ -651,6 +691,10 @@ export function createJsonSessionStore(
   // the operating system's key can now land a few seconds after start, while a
   // check-in or a deletion may be writing; two at once would have the later
   // read miss the earlier write and drop it. In one process, never again.
+  //
+  // One queue per store, not per file (review of #187): two stores made on the
+  // same path would write past each other. So there is one, made once in
+  // `app/main`; a second caller shares that one rather than making its own.
   let tail: Promise<unknown> = Promise.resolve()
   const exclusive = <T>(work: () => Promise<T>): Promise<T> => {
     const run = tail.then(work, work)
@@ -778,13 +822,16 @@ export function createJsonSessionStore(
     },
     encryptAtRest() {
       return exclusive(async () => {
-        if (!cipher.encrypts || (await sealedOnDisk(path))) return false
+        if (!cipher.encrypts || (await atRest(path)) === 'sealed') return false
         const data = await read(path, cipher)
         // Nothing on disk yet: the first write will be sealed anyway.
         if (data.sessions.length === 0 && data.removed === undefined) return false
         await write(path, data, cipher)
         return true
       })
+    },
+    atRest() {
+      return atRest(path)
     },
   }
 }

@@ -11,10 +11,11 @@ import {
   type DashboardFailure,
   type SubmitFailure,
 } from '@core/capture/failure'
+import type { Protection } from '../shared/protection'
 import { CARD_BOX, CHART_BOX } from './components/boxes'
 import CaptureScreen from './components/CaptureScreen'
 import ConfirmRemoval from './components/ConfirmRemoval'
-import HistoryPanel, { type Protection } from './components/HistoryPanel'
+import HistoryPanel from './components/HistoryPanel'
 import QuestionFlow from './components/QuestionFlow'
 import SectionBoundary from './components/SectionBoundary'
 import SessionCard from './components/SessionCard'
@@ -245,8 +246,9 @@ function Dashboard(): React.JSX.Element {
   }, [loadLastExported])
 
   // KV-175. Where the history's protection stands — asked again every few
-  // seconds while the key is still on its way to the disk, so the line moves to
-  // "encrypted" once the seal lands, and stops asking then.
+  // seconds while the file is still plain, so the line moves to "encrypted"
+  // once the seal lands on disk, and stops asking then. Asking changes nothing
+  // in main (review of #187).
   useEffect(() => {
     let stopped = false
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -255,7 +257,7 @@ function Dashboard(): React.JSX.Element {
         (now) => {
           if (stopped) return
           setProtection(now)
-          if (now === 'waiting-for-key') timer = setTimeout(ask, 3000)
+          if (now === 'not-yet-encrypted') timer = setTimeout(ask, 3000)
         },
         (e: unknown) => console.error('Could not read whether the history is encrypted.', e),
       )

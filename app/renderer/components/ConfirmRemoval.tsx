@@ -118,9 +118,11 @@ export default function ConfirmRemoval({
         >
           Export first
         </button>
+        {/* Not while "Export first" is unfinished (review of #187): the copy it
+            is making is the safeguard, and Delete must not cut it short. */}
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || choosing}
           onClick={() =>
             void run(async () => {
               await onDone(await window.kinvue.removeCheckIns(personId, which))

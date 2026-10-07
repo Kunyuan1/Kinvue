@@ -91,9 +91,11 @@ export default function ExportChoice({
         >
           Export with this passphrase&hellip;
         </button>
+        {/* Not once a passphrase is typed (review of #187): the button must
+            match what was typed, or the whole history goes out unprotected. */}
         <button
           type="button"
-          disabled={busy}
+          disabled={busy || passphrase !== '' || again !== ''}
           onClick={() => void run()}
           className={BUTTON}
         >
