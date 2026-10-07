@@ -1136,6 +1136,11 @@ its own*.
 `SessionStore` is an interface for exactly one reason: it is the seam to swap when the
 size assumption stops holding.
 
+How the file is protected at rest — encrypted with the operating system's key, the two
+ways it can fail to open, and what it does not cover — is decided under *Planning for
+remote access*, in *The check-in device's own data at rest (KV-175)*, beside the threat
+rows it answers.
+
 ---
 
 ## Why the demo history is seeded, and why it is labelled
@@ -1790,6 +1795,129 @@ screens show), with tombstones in `store.ts` and the controls in `HistoryPanel` 
   one small entry per deleted check-in, for as long as a copy could exist — which on one
   machine is indefinitely.
 
+### The check-in device's own data at rest (KV-175)
+
+Decided 2026-10-06. Every remote defence assumes the check-in device belongs to the person,
+but its own history had no protection beyond the operating system's account boundary:
+`sessions.json` was plain JSON, readable by anyone who could read that account's files — a
+backup, a sync client's copy, the free space a deletion left behind (KV-21) — and on the
+shared family computer this app is likely to sit on, that boundary may not exist (T7). An
+export (T16) is the same history outside even that boundary.
+
+- **The history is encrypted with a key the operating system holds** — Electron's
+  `safeStorage`: DPAPI on Windows, the Keychain on macOS, the desktop keyring on Linux.
+  The whole file: check-ins, pain notes, tombstones and the last-export date alike, so the
+  pain note is treated as everything else is (KV-21). Nothing for the person to set or
+  remember, and nothing to lose but the account itself.
+- **What that protects, and what it does not — said in `README.md`, not only here.** It
+  protects a copied file, a backup or a sync client's copy opened under another account or
+  on another machine, and the residue a deletion leaves on disk, which is now ciphertext.
+  It does **not** protect against anyone signed in as the same user — family on a shared
+  login, opening this app — or malware running as them: the operating system decrypts for
+  this app whoever is at the keyboard. On Windows and Linux any program that user runs can
+  ask for the same key; on macOS the Keychain ties it to the app that made it, which is
+  narrower, and brittle (below). **It does not stop a rollback either** (review of #186): a
+  `sessions.json` restored from File History, Time Machine or a sync client under the same
+  account opens as the app does, so restoring yesterday's file still brings back what was
+  deleted since, tombstones and all. That stays T7's limit, and README says so in those
+  words rather than "protection at rest is #175's".
+- **Why the store has no passphrase when an export may** (review of #186). The case that
+  opens this section — family sharing one login — is the one the operating system's key
+  does nothing for, and only a secret the person knows would. It was weighed, including as
+  an optional second layer, settable once a protected export exists, so that forgetting it
+  costs the device copy and not the history. It is not taken now, for two reasons the
+  export does not share. A store passphrase is asked every time the app opens, before the
+  person in front of the camera can check in — daily friction for the older adult, where
+  an export's is once, at the moment someone chose to make one. And the boundary that shared
+  login lacks is better given back where it belongs: a separate account for the person on
+  that computer, which README recommends, or a lock on the screens that change who sees
+  what (#40, T2), which guards decisions rather than reading. An optional store passphrase
+  stays open as a later layer; the envelope's `version` is what would carry it.
+- **Where the operating system holds no key, the file stays plain, and the dashboard says
+  so.** On Linux without a keyring, `safeStorage` falls back to `basic_text`, which is
+  obfuscation, not encryption; it is not called encrypted. **Checked by the backend, not
+  by `isEncryptionAvailable()`** (review of #186), which is true for `basic_text` too: on
+  Linux, `getSelectedStorageBackend()`, asked after the app's `ready` event — before it,
+  the answer is `unknown` — and only a real keyring counts. On Windows and macOS,
+  `isEncryptionAvailable()` after `ready` is the check.
+- **The same file, and two version numbers, named apart** (review of #186). The encrypted
+  history is still `sessions.json`: an envelope with its own `version` and the sealed
+  bytes. **The envelope's `version`** starts at 2, above every plain file a build before
+  KV-175 knows, so such a build refuses it as written by a newer version
+  (`NewerStoreError`) — true, and it leaves the file alone. **The sealed file keeps its
+  own `version`** — today's `FILE_VERSION`, 1 — checked as now once opened. They move
+  apart: a change to the plain file's shape raises the inner number, and any change an
+  older build must not read, at either level, raises the envelope's too. Under a new name,
+  an older build would find no `sessions.json`, take the ordinary first run, and start
+  and write an empty history while the real one sat unread under the other name — a
+  history stranded, the outcome KV-98's review kept *Start a new history* away from newer
+  files to avoid.
+- **The seam: a cipher handed to the store, not Electron in `core/`** (review of #186).
+  `core/` imports no Electron (KV-15), and the file format lives in `core/session/store.ts`.
+  So `createJsonSessionStore` takes a cipher — seal, open, and whether it encrypts at all
+  — built in `app/main` from `safeStorage`, and a plain one in tests, which stay in plain
+  node. The export's passphrase sits in `core/` beside `planRestore`: `node:crypto` is
+  allowed there.
+- **A plain history is encrypted when the app starts**, where the operating system can,
+  in one write through the temporary file and rename. Not on the next check-in: an install
+  only read from would stay plain indefinitely. What the plain file left — its old blocks,
+  and every backup taken before — stays as it was; that is said too.
+- **A history that cannot be opened is one of two things, and they are not said alike**
+  (review of #186). `safeStorage` fails the same way for a key that is not this account's
+  and for a key it cannot reach *right now* — a Linux keyring not yet unlocked this
+  session, a macOS Keychain prompt dismissed or locked behind the screen lock — and in the
+  second case the file opens on the next launch. Offering *Start a new history* then
+  would set a whole readable history aside, and `startNewHistory`'s re-read, which exists
+  to stop exactly that, fails the same way while the key is out of reach. So:
+  - **The key store is not available** — `isEncryptionAvailable()` false, or on Linux a
+    backend of `unknown` — : "This history is encrypted, and this computer's key store is
+    not available just now — it may be locked. Nothing has been changed; it should open
+    once it is." Retryable, and **no** *Start a new history* under it.
+  - **The key store answered, and the file still would not open**: "This history could not
+    be opened with this account's key. It may have been encrypted for another account or
+    computer, or that key may be gone — after a password reset, a history can be readable
+    nowhere." Only then is *Start a new history* offered, keeping the file byte for byte
+    beside the new one (KV-98), and the sentence says moving computers is what restoring
+    an export is for.
+
+  On macOS the two may not be told apart — a Keychain that refuses a prompt can look like
+  an answer — so there the second sentence also says that if the computer's key store was
+  locked, the history may open on the next launch, and to try that first.
+- **An export can be protected with a passphrase, if the person chooses** (T16). It cannot
+  use the operating system's key — it exists to be restored somewhere else. Exporting asks
+  whether to protect the file; yes encrypts it with a key derived from the passphrase
+  (scrypt, then AES-256-GCM: Node's own `crypto`, no new dependency). Restoring asks for
+  the passphrase only for a protected file, and a wrong one changes nothing. A forgotten
+  passphrase loses that copy, not the history on the device. A plain export stays
+  possible, and its screen still says it is unprotected. **A protected export is still a
+  Kinvue export** (review of #186): the same `kind`, its container `version` raised, the
+  scrypt parameters and sealed bytes in place of the records. A build that knows no
+  protection then refuses it as made by a newer version — true — not as "not a Kinvue
+  export", about a file Kinvue made.
+
+**What it costs.**
+- **Same login, malware, a same-account rollback: unprotected**, as above — the limits T7
+  keeps.
+- **Downgrading is locked out further.** An older build cannot read an encrypted history
+  at all, and says it was written by a newer version (README's *Downgrading strands the
+  history*).
+- **The history is bound to the account.** A new Windows profile or a restored system
+  cannot read it, and nor can a backup of the file restored there; an export, made
+  beforehand, is the only way across — so how recently one was made (KV-21) matters
+  more.
+- **What was plain stays plain**: backups and disk blocks from before the first encrypted
+  write, and histories set aside by KV-98.
+- **A protected export is only as good as the passphrase is remembered.**
+- **On macOS, the key belongs to the app that made it, not only the account** (review of
+  #186). A history encrypted by a development build and then opened by the first signed
+  build (#19), on the same account, meets a Keychain prompt, and is refused if it is
+  dismissed: the "not available" case above, retryable, never the set-aside one. #19 must
+  keep the signing identity stable across releases for the same reason.
+
+The change that builds this rewrites `README.md`'s privacy section to say what is then
+true. #19's API key is the same question for a credential (T15); holding it with
+`safeStorage` is the natural answer there, and #19's to decide.
+
 ### What must hold before real check-ins are stored
 
 Each is owned by a Phase 1 ticket that has to land before the check-in flow (#2) stores
@@ -1816,6 +1944,13 @@ three hold:
   null). An empty or unknown zone is displayed the same way, indistinguishable from none —
   which matters once records arrive from another device (#166).
 
+**And one that does not hold yet: the history encrypted at rest (KV-175).** Plaintext
+written to disk cannot be repaired afterwards either — its blocks, and every backup taken
+of it, stay plain — so the same reasoning applies (review of #186). The development
+machine's history is past that already, and is residue; for a household it is not too
+late. **KV-175 must be built before an install anyone else uses records its first
+check-in** — before #19 hands an installer to a household, whichever lands first.
+
 ### What is still open
 
 One decision is left, and as KV-31 to KV-34 were, it must be closed and written into this
@@ -1839,8 +1974,9 @@ something.
 ### Threat model (KV-36)
 
 Written 2026-10-01, against #32 (what leaves) and #31 (who controls it), and updated for
-#33 (how it travels) the same day. **Revisit it before #39 ships, and whenever #32, #31 or
-#33 changes.** A mitigation counts only when a ticket owns it.
+#33 (how it travels) the same day; T12, T14 and T16 for KV-21 (2026-10-04, reviews of
+#184 and #185), and T7, T14 and T16 for KV-175 (2026-10-06, review of #186). **Revisit it
+before #39 ships, and whenever #32, #31 or #33 changes.** A mitigation counts only when a ticket owns it.
 
 **What is protected, from being read:** the readings, the answers and the pain note. **The
 routine itself:** a history of check-in times says that an older person lives somewhere,
@@ -1862,16 +1998,16 @@ to check a card against. Integrity is protected as deliberately as confidentiali
 | T4 | The relay infers behaviour from metadata it must hold even under end-to-end encryption: when check-ins arrive, who shares with whom, and **when each viewer fetched** — the access history #31 takes from it | The operator; whoever breaches it | Ciphertext kept until fetched, at most 14 days; delivery records for #31's 30-day access window only, then deleted; no analytics (KV-33). **These limits are enforced by the relay, which is this row's adversary**: an operator who kept more is undetectable from either device. Arrival timing and the pairing graph remain visible — a limit; sending on a schedule rather than at capture time is noted, not required. | #33, #39 | Decided as policy; a limit against the operator |
 | T5 | A caregiver's phone is lost or stolen with shared check-ins on it | Whoever finds it | The client opens only after the phone's own authentication — an app lock, its own plugin — and its keys are held in the phone's Keychain or Keystore (KV-34); the person can revoke that viewer from the check-in device (#45). A device offline after revocation keeps its copy until it connects — a limit. With no forward secrecy (KV-33), the phone's key also opens any envelopes an attacker archived from the relay. | #34, #42, #45, #179 | Decided; #42 to build; two limits stand |
 | T6 | The daily summary leaks on a lock screen, or through the push provider | Bystanders; Apple's or Google's push service | The push carries no health data, only "your summary is ready"; the content is fetched and composed on the device (#33). | #43 | **Gap → #43** |
-| T7 | Data on the check-in device itself: `sessions.json` is plain JSON, readable by anyone with that operating-system account, its backups (File History, Time Machine, a sync client), or malware running as it | Others on the computer; malware; a backup service | **Today**, only the operating system's account boundary, on Windows, macOS and Linux alike. #175 decides whether the store is encrypted at rest (for example with Electron's `safeStorage`, backed by each platform's own keychain) and what that protects against — not malware running as the same user. | #175 | **Gap → #175** |
+| T7 | Data on the check-in device itself: `sessions.json` is plain JSON, readable by anyone with that operating-system account, its backups (File History, Time Machine, a sync client), or malware running as it | Others on the computer; malware; a backup service | **Decided (KV-175):** the whole history encrypted with the operating system's key (`safeStorage`), so a copy, a backup or a sync copy read under another account or machine, and the residue a deletion leaves, are ciphertext; where the operating system holds no key (Linux `basic_text`) it stays plain and the dashboard says so. **Today:** not yet built — only the account boundary, on Windows, macOS and Linux alike. **Not covered:** anyone signed in as the same user, malware running as them, and a same-account rollback of the file from a backup, which still brings deleted check-ins back; a separate account for the person is the boundary (README). | #175 | Decided (KV-175): encrypted with the operating system's key, where it holds one; #175 to build. Anyone on the same login, and malware, remain a limit |
 | T8 | The renderer is compromised (a bug, a malicious dependency) and reaches the camera, the key's use or the history | Malicious code in the page | Sandbox, one page, IPC answered only for it, every handler through one checked wrapper, enforced by lint (KV-29). | #29 | Done |
 | T9 | A malicious release reaches installs through the update channel or a dependency | Supply-chain attacker | **Today:** Electron and the SDK pinned exactly, each bump alone and launched before merge (KV-131, KV-145). **Not yet:** signed installers and signed updates, which wait on there being an installer and an update channel (#19); which dependencies may run install scripts (#147); and the caregiver app's native shell and its plugins — code on the phone holding the viewer's keys — pinned and reviewed, with its web code kept in the signed bundle (KV-34, #179). | #19, #147, #179 | Partly done; open on #19, #147, #179 |
 | T10 | **The SDK's own traffic reveals the routine:** the licence meter carries each session's times and per-metric datapoint counts to the vendor, today, whatever Kinvue builds | The SDK vendor; whoever breaches it | Not mitigable in the app: a capture cannot run without it (KV-65). Established from the runtime's own schema, not by decrypting the traffic; *when* each report is sent is only partly known, but a report carrying the session's times says when the check-in happened whenever it arrives. `README.md` says so. Whether a third party receiving it is acceptable, and what users must be told, is a legal question. | #35 | **Accepted, disclosed; → #35** |
 | T11 | The pain note, the most personal field, reaches people the person did not mean it for | Any viewer | Off by default; turned on per viewer by the person; the note field says who will read it as they type (KV-32). | #31, #37, #40 | Decided |
 | T12 | Data the person deleted, or withdrew, survives elsewhere | Any copy holder | Deletion travels as a tombstone; a revoked viewer's app deletes its copy on next contact, and one that never reconnects keeps it — a limit; partial deletion is tested as a flow because it looks like success. | #21, #45, #175 | Decided (KV-21: a tombstone wins over a copy coming back through restore or sync); #21, #45 to build. A rollback of the store file restores records and tombstones together — T7's limit |
 | T13 | **A delivered card is altered, fabricated, replayed or dropped**, so a viewer reads a day that did not happen, or misses one that did | The relay; a network attacker; whoever breaches the relay | A per-viewer envelope — viewer id, stream number, previous envelope's hash, record — signed by the check-in device (Ed25519) and verified on the viewer's device before it is shown, so drops, renumbering, replays and reordering show, and a gap is shown as one (with #44); the pairing code derived from all four public keys; the daily summary composed from verified records only (KV-33). **Rests on the check-in device's signing key**, which is protected only as T7's data is: malware running as the person can sign forgeries. | #33, #39, #40, #42, #43, #175 | Decided; rests on #175 |
-| T14 | **The check-in device is lost, broken, wiped or replaced**, and with it every share's authority: nothing can be revoked, and the person cannot see who still holds their check-ins | Accident; theft | A printed recovery card that can see who has access and end every share, never approve anyone new; using it is delayed 72 hours and announced to every viewer, and can be cancelled from the check-in device if it still exists, so a card misused to cut the person off alerts every caregiver instead of silencing them (KV-33). A replacement device starts fresh, each viewer approved again at it. **The history is recovered only if it was exported:** a restored export brings back the history and its baseline as of that export (KV-21); without one it goes with the device, or a backup (#175), and the baseline restarts from zero. | #33, #40, #45, #21 | Decided; #40, #45 to build; history loss a limit, unless exported (KV-21) |
+| T14 | **The check-in device is lost, broken, wiped or replaced**, and with it every share's authority: nothing can be revoked, and the person cannot see who still holds their check-ins | Accident; theft | A printed recovery card that can see who has access and end every share, never approve anyone new; using it is delayed 72 hours and announced to every viewer, and can be cancelled from the check-in device if it still exists, so a card misused to cut the person off alerts every caregiver instead of silencing them (KV-33). A replacement device starts fresh, each viewer approved again at it. **The history is recovered only if it was exported:** a restored export brings back the history and its baseline as of that export (KV-21); without one it goes with the device — a backup of the encrypted file cannot be read under another account or on another machine (KV-175) — and the baseline restarts from zero. | #33, #40, #45, #21 | Decided; #40, #45 to build; history loss a limit, unless exported (KV-21) |
 | T15 | **The SmartSpectra API key at rest.** In development it is plain text in `.env`, beside `sessions.json`; a packaged install has no route to a key yet. A stolen key means vendor account abuse and billing, and reaches the metered record of when check-ins happen (T10) | The same actors as T7 | **Today**, only the operating system's account boundary, as for T7. How a packaged install receives and holds its key is #19's, and it is a data-at-rest question in the same sense as #175's. | #19, #175 | **Gap → #19** |
-| T16 | **An exported history, read where it was put.** A complete, identified physiological history in plain JSON, copied by the person to a USB stick, a synced folder or an email (KV-21) — outside `userData`, so outside even T7's account boundary | Whoever finds or receives the file; the services it passes through | The screen that makes an export says it is the whole history, unprotected, and that it should be kept as carefully as the device. Restoring never deletes, so a file altered on its way can add check-ins, which are checked, but cannot remove any (review of #185). Whether an export is encrypted with a passphrase the person chooses is a question for #175, beside the store's own protection at rest. | #21, #175 | **A limit**; encryption → #175 |
+| T16 | **An exported history, read where it was put.** A complete, identified physiological history in plain JSON, copied by the person to a USB stick, a synced folder or an email (KV-21) — outside `userData`, so outside even T7's account boundary | Whoever finds or receives the file; the services it passes through | The screen that makes an export says it is the whole history, unprotected, and that it should be kept as carefully as the device. Restoring never deletes, so a file altered on its way can add check-ins, which are checked, but cannot remove any (review of #185). **Decided (KV-175):** an optional passphrase (scrypt, then AES-256-GCM), the container keeping its `kind` with its `version` raised, so a build that knows no protection says the file is newer. **Today:** every export is plain, and its screen says so. | #21, #175 | Decided (KV-175): an optional passphrase; #175 to build. A plain export remains a limit, said on its screen |
 
 Four of these are the ones most likely to be argued with. **T10 is live now**, not a Phase 5
 risk: the vendor already receives when each check-in happened. **T2, T7 and T15 are the

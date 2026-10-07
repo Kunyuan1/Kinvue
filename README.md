@@ -391,7 +391,12 @@ them checkable:
   - **"Deleted" means gone from the app, not from the disk.** The old file's blocks are
     released, not overwritten, and the operating system's own backups (File History, Time
     Machine, a sync client) keep what they kept: restoring `sessions.json` from one brings
-    deleted check-ins back. Protection at rest is #175's.
+    deleted check-ins back. Encrypting the history at rest (#175, decided, not yet built)
+    will not change that: a backup restored under the same account opens as the app does.
+- **On a shared computer, give the person their own account.** Nothing in this app can
+  tell who is at the keyboard: anyone signed in as the same user can read, export or
+  delete the history, and encryption at rest (#175) does not change that, since the
+  operating system opens it for whoever is signed in. A separate account is the boundary.
 - **Opt-in by design.** Capture runs only when someone presses the button. There is no
   background monitoring and no always-on camera.
 
