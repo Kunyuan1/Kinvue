@@ -21,9 +21,8 @@ import { parseRemoval, type RestoreResult, type RestoreStep } from "@core/sessio
 import {
   isProtected,
   MIN_PASSPHRASE_LENGTH,
+  passphraseLength,
   protect,
-  unprotect,
-  type ProtectedExport,
 } from "@core/session/protect";
 import { DEMO_PERSON_ID, seedDemoHistory } from "@core/seed/persona";
 import { createGuidanceGate } from "@core/capture/guidance";
@@ -37,6 +36,7 @@ import {
 } from "./capture-length";
 import { loadDotEnv } from "./env";
 import { exportFileName, readExport } from "./history-file";
+import { protectedRestores } from "./protected-restore";
 import { localStateHoldsKey, osCipher, protectionOf } from "./cipher";
 import { captureVitals } from "./vitals";
 import { ERR_ABORTED, loadFailureMessage, showWhenReady } from "./window-show";
@@ -381,25 +381,16 @@ function registerIpc(store: SessionStore, protection: () => Promise<Protection>)
   // A passphrase is checked here as well as on screen: it is the whole defence
   // of a protected export (KV-175), so main does not take the renderer's word.
   const passphraseFor = (channel: string, passphrase: unknown): string => {
-    if (typeof passphrase !== "string" || passphrase.length < MIN_PASSPHRASE_LENGTH) {
+    if (typeof passphrase !== "string" || passphraseLength(passphrase) < MIN_PASSPHRASE_LENGTH) {
       throw new Error(
         `${channel} needs a passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters.`,
       );
     }
     return passphrase;
   };
-  // A protected export waiting for its passphrase (KV-175): held here, so the
-  // renderer is never handed the file, and dropped once restored or cancelled.
-  let waiting: { personId: string; file: ProtectedExport } | null = null;
-  // Passphrase tries, one at a time (review of #187): each is about a second of
-  // scrypt and 128 MiB, and a renderer — compromised, T8 — sending many at once
-  // would otherwise run them all together, against main's memory.
-  let unlocking: Promise<unknown> = Promise.resolve();
-  const oneAtATime = <T>(work: () => Promise<T>): Promise<T> => {
-    const run = unlocking.then(work, work);
-    unlocking = run.catch(() => undefined);
-    return run;
-  };
+  // A protected export waiting for its passphrase (KV-175), and the tries at
+  // it, one at a time: see `protectedRestores`.
+  const waiting = protectedRestores();
 
   // KV-175. Where the history's protection stands, for the line that says so:
   // what the file on disk is, not what the key is (review of #187). A query, so
@@ -473,10 +464,10 @@ function registerIpc(store: SessionStore, protection: () => Promise<Protection>)
         return { ok: false, refusal: { kind: "unopenable", code: file.code } };
       }
       if (isProtected(file.contents)) {
-        waiting = { personId: id, file: file.contents };
+        waiting.hold(event.sender, id, file.contents);
         return { needsPassphrase: true };
       }
-      waiting = null;
+      waiting.letGo();
       const plan = await store.restore(id, file.contents);
       // The outcome, not the merged history: the screen reads the history the
       // way it always does.
@@ -491,23 +482,8 @@ function registerIpc(store: SessionStore, protection: () => Promise<Protection>)
       if (typeof passphrase !== "string") {
         throw new Error("history:restoreProtected needs a passphrase.");
       }
-      return oneAtATime(async () => {
-        // Asked once its turn comes: a try queued behind one that restored
-        // finds nothing waiting, and says so.
-        if (waiting === null || waiting.personId !== id) {
-          throw new Error("history:restoreProtected has no protected file waiting.");
-        }
-        const opened = await unprotect(waiting.file, passphrase);
-        if (!opened.ok) {
-          // A wrong passphrase keeps the file waiting for another try.
-          if (opened.why === "wrong-passphrase") {
-            return { ok: false, refusal: { kind: "wrong-passphrase" } };
-          }
-          waiting = null;
-          return { ok: false, refusal: { kind: "unreadable", why: opened.detail } };
-        }
-        waiting = null;
-        const plan = await store.restore(id, opened.contents);
+      return waiting.unlock(id, passphrase, async (contents) => {
+        const plan = await store.restore(id, contents);
         return plan.ok
           ? { ok: true, outcome: plan.outcome }
           : { ok: false, refusal: plan.refusal };
@@ -516,7 +492,7 @@ function registerIpc(store: SessionStore, protection: () => Promise<Protection>)
   );
 
   handle("history:cancelRestore", (): void => {
-    waiting = null;
+    waiting.letGo();
   });
 
   handle(
@@ -599,7 +575,7 @@ void app.whenReady().then(async () => {
     }
     return (await store.atRest()) !== "plain";
   };
-  if (cipher.holdsKey) {
+  const sealUntilItHolds = async (): Promise<void> => {
     if (!(await cipher.keyLanded())) {
       try {
         safeStorage.encryptString("kinvue");
@@ -612,21 +588,20 @@ void app.whenReady().then(async () => {
     // that — then every thirty. Meanwhile the dashboard says the history is not
     // yet encrypted, because it reads the file; and any write once the key is
     // down is sealed anyway, timer or not.
-    if (!(await settled())) {
-      let tries = 0;
-      const again = (): void => {
-        tries += 1;
-        setTimeout(
-          () =>
-            void settled().then((done) => {
-              if (!done) again();
-            }),
-          tries <= 60 ? 2000 : 30_000,
-        );
-      };
-      again();
-    }
-  }
+    if (await settled()) return;
+    let tries = 0;
+    const again = (): void => {
+      tries += 1;
+      setTimeout(
+        () =>
+          void settled().then((done) => {
+            if (!done) again();
+          }),
+        tries <= 60 ? 2000 : 30_000,
+      );
+    };
+    again();
+  };
 
   registerIpc(store, protection);
   createWindow();
@@ -634,6 +609,17 @@ void app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  // The seal starts only once the window is up (review of #187). Sealing calls
+  // `safeStorage` synchronously, and on macOS — or a locked Linux keyring — that
+  // waits on the key store's own prompt, which must have the app's window behind
+  // it, not a hung app with none. Best-effort, as above: the store queues its
+  // writes, so a seal landing now cannot race a check-in's.
+  if (cipher.holdsKey) {
+    void sealUntilItHolds().catch((err: unknown) => {
+      console.error("The history could not be encrypted.", err);
+    });
+  }
 });
 
 app.on("window-all-closed", () => {

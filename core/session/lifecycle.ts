@@ -115,6 +115,16 @@ export const EXPORT_VERSION = 1
  */
 export const MIN_PASSPHRASE_LENGTH = 8
 
+/**
+ * How long a passphrase is, as `MIN_PASSPHRASE_LENGTH` counts it: characters
+ * once NFC-normalised — what scrypt is given — not UTF-16 units (review of
+ * #187). Counted that way, four emoji were eight, and eight decomposed accented
+ * letters were sixteen and became eight before scrypt saw them. One rule, here,
+ * for the screen, the main process and `protect` alike.
+ */
+export const passphraseLength = (passphrase: string): number =>
+  [...passphrase.normalize('NFC')].length
+
 /** A person's history as it is exported: restorable by `planRestore`. */
 export interface HistoryExport {
   kind: typeof EXPORT_KIND

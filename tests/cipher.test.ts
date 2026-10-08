@@ -7,8 +7,16 @@ import {
   localStateHoldsKey,
   osCipher,
   protectionOf,
+  reachable,
   type SafeStorageLike,
 } from '../app/main/cipher'
+import {
+  createJsonSessionStore,
+  LockedStoreError,
+  UndecryptableStoreError,
+} from '@core/session/store'
+import { classifyDashboardError } from '@core/capture/failure'
+import { session } from './helpers'
 
 /**
  * Which key store counts as one (KV-175, review of #186), against a stand-in
@@ -101,6 +109,49 @@ describe('the key on disk before anything is sealed (KV-175)', () => {
     expect(await cipher.keyLanded()).toBe(false)
     expect(cipher.holdsKey).toBe(false)
     expect(cipher.encrypts).toBe(false)
+  })
+})
+
+describe('a sealed history meeting basic_text on Linux (review of #187)', () => {
+  it('is reachable, so it is never "locked", while it still never seals', () => {
+    const basic = storage({ getSelectedStorageBackend: () => 'basic_text' })
+    expect(reachable(basic, 'linux')).toBe(true)
+    expect(reachable(storage({ getSelectedStorageBackend: () => 'unknown' }), 'linux')).toBe(false)
+    expect(reachable(storage({ isEncryptionAvailable: () => false }), 'win32')).toBe(false)
+    const cipher = osCipher(basic, 'linux', async () => true)
+    expect(cipher.available()).toBe(true)
+    expect(cipher.holdsKey).toBe(false)
+  })
+
+  it('will not open here, with set-aside offered, rather than locked forever', async () => {
+    // Sealed under a keyring; then the keyring is gone and basic_text answers,
+    // with a key that is not the one that sealed it.
+    const dir = mkdtempSync(join(tmpdir(), 'kinvue-basic-'))
+    try {
+      const path = join(dir, 'sessions.json')
+      const keyring = osCipher(storage(), 'linux', async () => true)
+      expect(await keyring.keyLanded()).toBe(true)
+      await createJsonSessionStore(path, undefined, keyring).append(session({ id: 'a' }))
+      const basic = osCipher(
+        storage({
+          getSelectedStorageBackend: () => 'basic_text',
+          decryptString: () => {
+            throw new Error('not this key')
+          },
+        }),
+        'linux',
+        async () => true,
+      )
+      const store = createJsonSessionStore(path, undefined, basic)
+      const listed = await store.list('test-person').catch((e: unknown) => e)
+      expect(listed).toBeInstanceOf(UndecryptableStoreError)
+      expect(listed).not.toBeInstanceOf(LockedStoreError)
+      expect(classifyDashboardError(listed)).toBe('store-undecryptable')
+      // The way out exists: the file is set aside, kept, and a new history starts.
+      expect(await store.startNewHistory()).not.toBeNull()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })
 

@@ -1880,7 +1880,17 @@ export (T16) is the same history outside even that boundary.
   program holds the file), and the app must not say "encrypted" over a plain file. The
   seal is tried until it holds — every two seconds at first, then every thirty, never
   given up — and any write once the key is down is sealed anyway. Asking where
-  protection stands changes nothing: the seal is the main process's own timer's to make.
+  protection stands changes nothing: the seal is the main process's own timer's to make,
+  and it starts only once the window is up, so a key store's prompt — the macOS
+  Keychain, a locked Linux keyring — has the app behind it rather than a hung app with
+  none.
+- **A sealed history is never written plain again** (second review of #187). Whether a
+  write is sealed is decided from the file as well as the key: over a file that is
+  sealed, every write is sealed, whatever the cipher says at that moment. `encrypts` can
+  go false for reasons that are nothing to do with the file — `Local State` caught
+  mid-rewrite, the key not yet looked for since this start — while the key in the
+  process still opens what is there; written plain then, the whole history would land on
+  disk in the clear. If the cipher cannot seal, nothing is written at all.
 - **A history that cannot be opened is one of two things, and they are not said alike**
   (review of #186). `safeStorage` fails the same way for a key that is not this account's
   and for a key it cannot reach *right now* — a Linux keyring not yet unlocked this
@@ -1892,12 +1902,15 @@ export (T16) is the same history outside even that boundary.
     backend of `unknown` — : "This history is encrypted, and this computer's key store is
     not available just now — it may be locked. Nothing has been changed; it should open
     once it is." Retryable, and **no** *Start a new history* under it.
-  - **The key store answered, and the file still would not open**: "This history could not
-    be opened with this account's key. It may have been encrypted for another account or
-    computer, or that key may be gone — after a password reset, a history can be readable
-    nowhere." Only then is *Start a new history* offered, keeping the file byte for byte
-    beside the new one (KV-98), and the sentence says moving computers is what restoring
-    an export is for.
+  - **The key store answered, and the file still would not open** — which includes, on
+    Linux, `basic_text` meeting a history sealed under a keyring (second review of #187):
+    an answer, with a key that was never the one that sealed it, so not "locked", which
+    would have refused the way out for good. "This history could not be opened with this
+    account's key. It may have been encrypted for another account or computer, or that
+    key may be gone — after a password reset, a history can be readable nowhere." Only
+    then is *Start a new history* offered, keeping the file byte for byte beside the new
+    one (KV-98), and the sentence says moving computers is what restoring an export is
+    for.
 
   On macOS the two may not be told apart — a Keychain that refuses a prompt can look like
   an answer — so there the second sentence also says that if the computer's key store was

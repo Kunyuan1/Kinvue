@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 import { ESLint } from 'eslint'
 
 /**
@@ -24,6 +24,15 @@ async function reported(source: string, filePath: string): Promise<string[]> {
 }
 
 const SAYS = 'must not import from app/main'
+
+beforeAll(async () => {
+  // ESLint resolves the config on the first lint, not in its constructor, and
+  // that load is most of this file's time. Taken here, under its own timeout,
+  // as `lint-boundary.test.ts` does, so it cannot push whichever case runs
+  // first past Vitest's 5 s default and read as the guard breaking (review of
+  // #187: it did, once).
+  await reported('', 'app/preload/__probe__.ts')
+}, 30_000)
 
 describe('the bridge and the page import nothing from app/main', () => {
   const refused: [where: string, source: string][] = [

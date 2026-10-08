@@ -233,11 +233,31 @@ describe('atRest: what is on disk, read without opening it (review of #187)', ()
       '{ not json',
       '[]',
       JSON.stringify({ version: 1, sessions: [], removed: [{ id: 'x' }] }),
+      // A person's id and a time, plain, with no check-ins (review of #187).
+      JSON.stringify({ version: 1, sessions: [], lastExported: { 'test-person': 'x' } }),
+      JSON.stringify({ version: 1, sessions: [], laterField: true }),
       JSON.stringify({ kind: 'kinvue-history', version: 2, protection: {}, sealed: 'abc' }),
     ]) {
       await writeFile(path, text, 'utf8')
       expect(await at(), text).toBe('plain')
     }
+  })
+
+  it('seals a history holding only when it was exported, not calling it nothing', async () => {
+    const path = await storePath()
+    await writeFile(
+      path,
+      JSON.stringify({
+        version: 1,
+        sessions: [],
+        lastExported: { 'test-person': ON().toISOString() },
+      }),
+      'utf8',
+    )
+    const store = createJsonSessionStore(path, ON, cipherFor('mine'))
+    expect(await store.encryptAtRest()).toBe(true)
+    expect(await store.atRest()).toBe('sealed')
+    expect(await readFile(path, 'utf8')).not.toContain('test-person')
   })
 
   it('stays plain where the cipher does not encrypt yet, until a write after it does', async () => {
@@ -254,6 +274,38 @@ describe('atRest: what is on disk, read without opening it (review of #187)', ()
     expect(await store.atRest()).toBe('plain')
     expect(await store.encryptAtRest()).toBe(true)
     expect(await store.atRest()).toBe('sealed')
+  })
+})
+
+describe('a sealed history is never written plain again (review of #187)', () => {
+  it('seals every write over a sealed file, though the cipher says it does not', async () => {
+    // The key not looked for yet since this start, or `Local State` caught
+    // mid-rewrite: `encrypts` false while the key in hand still opens the file.
+    const path = await storePath()
+    await createJsonSessionStore(path, ON, cipherFor('mine')).append(session({ id: 'first' }))
+    const unsure: StoreCipher = { ...cipherFor('mine'), encrypts: false }
+    const store = createJsonSessionStore(path, ON, unsure)
+    await store.append(noted)
+    await store.markExported('test-person', ON())
+    await store.remove('test-person', { kind: 'one', id: 'first' }, ON())
+    expect(await store.atRest()).toBe('sealed')
+    expect(await readFile(path, 'utf8')).not.toContain('left hip')
+    expect((await store.list('test-person')).map((r) => r.id)).toEqual(['noted'])
+  })
+
+  it('writes nothing, rather than plain, when the cipher cannot seal', async () => {
+    const path = await storePath()
+    await createJsonSessionStore(path, ON, cipherFor('mine')).append(session({ id: 'first' }))
+    const before = await readFile(path, 'utf8')
+    const cannot: StoreCipher = {
+      ...cipherFor('mine'),
+      encrypts: false,
+      seal: () => {
+        throw new Error('no key')
+      },
+    }
+    await expect(createJsonSessionStore(path, ON, cannot).append(noted)).rejects.toThrow('no key')
+    expect(await readFile(path, 'utf8')).toBe(before)
   })
 })
 

@@ -1219,14 +1219,51 @@ describe('encryption at rest and protected exports (KV-175)', () => {
 
   it('says encryption is being set up until the file is sealed, then that it is', async () => {
     listSessions.mockResolvedValue(days())
-    historyProtection.mockResolvedValueOnce('not-yet-encrypted').mockResolvedValue('encrypted')
+    // Answered from the file's state, not in call order: the line is asked at
+    // start, on each reload of the list, and on a timer.
+    let state: 'not-yet-encrypted' | 'encrypted' = 'not-yet-encrypted'
+    historyProtection.mockImplementation(async () => state)
     render(<App />)
     expect(
       await screen.findByText(/Encryption with this computer's key is being set up/),
     ).toBeTruthy()
+    state = 'encrypted'
     expect(
       await screen.findByText(/Kept encrypted with this computer's key/, {}, { timeout: 5000 }),
     ).toBeTruthy()
+  })
+
+  it('asks again after "encrypted", and when the list is reloaded', async () => {
+    // "Encrypted" is not final (review of #187): a new history, or a file that
+    // changed, must not leave the line saying it.
+    listSessions.mockResolvedValue(days())
+    let state: 'not-yet-encrypted' | 'encrypted' = 'encrypted'
+    historyProtection.mockImplementation(async () => state)
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      render(<App />)
+      expect(await screen.findByText(/Kept encrypted with this computer's key/)).toBeTruthy()
+      state = 'not-yet-encrypted'
+      await vi.advanceTimersByTimeAsync(30_000)
+      expect(
+        await screen.findByText(/Encryption with this computer's key is being set up/),
+      ).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('asks again when the list is reloaded, as after a deletion', async () => {
+    listSessions.mockResolvedValue(days())
+    historyProtection.mockResolvedValue('encrypted')
+    removeCheckIns.mockResolvedValue(1)
+    render(<App />)
+    await screen.findByText(/Kept encrypted with this computer's key/)
+    const asked = historyProtection.mock.calls.length
+    fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+    fireEvent.click(screen.getByText('Delete'))
+    await screen.findByText(/Deleted 1 check-in/)
+    expect(historyProtection.mock.calls.length).toBeGreaterThan(asked)
   })
 
   it('exports with a passphrase only once it is long enough and typed the same twice', async () => {
@@ -1239,6 +1276,9 @@ describe('encryption at rest and protected exports (KV-175)', () => {
     expect(protectedButton().disabled).toBe(true)
 
     fireEvent.change(screen.getByLabelText('Passphrase'), { target: { value: 'short' } })
+    expect(screen.getByText('A passphrase needs at least 8 characters.')).toBeTruthy()
+    // Eight UTF-16 units, four characters (review of #187).
+    fireEvent.change(screen.getByLabelText('Passphrase'), { target: { value: '😀😀😀😀' } })
     expect(screen.getByText('A passphrase needs at least 8 characters.')).toBeTruthy()
     fireEvent.change(screen.getByLabelText('Passphrase'), { target: { value: 'blue kettle' } })
     fireEvent.change(screen.getByLabelText('The same passphrase again'), {

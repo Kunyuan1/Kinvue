@@ -203,6 +203,12 @@ function Dashboard(): React.JSX.Element {
 
   const refresh = useCallback(async (): Promise<void> => {
     setSessions(await window.kinvue.listSessions(DEMO_PERSON_ID))
+    // The file just read may not be the one the protection line described — a
+    // new history started, a restore written (review of #187) — so it is asked
+    // again here. Not worth a screen: the line is all it feeds.
+    window.kinvue.historyProtection().then(setProtection, (e: unknown) => {
+      console.error('Could not read whether the history is encrypted.', e)
+    })
     // A list that loaded is the current state of the screen, so an earlier
     // failure to load it is no longer true (KV-95 review). The post-submit
     // sentence is set only after its own refresh has failed, so this never
@@ -247,8 +253,9 @@ function Dashboard(): React.JSX.Element {
 
   // KV-175. Where the history's protection stands — asked again every few
   // seconds while the file is still plain, so the line moves to "encrypted"
-  // once the seal lands on disk, and stops asking then. Asking changes nothing
-  // in main (review of #187).
+  // once the seal lands on disk, and every thirty after that: "encrypted" is
+  // not taken as final, so the line cannot go on saying it over a file that has
+  // changed (review of #187). Asking changes nothing in main.
   useEffect(() => {
     let stopped = false
     let timer: ReturnType<typeof setTimeout> | undefined
@@ -257,7 +264,7 @@ function Dashboard(): React.JSX.Element {
         (now) => {
           if (stopped) return
           setProtection(now)
-          if (now === 'not-yet-encrypted') timer = setTimeout(ask, 3000)
+          timer = setTimeout(ask, now === 'not-yet-encrypted' ? 3000 : 30_000)
         },
         (e: unknown) => console.error('Could not read whether the history is encrypted.', e),
       )

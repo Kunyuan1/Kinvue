@@ -37,6 +37,19 @@ export function holdsAKey(storage: SafeStorageLike, platform: NodeJS.Platform): 
 }
 
 /**
+ * Whether the key store can be reached right now — a narrower question than
+ * `holdsAKey` (review of #187). On Linux, `basic_text` is reachable: it is an
+ * answer, with a key that was never the one that sealed a history, so a sealed
+ * history meeting it "will not open here" — set-aside offered — rather than
+ * "locked, ask again later", which never would. Only `unknown`, asked before
+ * `ready`, is not an answer yet.
+ */
+export function reachable(storage: SafeStorageLike, platform: NodeJS.Platform): boolean {
+  if (!storage.isEncryptionAvailable()) return false
+  return platform !== 'linux' || storage.getSelectedStorageBackend() !== 'unknown'
+}
+
+/**
  * Whether Chromium has written `safeStorage`'s key to the `Local State` file at
  * `path` — on Windows, where it lives, DPAPI-wrapped, as `os_crypt.encrypted_key`.
  * Read fresh each time it is asked, until the cipher has seen it there once;
@@ -104,7 +117,9 @@ export function osCipher(
       if (holds && !landed) landed = await keyOnDisk()
       return holds && landed
     },
-    available: () => holdsAKey(storage, platform),
+    // Reachable, not "holds a real key": see `reachable`. Whether to seal is
+    // `holdsKey`'s question; whether a sealed file is locked or foreign is this.
+    available: () => reachable(storage, platform),
     // A dismissed Keychain prompt can fail like a key that is not ours.
     lockedLooksLikeForeign: platform === 'darwin',
     seal: (text) => storage.encryptString(text).toString('base64'),

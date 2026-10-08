@@ -3,6 +3,7 @@ import { exportOf, planRestore } from '@core/session/lifecycle'
 import {
   isProtected,
   MIN_PASSPHRASE_LENGTH,
+  passphraseLength,
   protect,
   PROTECTED_EXPORT_VERSION,
   unprotect,
@@ -120,6 +121,48 @@ describe('protect and unprotect', () => {
     await expect(protect(file, 'x'.repeat(MIN_PASSPHRASE_LENGTH - 1))).rejects.toThrow(
       /at least 8 characters/,
     )
+  })
+
+  it('counts a passphrase as scrypt sees it: characters, after NFC (review of #187)', async () => {
+    // Four emoji are eight UTF-16 units; four decomposed accented letters are
+    // eight code points that NFC makes four. Neither is eight characters.
+    expect(passphraseLength('😀😀😀😀')).toBe(4)
+    expect(passphraseLength('e\u0301'.repeat(4))).toBe(4)
+    expect(passphraseLength('blue kettle')).toBe(11)
+    await expect(protect(file, '😀😀😀😀')).rejects.toThrow(/at least 8 characters/)
+    await expect(protect(file, 'e\u0301'.repeat(4))).rejects.toThrow(/at least 8 characters/)
+  })
+
+  it('says a damaged IV, tag or salt is damaged, not a wrong passphrase', async () => {
+    // Refused before scrypt, so this is quick; caught as a wrong passphrase, the
+    // right one would be retyped for ever (review of #187).
+    const good = {
+      kind: 'kinvue-history' as const,
+      version: PROTECTED_EXPORT_VERSION as typeof PROTECTED_EXPORT_VERSION,
+      sealed: 'AA==',
+    }
+    const header = {
+      kdf: 'scrypt' as const,
+      N: 2 ** 17,
+      r: 8,
+      p: 1,
+      cipher: 'aes-256-gcm' as const,
+      salt: Buffer.alloc(16).toString('base64'),
+      iv: Buffer.alloc(12).toString('base64'),
+      tag: Buffer.alloc(16).toString('base64'),
+    }
+    for (const damage of [
+      { iv: Buffer.alloc(8).toString('base64') },
+      { tag: Buffer.alloc(4).toString('base64') },
+      { salt: '' },
+    ]) {
+      const crafted: ProtectedExport = { ...good, protection: { ...header, ...damage } }
+      expect(await unprotect(crafted, PASSPHRASE), JSON.stringify(damage)).toEqual({
+        ok: false,
+        why: 'unreadable',
+        detail: 'its protection is damaged',
+      })
+    }
   })
 
   it('is refused as newer, not no export, by a restore with no protection', SLOW, async () => {

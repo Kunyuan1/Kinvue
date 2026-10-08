@@ -581,7 +581,16 @@ async function write(path: string, data: FileShape, cipher: StoreCipher): Promis
   const plain = JSON.stringify(data, null, 2)
   // Sealed where the cipher encrypts (KV-175), so the temporary file is
   // ciphertext too: what a crash or a deletion leaves on disk is never plain.
-  const text = cipher.encrypts
+  //
+  // And sealed, whatever the cipher says now, over a file that already is: a
+  // ratchet (review of #187). `encrypts` can go false for reasons that have
+  // nothing to do with the file — a `Local State` caught mid-rewrite, the key
+  // not yet looked for since this start — while the key in this process still
+  // opens what is there. Written plain then, the whole history would land on
+  // disk in the clear. If the cipher cannot seal, this throws, and nothing is
+  // written at all.
+  const seal = cipher.encrypts || (await atRest(path)) === 'sealed'
+  const text = seal
     ? JSON.stringify({ version: ENVELOPE_VERSION, sealed: cipher.seal(plain) }, null, 2)
     : plain
   await writeFile(tmp, text, 'utf8')
@@ -613,9 +622,15 @@ async function atRest(path: string): Promise<AtRest> {
   }
   if (!isObject(parsed)) return 'plain'
   if (isEnvelope(parsed)) return 'sealed'
-  const { sessions, removed } = parsed
+  // Nothing only if there is nothing else at all, decided from the whole file
+  // (review of #187): a version, an empty list of check-ins, and at most an
+  // empty list of deletions. Anything more — `lastExported`, holding a person's
+  // id, or a field a later build added — is something plain on disk.
   const none = (list: unknown): boolean => Array.isArray(list) && list.length === 0
-  return none(sessions) && (removed === undefined || none(removed)) ? 'nothing' : 'plain'
+  const nothing = Object.entries(parsed).every(([key, value]) =>
+    key === 'version' ? true : key === 'sessions' || key === 'removed' ? none(value) : false,
+  )
+  return nothing && none((parsed as { sessions?: unknown }).sessions) ? 'nothing' : 'plain'
 }
 
 /** How many same-day names to try before giving up with a sentence rather than hanging. */
@@ -822,10 +837,10 @@ export function createJsonSessionStore(
     },
     encryptAtRest() {
       return exclusive(async () => {
-        if (!cipher.encrypts || (await atRest(path)) === 'sealed') return false
+        // Only a plain file: a sealed one is done, and one holding nothing yet
+        // — by `atRest`'s whole-file reading — is sealed by its first write.
+        if (!cipher.encrypts || (await atRest(path)) !== 'plain') return false
         const data = await read(path, cipher)
-        // Nothing on disk yet: the first write will be sealed anyway.
-        if (data.sessions.length === 0 && data.removed === undefined) return false
         await write(path, data, cipher)
         return true
       })

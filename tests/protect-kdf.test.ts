@@ -22,10 +22,11 @@ const file: ProtectedExport = {
     N: 2 ** 17,
     r: 8,
     p: 1,
-    salt: 'AA==',
+    // Lengths a real file has, so the header passes and scrypt is reached.
+    salt: Buffer.alloc(16).toString('base64'),
     cipher: 'aes-256-gcm',
-    iv: 'AA==',
-    tag: 'AA==',
+    iv: Buffer.alloc(12).toString('base64'),
+    tag: Buffer.alloc(16).toString('base64'),
   },
   sealed: 'AA==',
 }

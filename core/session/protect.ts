@@ -1,7 +1,12 @@
 import { createCipheriv, createDecipheriv, randomBytes, scrypt } from 'node:crypto'
-import { EXPORT_KIND, MIN_PASSPHRASE_LENGTH, type HistoryExport } from './lifecycle'
+import {
+  EXPORT_KIND,
+  MIN_PASSPHRASE_LENGTH,
+  passphraseLength,
+  type HistoryExport,
+} from './lifecycle'
 
-export { MIN_PASSPHRASE_LENGTH }
+export { MIN_PASSPHRASE_LENGTH, passphraseLength }
 
 /**
  * An export protected with a passphrase the person chose (KV-175, T16). It
@@ -91,7 +96,7 @@ const additionalData = (file: Omit<ProtectedExport, 'sealed'>): Buffer => {
 
 /** `file` sealed with a key derived from `passphrase`. */
 export async function protect(file: HistoryExport, passphrase: string): Promise<ProtectedExport> {
-  if (passphrase.length < MIN_PASSPHRASE_LENGTH) {
+  if (passphraseLength(passphrase) < MIN_PASSPHRASE_LENGTH) {
     throw new Error(`A passphrase needs at least ${String(MIN_PASSPHRASE_LENGTH)} characters.`)
   }
   const salt = randomBytes(16)
@@ -165,9 +170,18 @@ export async function unprotect(file: ProtectedExport, passphrase: string): Prom
   ) {
     return { ok: false, why: 'unreadable', detail: 'its protection is not one this app knows' }
   }
+  // And each the length it must be, decoded (review of #187): a short IV or tag
+  // throws inside the decipher, and would be caught below as a wrong
+  // passphrase — so the right one would be retyped, and refused, for ever.
+  const saltBytes = Buffer.from(salt, 'base64')
+  const ivBytes = Buffer.from(iv, 'base64')
+  const tagBytes = Buffer.from(tag, 'base64')
+  if (saltBytes.length < 16 || ivBytes.length !== 12 || tagBytes.length !== 16) {
+    return { ok: false, why: 'unreadable', detail: 'its protection is damaged' }
+  }
   let key: Buffer
   try {
-    key = await deriveKey(passphrase, Buffer.from(salt, 'base64'), N, r, p)
+    key = await deriveKey(passphrase, saltBytes, N, r, p)
   } catch {
     // Not the passphrase's fault, and not to escape as an unclassified throw:
     // scrypt failing — memory it could not have — is said like any file that
@@ -175,9 +189,9 @@ export async function unprotect(file: ProtectedExport, passphrase: string): Prom
     return { ok: false, why: 'unreadable', detail: 'it could not be opened on this computer' }
   }
   try {
-    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(iv, 'base64'))
+    const decipher = createDecipheriv('aes-256-gcm', key, ivBytes)
     decipher.setAAD(additionalData(file))
-    decipher.setAuthTag(Buffer.from(tag, 'base64'))
+    decipher.setAuthTag(tagBytes)
     const text = Buffer.concat([
       decipher.update(Buffer.from(file.sealed, 'base64')),
       decipher.final(),
@@ -189,6 +203,7 @@ export async function unprotect(file: ProtectedExport, passphrase: string): Prom
       return { ok: false, why: 'unreadable', detail }
     }
   } catch {
+    // Only the tag is left to fail here, the header's lengths checked above.
     return { ok: false, why: 'wrong-passphrase' }
   }
 }

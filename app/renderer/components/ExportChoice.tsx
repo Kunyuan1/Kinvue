@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { MIN_PASSPHRASE_LENGTH } from '@core/session/lifecycle'
+import { MIN_PASSPHRASE_LENGTH, passphraseLength } from '@core/session/lifecycle'
 
 const BUTTON = 'rounded-lg border border-(--color-line) px-4 py-2 hover:bg-(--color-raised)'
 
@@ -27,9 +27,9 @@ export default function ExportChoice({
   const [passphrase, setPassphrase] = useState('')
   const [again, setAgain] = useState('')
   const [busy, setBusy] = useState(false)
-  const short = passphrase !== '' && passphrase.length < MIN_PASSPHRASE_LENGTH
+  const short = passphrase !== '' && passphraseLength(passphrase) < MIN_PASSPHRASE_LENGTH
   const differ = again !== '' && again !== passphrase
-  const ready = passphrase.length >= MIN_PASSPHRASE_LENGTH && again === passphrase
+  const ready = passphraseLength(passphrase) >= MIN_PASSPHRASE_LENGTH && again === passphrase
 
   const run = async (secret?: string): Promise<void> => {
     setBusy(true)
