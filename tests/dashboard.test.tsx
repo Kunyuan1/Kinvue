@@ -1370,6 +1370,25 @@ describe('encryption at rest and protected exports (KV-175)', () => {
     expect(deleteButton().disabled).toBe(false)
   })
 
+  it('shows a button that is off as off, in the history panel and the confirm screen', async () => {
+    // Disabled alone looked exactly like enabled, hover included, so the guards
+    // above could not be seen (found trying #187 by hand).
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    fireEvent.click(await screen.findByText(/Export history/))
+    fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+    fireEvent.click(screen.getByText('Export first'))
+    const panel = document.querySelector('section[aria-labelledby="history-heading"]')!
+    const confirm = screen.getByText('Delete').closest('div')!.parentElement!
+    const buttons = [...panel.querySelectorAll('button'), ...confirm.querySelectorAll('button')]
+    expect(buttons.length).toBeGreaterThan(5)
+    for (const button of buttons) {
+      expect(button.className, button.textContent ?? '').toMatch(/\bdisabled:opacity-50\b/)
+      expect(button.className, button.textContent ?? '').not.toMatch(/(^|\s)hover:/)
+    }
+    expect((screen.getByText('Delete') as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('will not export without a passphrase once one is typed', async () => {
     listSessions.mockResolvedValue(days())
     render(<App />)

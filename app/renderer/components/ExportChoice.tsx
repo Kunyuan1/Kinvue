@@ -1,7 +1,9 @@
 import { useId, useState } from 'react'
 import { MIN_PASSPHRASE_LENGTH, passphraseLength } from '@core/session/lifecycle'
 
-const BUTTON = 'rounded-lg border border-(--color-line) px-4 py-2 hover:bg-(--color-raised)'
+// Dimmed, with no hover, when disabled (KV-175): a guard that looks live is no guard.
+const BUTTON = 'rounded-lg border border-(--color-line) px-4 py-2' +
+  ' enabled:hover:bg-(--color-raised) disabled:cursor-not-allowed disabled:opacity-50'
 
 /**
  * Whether to protect an export with a passphrase (KV-175, T16), asked before

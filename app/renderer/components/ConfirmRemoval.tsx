@@ -3,7 +3,9 @@ import type { SessionRecord } from '@core/session/types'
 import { chosenFor, type Removal } from '@core/session/lifecycle'
 import ExportChoice from './ExportChoice'
 
-const BUTTON = 'rounded-lg border px-4 py-2 hover:bg-(--color-raised)'
+// Dimmed, with no hover, when disabled (KV-175): a guard that looks live is no guard.
+const BUTTON = 'rounded-lg border px-4 py-2' +
+  ' enabled:hover:bg-(--color-raised) disabled:cursor-not-allowed disabled:opacity-50'
 
 /** A moment on this device, for the confirm screen: "3 October, 23:40". */
 const moment = (instant: string): string =>

@@ -11,7 +11,9 @@ import type { Protection } from '../../shared/protection'
 import ConfirmRemoval from './ConfirmRemoval'
 import ExportChoice from './ExportChoice'
 
-const BUTTON = 'rounded-lg border border-(--color-line) px-4 py-2 hover:bg-(--color-raised)'
+// Dimmed, with no hover, when disabled (KV-175): a guard that looks live is no guard.
+const BUTTON = 'rounded-lg border border-(--color-line) px-4 py-2' +
+  ' enabled:hover:bg-(--color-raised) disabled:cursor-not-allowed disabled:opacity-50'
 
 /** What each state says, including what encryption here does not cover. */
 const PROTECTION: Record<Protection, string> = {
