@@ -5,10 +5,10 @@ import { describe, expect, it } from 'vitest'
  * The app loads the SDK's native runtime at startup (KV-145).
  *
  * The lighter check for an Electron bump — launch the app, see the window —
- * is enough only because of this: `app/main/index.ts` statically imports
- * `./vitals`, which statically imports `@smartspectra/node-sdk`, whose import
- * loads the native runtime through koffi. So a window on screen proves the
- * load. Defer either import — which CLAUDE.md's "defer a load somewhere else"
+ * is enough only because of this: `app/main/boot.ts` loads `./index` at start
+ * (KV-19), `app/main/index.ts` statically imports `./vitals`, which statically
+ * imports `@smartspectra/node-sdk`, whose import loads the native runtime
+ * through koffi. So a window on screen proves the load. Defer either import — which CLAUDE.md's "defer a load somewhere else"
  * could invite, for testing's sake — and the launch stops proving it while the
  * README still says it is enough. This fails first, so the rule is revisited
  * rather than silently weakened.
@@ -46,12 +46,24 @@ describe('the SDK is loaded when the app starts (KV-145)', () => {
     expect(source('app/main/index.ts')).toMatch(staticImport('captureVitals', './vitals'))
   })
 
-  it('is read from the file the build actually starts from', () => {
-    // Otherwise moving the entry to another file would leave the two tests
-    // above reading a stale one, green, while the launch stopped proving the
-    // load (review of #146). The first `lib.entry` in the config is main's.
+  it('is read from the files the build actually starts from', () => {
+    // Otherwise moving the entry to another file would leave the tests here
+    // reading a stale one, green, while the launch stopped proving the load
+    // (review of #146). Since KV-19 the app starts at `boot`, which sets where
+    // the runtime is and then loads `index`; both are main's entries.
     const config = source('electron.vite.config.ts')
-    const [main] = [...config.matchAll(/lib: \{ entry: resolve\(__dirname, '([^']+)'\) \}/g)]
-    expect(main?.[1]).toBe('app/main/index.ts')
+    expect(config).toContain("boot: resolve(__dirname, 'app/main/boot.ts')")
+    expect(config).toContain("index: resolve(__dirname, 'app/main/index.ts')")
+    expect(JSON.parse(source('package.json')).main).toBe('./out/main/boot.js')
+  })
+
+  it('is loaded by boot at start, before any window, never on demand (KV-19)', () => {
+    // `boot` reaches `index` by a dynamic import — the one way to run before the
+    // SDK's hoisted require — at the top level, so it runs at start. Inside a
+    // handler, it would load on demand, and a window would prove nothing. A
+    // failure there is said in a dialog and the app exits: no window either way.
+    const boot = source('app/main/boot.ts')
+    expect(boot).toMatch(/^import\(['"]\.\/index['"]\)/m)
+    expect(boot).toMatch(/app\.exit\(1\)/)
   })
 })

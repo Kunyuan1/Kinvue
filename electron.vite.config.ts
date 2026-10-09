@@ -17,7 +17,15 @@ export default defineConfig({
     resolve: { alias: { '@core': core } },
     build: {
       outDir: 'out/main',
-      lib: { entry: resolve(__dirname, 'app/main/index.ts') },
+      // Two entries (KV-19): `boot` runs first and sets where the SDK's native
+      // runtime is, then loads `index`. One bundle would hoist the SDK's
+      // require above it. See app/main/boot.ts.
+      lib: {
+        entry: {
+          boot: resolve(__dirname, 'app/main/boot.ts'),
+          index: resolve(__dirname, 'app/main/index.ts'),
+        },
+      },
     },
   },
   preload: {

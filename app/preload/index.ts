@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
 import type { Removal, RestoreResult, RestoreStep } from '@core/session/lifecycle'
 import type { Protection } from '../shared/protection'
+import type { CameraAccess } from '../shared/camera-access'
 import { fromCaptureReply } from '../shared/capture-reply'
 
 /**
@@ -52,6 +53,12 @@ const api = {
    * computer's key, waiting for that key to reach the disk, or no key store.
    */
   historyProtection: (): Promise<Protection> => ipcRenderer.invoke('store:protection'),
+
+  /** Whether Windows lets Kinvue use the camera at all (KV-19): the setup screen's question. */
+  cameraAccess: (): Promise<CameraAccess> => ipcRenderer.invoke('setup:camera'),
+
+  /** Opens Windows's camera privacy settings, where the switch is turned on. */
+  openCameraSettings: (): Promise<void> => ipcRenderer.invoke('setup:openCameraSettings'),
 
   /** When this person's history was last exported, or null for never (KV-21). */
   lastExported: (personId: string): Promise<string | null> =>

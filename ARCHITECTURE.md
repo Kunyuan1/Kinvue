@@ -798,9 +798,10 @@ code or call out to a remote origin.
 
 **The Electron security baseline** (KV-29), before the app is packaged (#19) or networked
 (Phase 5). The trust boundary is one decision, in `app/main/security.ts`, with no
-Electron import so the plain suite tests it: *Kinvue's own page* is the built
-`index.html`'s path on this machine (a `file:` URL with no host), and in development the
-dev server's `http(s)` origin. It is the only place the window may be and the only frame
+Electron import so the plain suite tests it: *Kinvue's own page* is the built page at
+`app://kinvue/index.html`, matched by protocol, host and path (KV-19; it was the built
+`index.html`'s `file:` path until then), and in development the dev server's `http(s)`
+origin. It is the only place the window may be and the only frame
 IPC is answered for, and the window loads exactly the URL it is checked against. A dev
 address that is not `http(s)` or a local file falls back to the built page and says so,
 rather than matching on an opaque origin, which once made every URL without one "ours"
@@ -810,8 +811,9 @@ rather than matching on an opaque origin, which once made every URL without one 
 every path electron-vite serves is "ours", Vite's `/@fs/` route to files on disk included.
 That is accepted because it is a developer's own machine running a developer's own server,
 and nothing is packaged from it; the built app, which is what anyone else runs, is pinned to
-one file. #19 replaces `file://` with a custom protocol (decided: `app://kinvue/`, under
-*Packaging and distribution*), and the dev branch is worth re-reading then.
+one file. #19 replaced `file://` with `app://kinvue/` (*Packaging and distribution*); the
+dev branch was re-read then and is unchanged — it is still the dev server's own origin, on
+a developer's machine, and nothing is packaged from it.
 
 Verified in the running
 app, dev and built, by driving the page over a debugging port: the sandboxed preload
@@ -839,8 +841,8 @@ Electron's security checklist, item by item:
 | 15 | No `shell.openExternal` on untrusted content | Done: not used. A future link out must pass a fixed allowlist, not a URL from the page. |
 | 16 | A current Electron | Done: pinned exactly, and each bump arrives alone and is launched before merge (KV-131; "How much to check before merging an Electron bump", KV-145). |
 | 17 | Validate the IPC sender | Done: every handler is registered through `handle()`, which answers only the main frame (by identity, `event.sender.mainFrame`) of Kinvue's own page. A lint rule over all of `app/main/` refuses any other use of `ipcMain` (`handle`, `handleOnce`, `on`, `once`, a renamed import, `electron.ipcMain`), and `tests/lint-main.test.ts` checks it still fires. |
-| 18 | Avoid `file://`, prefer a custom protocol | **Not done (decided, KV-19):** `app://kinvue/`, registered as privileged, with the checks matching protocol, host and path rather than an origin Node cannot give it. Until it is built, the page is `file://`, and the navigation and sender checks pin it to one exact path. |
-| 19 | Electron fuses | **Not done (decided, KV-19).** There is no packaged binary yet. When there is: run-as-node, `NODE_OPTIONS` and the inspector off; the app loaded only from its checked archive; cookies encrypted. The SDK's runtime sits outside that archive, which the check does not cover. |
+| 18 | Avoid `file://`, prefer a custom protocol | **Done (KV-19):** the built page is `app://kinvue/index.html`, registered as privileged (standard, secure), served from the built renderer and nothing else (`app/main/app-protocol.ts`), with the checks matching protocol, host and path rather than an origin Node cannot give it. Verified in the packaged app: the page cannot fetch `file://`, and a path climbing out of the renderer is a 404. |
+| 19 | Electron fuses | **Done (KV-19)** on the packaged binary, read back from it with `@electron/fuses`: run-as-node, `NODE_OPTIONS` and the inspector off; the app loaded only from its checked archive; cookies encrypted; no extra privileges for `file://`. The SDK's runtime sits outside that archive, which the check does not cover. |
 | 20 | Do not expose Electron APIs to untrusted content | Done: the preload exposes named calls only (above), never `ipcRenderer` itself. |
 
 **The SDK is a different matter, and this was wrong until a capture was measured.** The
@@ -2107,8 +2109,10 @@ from the owner:
   your camera* decides — so when that setting is off, the first-run screen says so and
   where to change it, before anyone sits down to a capture that cannot run.
 - **The installed app reads the history a development build wrote.** The same `userData`
-  folder (Windows does not tell `kinvue` from `Kinvue`), the same `Local State`, the same
-  account: what KV-175 encrypted opens. Checked when it is built, not assumed.
+  folder — the packaged `package.json` is named `kinvue` and has no `productName`, so it
+  is `%APPDATA%\kinvue` exactly, not merely a name Windows treats as equal — the same
+  `Local State`, the same account: what KV-175 encrypted opens. Checked when built: a
+  history the development build sealed opened in the packaged app, all of it.
 
 **What it costs.**
 - **A household registers with SmartSpectra once**, for the key.
@@ -2134,6 +2138,34 @@ from the owner:
    line, and `README.md`'s privacy section. It needs the owner's Artifact Signing account
    and its three credentials as repository secrets first — accounts this project cannot
    create for them.
+
+**Built: the installer (PR 1).** `npm run dist` builds `dist/Kinvue-Setup-<version>.exe`,
+about 157 MB, from `electron-builder.config.ts` — TypeScript, so `tsc` checks it against
+electron-builder's own types and `tests/packaging.test.ts` reads what the build reads.
+Found building it:
+
+- **The SDK's runtime path is set before anything imports the SDK, by an entry of its
+  own.** The SDK loads its runtime the moment it is imported, and the bundle hoists every
+  dependency's `require` above the module's own code, so a line in `index.ts` would have
+  run after the SDK had looked. `app/main/boot.ts` is the main process's first code: it
+  sets `SMARTSPECTRA_CAPI_PATH` in a packaged build, then loads `index.ts`, and says so in
+  a dialog if that fails rather than leaving no window and no word.
+- **electron-builder only finds a config named `electron-builder.<ext>`,** and builds with
+  its defaults when it finds none — an installer named `kinvue`, natives rebuilt, no fuses
+  — saying nothing. `npm run dist` names the file, and the test holds that.
+- **koffi ships its native module for eighteen platforms;** only Windows x64's is packed.
+- **The first-run screen** (`SetupScreen.tsx`) is shown whenever one of Windows's three
+  camera switches is off, read from where Windows keeps them, not only on the first run,
+  and "Take a reading" asks again before a capture starts. The check-ins can still be read
+  past it.
+
+Checked in the packaged app (`dist/win-unpacked`, against copies of the real history): the
+page at `app://kinvue/index.html` with the origin `app://kinvue`, its bundle loaded under
+the CSP, IPC answered, the history listed, the camera read as allowed; the fuses read back
+from the binary; and a history the development build had sealed opened, whole. **Not
+checked: running the installer itself,** which installs for the account it runs in and
+would open the real history there, and a camera switch turned off, which is a system
+setting — both covered only by tests.
 
 ### What must hold before real check-ins are stored
 

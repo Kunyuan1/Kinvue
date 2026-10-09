@@ -8,8 +8,11 @@ import {
   dialog,
   ipcMain,
   nativeImage,
+  net,
+  protocol,
   safeStorage,
   session,
+  shell,
   type IpcMainInvokeEvent,
 } from "electron";
 import { scoreSession } from "@core/scoring";
@@ -36,6 +39,8 @@ import {
 } from "./capture-length";
 import { loadDotEnv } from "./env";
 import { exportFileName, readExport } from "./history-file";
+import { APP_PAGE_URL, APP_SCHEME, appFileFor } from "./app-protocol";
+import { cameraAccess, readWindowsSwitch, type CameraAccess } from "./camera-access";
 import { protectedRestores } from "./protected-restore";
 import { localStateHoldsKey, osCipher, protectionOf } from "./cipher";
 import { captureVitals } from "./vitals";
@@ -87,13 +92,22 @@ if (!app.isPackaged) {
  */
 const { page, problem: pageProblem } = resolveAppPage(
   process.env.ELECTRON_RENDERER_URL,
-  pathToFileURL(join(__dirname, "../renderer/index.html")).href,
+  APP_PAGE_URL,
 );
 
 // Every renderer sandboxed, this window's and any other that ever exists: the
 // preload needs only `contextBridge` and `ipcRenderer`, which a sandboxed
 // preload keeps. Before `ready`, as Electron requires.
 app.enableSandbox();
+
+// KV-19. The built page's own scheme, in place of `file://` (Electron's
+// checklist item 18), registered before `ready` as Electron requires: standard,
+// so the page has an origin and `'self'` in its CSP matches its own bundle, and
+// secure, as `file://` was. What it serves is `appFileFor`'s; what is "our
+// page" is still `security.ts`'s, by protocol, host and path.
+protocol.registerSchemesAsPrivileged([
+  { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
+]);
 
 // Whatever web contents exist, created now or later: the window stays on
 // Kinvue's own page, opens nothing new, and embeds nothing. A redirect is a
@@ -397,6 +411,20 @@ function registerIpc(store: SessionStore, protection: () => Promise<Protection>)
   // it changes nothing: the seal is main's own timer's to make.
   handle("store:protection", (): Promise<Protection> => protection());
 
+  // KV-19. Whether Windows lets Kinvue use the camera at all, for the setup
+  // screen: said before anyone sits down to a capture that cannot run, not
+  // after it fails. Read each time it is asked, so turning a switch on and
+  // pressing "Check again" is enough.
+  handle(
+    "setup:camera",
+    (): Promise<CameraAccess> =>
+      process.platform === "win32" ? cameraAccess(readWindowsSwitch) : Promise.resolve("unknown"),
+  );
+  // Opens Windows's own camera privacy page; a fixed address, nothing the page sends.
+  handle("setup:openCameraSettings", async (): Promise<void> => {
+    if (process.platform === "win32") await shell.openExternal("ms-settings:privacy-webcam");
+  });
+
   handle(
     "history:lastExported",
     async (_e, personId: unknown): Promise<string | null> =>
@@ -540,6 +568,16 @@ void app.whenReady().then(async () => {
     callback(false),
   );
   session.defaultSession.setPermissionCheckHandler(() => false);
+
+  // KV-19. `app://kinvue/` serves the built renderer's files and nothing else:
+  // not the rest of the app, not the disk. Before the window, which loads it.
+  const rendererRoot = join(__dirname, "../renderer");
+  protocol.handle(APP_SCHEME, (request) => {
+    const file = appFileFor(request.url, rendererRoot);
+    return file === null
+      ? new Response("Not found", { status: 404 })
+      : net.fetch(pathToFileURL(file).href);
+  });
 
   // KV-175. The history encrypted with the operating system's key, where it
   // holds one — asked here, after `ready`, when `safeStorage` can answer. A
