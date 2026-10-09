@@ -17,7 +17,7 @@ import type { Configuration } from 'electron-builder'
 const config = {
   // The installer's identity on Windows: its uninstall entry and the taskbar's
   // app id. Never change it — a new one is a different app beside the old.
-  appId: 'io.github.kunyuan1.kinvue',
+  appId: 'app.kinvue',
   productName: 'Kinvue',
   artifactName: 'Kinvue-Setup-${version}.${ext}',
 

@@ -64,7 +64,7 @@ describe('the installer (KV-19)', () => {
 
   it('keeps the identity Windows knows it by', () => {
     // A new appId is a different app installed beside the old one.
-    expect(config.appId).toBe('io.github.kunyuan1.kinvue')
+    expect(config.appId).toBe('app.kinvue')
     expect(config.productName).toBe('Kinvue')
   })
 })
