@@ -810,8 +810,8 @@ rather than matching on an opaque origin, which once made every URL without one 
 every path electron-vite serves is "ours", Vite's `/@fs/` route to files on disk included.
 That is accepted because it is a developer's own machine running a developer's own server,
 and nothing is packaged from it; the built app, which is what anyone else runs, is pinned to
-one file. #19 replaces `file://` with a custom protocol, and the dev branch is worth
-re-reading then.
+one file. #19 replaces `file://` with a custom protocol (decided: `app://kinvue/`, under
+*Packaging and distribution*), and the dev branch is worth re-reading then.
 
 Verified in the running
 app, dev and built, by driving the page over a debugging port: the sandboxed preload
@@ -839,8 +839,8 @@ Electron's security checklist, item by item:
 | 15 | No `shell.openExternal` on untrusted content | Done: not used. A future link out must pass a fixed allowlist, not a URL from the page. |
 | 16 | A current Electron | Done: pinned exactly, and each bump arrives alone and is launched before merge (KV-131; "How much to check before merging an Electron bump", KV-145). |
 | 17 | Validate the IPC sender | Done: every handler is registered through `handle()`, which answers only the main frame (by identity, `event.sender.mainFrame`) of Kinvue's own page. A lint rule over all of `app/main/` refuses any other use of `ipcMain` (`handle`, `handleOnce`, `on`, `once`, a renamed import, `electron.ipcMain`), and `tests/lint-main.test.ts` checks it still fires. |
-| 18 | Avoid `file://`, prefer a custom protocol | **Not done: #19.** The built page is `file://`, and the navigation and sender checks pin it to one exact path. A custom protocol changes how the built app loads its own files, so it belongs with packaging, which owns that. |
-| 19 | Electron fuses | **Not done: #19.** Fuses are flipped on the packaged binary, and there is none yet. |
+| 18 | Avoid `file://`, prefer a custom protocol | **Decided (KV-19): `app://kinvue/`, built with the installer.** The built page is `file://`, and the navigation and sender checks pin it to one exact path. A custom protocol changes how the built app loads its own files, so it belongs with packaging, which owns that. |
+| 19 | Electron fuses | **Decided (KV-19), built with the installer.** Fuses are flipped on the packaged binary: run-as-node, `NODE_OPTIONS` and the inspector off; the app loaded only from its checked archive; cookies encrypted. |
 | 20 | Do not expose Electron APIs to untrusted content | Done: the preload exposes named calls only (above), never `ipcRenderer` itself. |
 
 **The SDK is a different matter, and this was wrong until a capture was measured.** The
@@ -1966,8 +1966,101 @@ Built: the envelope and the two errors (`LockedStoreError`, `UndecryptableStoreE
 key-store checks; protected exports in `core/session/protect.ts`. The envelope is known by
 its `sealed` field rather than by its `version`, so a plain file of a later format and a
 sealed one can never be taken for each other. `README.md`'s privacy section says what is
-true. #19's API key is the same question for a credential (T15); holding it with
-`safeStorage` is the natural answer there, and #19's to decide.
+true. #19's API key is the same question for a credential (T15), decided the same way:
+asked for on first run and held with `safeStorage` (*Packaging and distribution*, below).
+
+### Packaging and distribution (KV-19)
+
+Decided 2026-10-09, on #19. `npm run dev` is not a product: nobody outside this repo can
+run Kinvue today. This settles how it reaches a household, and what that costs. Built in
+the three PRs listed at the end.
+
+**What was decided.**
+
+- **Windows first.** An x64 installer, because Windows is the only platform Kinvue has run
+  on for real — the capture, and since KV-175 the encryption. macOS (Apple Silicon only:
+  there is no `darwin-x64` SDK runtime, so an Intel Mac is refused, not installed and left
+  broken) and Linux each follow once they have run on a real machine. macOS waits on
+  signing as well: its Keychain ties the history's key to the app's signature (KV-175,
+  above), so an unsigned or re-signed update could prompt on every release, or leave the
+  history unopenable.
+- **electron-builder packages it.** It takes electron-vite's output as it is, and carries,
+  built in, the three things this needs: the NSIS installer, Electron's fuses, and Windows
+  signing through Microsoft's service (`win.azureSignOptions`). Its `electron-updater` is
+  the update channel. The SDK declares all four platform runtimes as hard dependencies,
+  about 100 MB each, so each installer carries only its own platform's, and the SDK's
+  native files are kept out of the app archive, where they could not be loaded.
+- **The SmartSpectra key is the household's own, asked for on first run** (T15). The key
+  is free to register. A setup screen asks for it before the first capture, says where to
+  get one, and stores it encrypted with the operating system's key, as the history is
+  (KV-175) — in its own file under `userData`, never in `sessions.json` and never in the
+  installer, so there is no key of the developer's to extract and bill. The dashboard can
+  replace it, and never shows it back. Where the computer has no key store, it is kept
+  unencrypted and the screen says so, as for the history. A development build still reads
+  `.env`.
+- **Signed from the first release** (T9). Microsoft's Artifact Signing (formerly Trusted
+  Signing), from a release workflow on a GitHub Actions Windows runner; the signing
+  credentials are repository secrets and are never on a developer's machine. What that
+  costs, checked against Microsoft's documentation on 2026-10-09:
+  - **An individual developer must be located in the United States or Canada**; elsewhere
+    it takes an organisation (a wider list of countries), or an OV certificate on a
+    hardware token or cloud HSM instead, at a few hundred dollars a year.
+  - **A paid Azure subscription**: free and trial subscriptions are refused. Microsoft's
+    pricing page showed no figures when checked; the Basic tier's price is the one shown
+    when the account is created.
+  - **Identity validation** with a government ID through Microsoft Authenticator.
+  - **The certificate names the signer**: the legal name, with city, state or province,
+    and country, in every installer signed. That is published, so it is said here.
+  - **SmartScreen still warns at first.** A signature does not silence it; reputation
+    builds as the signed installer is downloaded.
+  - **The signing identity stays the same from release to release.** The updater checks it
+    (below), and macOS's Keychain will.
+- **Updates download quietly and install on quit.** `electron-updater` reads this
+  repository's GitHub Releases (the repository is public). An update downloads in the
+  background and is installed the next time the app closes, so it never restarts in the
+  middle of a check-in; the dashboard says when one is waiting. Before installing, the
+  updater checks the new installer is signed by the same publisher as the running app, so
+  an unsigned or differently-signed release is refused (T9). **A build that is not signed
+  never updates itself**: the updater runs only in a signed build.
+- **The update check is a network contact of the app's own, and is said so.** Until now
+  the only one was the SDK's, during a capture. Each check tells GitHub this install's
+  address and the version it runs. It happens at start and once a day after, and carries
+  no check-in. `README.md`'s privacy section says so in the PR that turns it on.
+
+**Decided with it** — what #29 and the first-run scope left here, which need no choice
+from the owner:
+
+- **A custom protocol instead of `file://`** (Electron's checklist item 18). The built
+  page is served as `app://kinvue/` from the app's own files and nothing else, and the
+  navigation and sender checks in `app/main/security.ts` pin that origin. The dev boundary
+  is re-read then, as the note under KV-29 asks.
+- **Fuses** (checklist item 19), flipped on the packaged binary: `ELECTRON_RUN_AS_NODE`,
+  `NODE_OPTIONS` and the Node inspector arguments off; the app loaded only from its own
+  archive, with that archive's integrity checked; cookies encrypted; no extra privileges
+  for `file://`.
+- **The camera is checked on first run, not on the first failed capture.** On Windows a
+  desktop app cannot raise the camera prompt — the system setting *Let desktop apps access
+  your camera* decides — so when that setting is off, the setup screen says so and where
+  to change it, before anyone sits down to a capture that cannot run.
+- **The installed app reads the history a development build wrote.** The same `userData`
+  folder (Windows does not tell `kinvue` from `Kinvue`), the same `Local State`, the same
+  account: what KV-175 encrypted opens. Checked when it is built, not assumed.
+
+**What it costs.**
+- **A household registers with SmartSpectra once**, for the key.
+- **The owner pays for signing every month, and publishes their name and town** in the
+  certificate.
+- **Every install contacts GitHub** at start and daily, for the update check.
+- **Windows only, for now.**
+
+**Built in three PRs**, each testable without the next:
+1. The installer: electron-builder, an x64 NSIS build carrying only the Windows runtime,
+   the fuses, `app://`, and the camera check. Unsigned, so it never updates itself.
+2. The key: the first-run screen, the sealed file, replacing it from the dashboard.
+3. The release: the signing workflow, GitHub Releases, the updater, the "update waiting"
+   line, and `README.md`'s privacy section. It needs the owner's Artifact Signing account
+   and its three credentials as repository secrets first — accounts this project cannot
+   create for them.
 
 ### What must hold before real check-ins are stored
 
@@ -2057,13 +2150,13 @@ to check a card against. Integrity is protected as deliberately as confidentiali
 | T6 | The daily summary leaks on a lock screen, or through the push provider | Bystanders; Apple's or Google's push service | The push carries no health data, only "your summary is ready"; the content is fetched and composed on the device (#33). | #43 | **Gap → #43** |
 | T7 | Data on the check-in device itself: `sessions.json` is plain JSON, readable by anyone with that operating-system account, its backups (File History, Time Machine, a sync client), or malware running as it | Others on the computer; malware; a backup service | **Decided (KV-175):** the whole history encrypted with the operating system's key (`safeStorage`), so a copy, a backup or a sync copy read under another account or machine, and the residue a deletion leaves, are ciphertext; where the operating system holds no key (Linux `basic_text`) it stays plain and the dashboard says so. **Built** (KV-175), checked by backend on Linux, so `basic_text` is never called encrypted. **Not covered:** anyone signed in as the same user, malware running as them, and a same-account rollback of the file from a backup, which still brings deleted check-ins back; a separate account for the person is the boundary (README). | #175 | Done (KV-175), where the operating system holds a key. Anyone on the same login, malware, a same-account rollback, and a computer with no key store, remain limits |
 | T8 | The renderer is compromised (a bug, a malicious dependency) and reaches the camera, the key's use or the history | Malicious code in the page | Sandbox, one page, IPC answered only for it, every handler through one checked wrapper, enforced by lint (KV-29). | #29 | Done |
-| T9 | A malicious release reaches installs through the update channel or a dependency | Supply-chain attacker | **Today:** Electron and the SDK pinned exactly, each bump alone and launched before merge (KV-131, KV-145). **Not yet:** signed installers and signed updates, which wait on there being an installer and an update channel (#19); which dependencies may run install scripts (#147); and the caregiver app's native shell and its plugins — code on the phone holding the viewer's keys — pinned and reviewed, with its web code kept in the signed bundle (KV-34, #179). | #19, #147, #179 | Partly done; open on #19, #147, #179 |
+| T9 | A malicious release reaches installs through the update channel or a dependency | Supply-chain attacker | **Today:** Electron and the SDK pinned exactly, each bump alone and launched before merge (KV-131, KV-145). **Decided (KV-19):** installers signed with Microsoft's Artifact Signing from a release workflow whose credentials never reach a developer's machine, and updates installed only when signed by the same publisher as the running app; a build that is not signed never updates itself. **Not yet:** building that (#19); which dependencies may run install scripts (#147); and the caregiver app's native shell and its plugins — code on the phone holding the viewer's keys — pinned and reviewed, with its web code kept in the signed bundle (KV-34, #179). | #19, #147, #179 | Partly done; decided on #19, to be built; open on #147, #179 |
 | T10 | **The SDK's own traffic reveals the routine:** the licence meter carries each session's times and per-metric datapoint counts to the vendor, today, whatever Kinvue builds | The SDK vendor; whoever breaches it | Not mitigable in the app: a capture cannot run without it (KV-65). Established from the runtime's own schema, not by decrypting the traffic; *when* each report is sent is only partly known, but a report carrying the session's times says when the check-in happened whenever it arrives. `README.md` says so. Whether a third party receiving it is acceptable, and what users must be told, is a legal question. | #35 | **Accepted, disclosed; → #35** |
 | T11 | The pain note, the most personal field, reaches people the person did not mean it for | Any viewer | Off by default; turned on per viewer by the person; the note field says who will read it as they type (KV-32). | #31, #37, #40 | Decided |
 | T12 | Data the person deleted, or withdrew, survives elsewhere | Any copy holder | Deletion travels as a tombstone; a revoked viewer's app deletes its copy on next contact, and one that never reconnects keeps it — a limit; partial deletion is tested as a flow because it looks like success. | #21, #45, #175 | Decided (KV-21: a tombstone wins over a copy coming back through restore or sync); #21, #45 to build. A rollback of the store file restores records and tombstones together — T7's limit |
 | T13 | **A delivered card is altered, fabricated, replayed or dropped**, so a viewer reads a day that did not happen, or misses one that did | The relay; a network attacker; whoever breaches the relay | A per-viewer envelope — viewer id, stream number, previous envelope's hash, record — signed by the check-in device (Ed25519) and verified on the viewer's device before it is shown, so drops, renumbering, replays and reordering show, and a gap is shown as one (with #44); the pairing code derived from all four public keys; the daily summary composed from verified records only (KV-33). **Rests on the check-in device's signing key**, which is protected only as T7's data is: malware running as the person can sign forgeries. | #33, #39, #40, #42, #43, #175 | Decided; rests on #175 |
 | T14 | **The check-in device is lost, broken, wiped or replaced**, and with it every share's authority: nothing can be revoked, and the person cannot see who still holds their check-ins | Accident; theft | A printed recovery card that can see who has access and end every share, never approve anyone new; using it is delayed 72 hours and announced to every viewer, and can be cancelled from the check-in device if it still exists, so a card misused to cut the person off alerts every caregiver instead of silencing them (KV-33). A replacement device starts fresh, each viewer approved again at it. **The history is recovered only if it was exported:** a restored export brings back the history and its baseline as of that export (KV-21); without one it goes with the device — a backup of the encrypted file cannot be read under another account or on another machine (KV-175) — and the baseline restarts from zero. | #33, #40, #45, #21 | Decided; #40, #45 to build; history loss a limit, unless exported (KV-21) |
-| T15 | **The SmartSpectra API key at rest.** In development it is plain text in `.env`, beside `sessions.json`; a packaged install has no route to a key yet. A stolen key means vendor account abuse and billing, and reaches the metered record of when check-ins happen (T10) | The same actors as T7 | **Today**, only the operating system's account boundary, as for T7. How a packaged install receives and holds its key is #19's, and it is a data-at-rest question in the same sense as #175's. | #19, #175 | **Gap → #19** |
+| T15 | **The SmartSpectra API key at rest.** In development it is plain text in `.env`, beside `sessions.json`; a packaged install has no route to a key yet. A stolen key means vendor account abuse and billing, and reaches the metered record of when check-ins happen (T10) | The same actors as T7 | **Today**, only the operating system's account boundary, as for T7. **Decided (KV-19):** a packaged install never carries a key; the household's own is asked for on first run and held encrypted with the operating system's key, as the history is (KV-175), and kept unencrypted, said so, where there is no key store. | #19, #175 | **Decided → built in #19** |
 | T16 | **An exported history, read where it was put.** A complete, identified physiological history in plain JSON, copied by the person to a USB stick, a synced folder or an email (KV-21) — outside `userData`, so outside even T7's account boundary | Whoever finds or receives the file; the services it passes through | The screen that makes an export says it is the whole history, unprotected, and that it should be kept as carefully as the device. Restoring never deletes, so a file altered on its way can add check-ins, which are checked, but cannot remove any (review of #185). **Decided (KV-175):** an optional passphrase (scrypt, then AES-256-GCM), the container keeping its `kind` with its `version` raised, so a build that knows no protection says the file is newer. **Built** (KV-175): exporting asks first; a plain export's screen still says it is unprotected. | #21, #175 | Done (KV-175): an optional passphrase. A plain export remains a limit, said on its screen |
 
 Four of these are the ones most likely to be argued with. **T10 is live now**, not a Phase 5
