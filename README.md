@@ -134,6 +134,8 @@ app/
     frames.ts            camera frames → a small picture a screen can show
     env.ts               loads .env into process.env before anything reads it
     history-file.ts      reads and names an exported history; no Electron (KV-21)
+    cipher.ts            the history's cipher from safeStorage, and which key store counts
+                         as one (KV-175)
     vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk
   preload/
     index.ts             contextBridge surface. The API key never crosses this line.
@@ -148,6 +150,7 @@ app/
       CaptureScreen.tsx  the ~30s in front of the camera (settable) — the one screen the
                          cared-for person reads, not the caregiver
       HistoryPanel.tsx   export, restore and delete, at the foot of the dashboard (KV-21)
+      ExportChoice.tsx   whether to protect an export with a passphrase (KV-175)
       ConfirmRemoval.tsx the step before a deletion: what goes, and what deleting means
       QuestionFlow.tsx   the four questions, also addressed to them
       SectionBoundary.tsx
@@ -169,6 +172,7 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
                          arriving are one record (KV-30)
     check.ts             every field of a record read, checked against its type (KV-181)
     lifecycle.ts         export, restore and delete, with tombstones (KV-21)
+    protect.ts           a passphrase-protected export: scrypt, AES-256-GCM (KV-175)
     checkin.ts           holds a capture until its answers arrive, then scores and stores it
     time.ts              which local day a check-in belongs to, where it was taken
   baseline/index.ts      per-person trailing baseline + MIN_BASELINE_SESSIONS
@@ -374,28 +378,50 @@ them checkable:
   — no generic `invoke(channel, ...)` — so a compromised renderer cannot read it.
 - **Session data is local**, under Electron's `userData`, and `.gitignore` covers
   `sessions/` and video files so a check-in cannot be committed by accident.
+- **The history is encrypted with this computer's key, where it has one** (KV-175):
+  Windows's DPAPI, the macOS Keychain, or a Linux desktop keyring, through Electron's
+  `safeStorage`. A copied file, a backup or a sync client's copy opened under another
+  account or on another machine, and what a deletion leaves on disk, are ciphertext. It
+  does **not** protect against anyone signed in as the same account, or malware running as
+  them: the operating system opens it for whoever is signed in. Where the computer offers
+  no key store (Linux without a keyring), the history stays unencrypted, and the dashboard
+  says so. A plain history is encrypted within seconds of the first start, once the
+  operating system's key is safely on disk — never before, so a crash in between cannot
+  leave a history sealed with a key that is gone; until then the dashboard says it is not
+  yet encrypted. A check-in finished inside those seconds is written plain first, and its
+  blocks stay on the disk like any deletion's. On Windows that key is kept, protected by
+  DPAPI, in the app's own `Local State` file beside the history: a backup of
+  `sessions.json` without it cannot be opened, even on the same account. A history that
+  will not open says which of two things is wrong: the key store is not available just
+  now (it may be locked; try again), or the key that sealed it is not this account's —
+  then, and only then, *Start a new history* is offered, keeping the old file.
 - **A history is kept until the person deletes it, and they can.** There is no automatic
   retention window. At the foot of the dashboard a person can export their history,
   restore an export, delete one check-in, every check-in before a date, or the whole
   history (KV-21):
-  - **An export is the whole history in plain JSON** — every check-in, pain notes
-    included, unprotected wherever it is saved. The screen says so, and shows when the last
-    one was made. Demo days are not exported.
+  - **An export can be protected with a passphrase** (KV-175): scrypt, then AES-256-GCM.
+    Forget it, and that copy cannot be opened; the history on the device is unaffected.
+    The suggested name ends `-protected.json`, so it can be told from a plain one.
+    **Without one, an export is the whole history in plain JSON** — every check-in, pain
+    notes included, readable wherever it is saved — and the screen says so. It also shows
+    when the last one was made. Demo days are not exported.
   - **Restoring writes everything it accepts, or nothing, and never deletes.** Every
     check-in in the file is checked first; one this app cannot read refuses the file, and
     nothing changes. A restore only adds: deleting is always the person's own action.
   - **Deleting cannot be undone, not even by restoring an export.** A deleted check-in is
     removed from the store, and a small note of which one and when is kept — no reading, no
     answer, no note — so an export made earlier cannot bring it back (nor, once sharing
-    exists, a caregiver's copy). That note survives deleting everything. Verdicts on other cards are not rescored.
+    exists, a caregiver's copy). That note survives deleting everything. Verdicts on other
+    cards are not rescored.
   - **"Deleted" means gone from the app, not from the disk.** The old file's blocks are
-    released, not overwritten, and the operating system's own backups (File History, Time
-    Machine, a sync client) keep what they kept: restoring `sessions.json` from one brings
-    deleted check-ins back. Encrypting the history at rest (#175, decided, not yet built)
-    will not change that: a backup restored under the same account opens as the app does.
+    released, not overwritten — ciphertext where the history is encrypted, plain where it
+    is not — and the operating system's own backups (File History, Time Machine, a sync
+    client) keep what they kept: restoring `sessions.json` from one brings deleted
+    check-ins back. Encryption at rest does not change that: a backup restored under the
+    same account opens as the app does.
 - **On a shared computer, give the person their own account.** Nothing in this app can
   tell who is at the keyboard: anyone signed in as the same user can read, export or
-  delete the history, and encryption at rest (#175) does not change that, since the
+  delete the history, and encryption at rest (KV-175) does not change that, since the
   operating system opens it for whoever is signed in. A separate account is the boundary.
 - **Opt-in by design.** Capture runs only when someone presses the button. There is no
   background monitoring and no always-on camera.
@@ -568,6 +594,9 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   writes version *n* refuses a file written by version *n+1*. Bumping it is a one-way door,
   and there is no migration (KV-30): each record now says its own format as well, and a
   history holding a record in a format this build does not know is refused the same way.
+  An encrypted history (KV-175) cannot be read at all by a build from before it, which
+  says so in the same words. And an encrypted history is bound to the account: a new
+  profile or another computer cannot open it — an export is the way across.
 - **`@smartspectra/node-sdk` depends on all four platform runtimes**, not just the host's
   — install pulls Windows, macOS and both Linux binaries regardless of platform.
 - **Windows, macOS (Apple Silicon) and Linux only.** There is no `darwin-x64` runtime, so

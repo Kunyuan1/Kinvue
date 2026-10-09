@@ -165,6 +165,35 @@ export default tseslint.config(
   },
   {
     /**
+     * The preload and the renderer never import from `app/main` (review of
+     * #187), type-only imports included, for the reason core/'s are banned
+     * above: `import type` is erased today, and the next value import is a
+     * one-word change that pulls `node:fs`, Electron's main process or the SDK
+     * into the sandboxed bridge or the page. A type both sides need lives in
+     * `app/shared/`, as `Protection` and `CaptureReply` do.
+     * `tests/lint-bridge.test.ts` checks it fires.
+     */
+    files: ['app/preload/**/*.ts', 'app/renderer/**/*.ts', 'app/renderer/**/*.tsx'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              // A directory's pattern covers everything under it: `../main`
+              // refuses `../main/cipher` too. One per depth the files sit at.
+              group: ['../main', '../../main', '../../../main', '**/app/main'],
+              message:
+                'The preload and the renderer must not import from app/main, types included. ' +
+                'Put what both sides need in app/shared/.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    /**
      * The main process answers only Kinvue's own page, and its renderer stays
      * sandboxed (KV-29).
      *

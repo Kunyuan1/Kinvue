@@ -24,6 +24,12 @@ const FLOOR: Record<Exclude<DashboardFailure, 'unknown'>, string> = {
   'store-record-unknown':
     'One entry in the saved check-in history could not be read. Nothing has been changed, ' +
     'and the rest of the history is intact. The file needs someone to look at it.',
+  'store-locked':
+    "The saved check-in history is encrypted, and this computer's key store is not available " +
+    'just now. Nothing has been changed; it should open once the key store is available.',
+  'store-undecryptable':
+    "The saved check-in history could not be opened with this account's key. Nothing has " +
+    'been changed.',
 }
 
 /**

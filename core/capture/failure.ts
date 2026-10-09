@@ -80,6 +80,17 @@ export type TaggedFailure =
    * one entry somebody needs to look at.
    */
   | 'store-record-unknown'
+  /**
+   * The history is encrypted and this computer's key store cannot be reached
+   * right now (KV-175). It can clear by itself, so it is never set aside.
+   */
+  | 'store-locked'
+  /**
+   * The key store answered and the history still would not open (KV-175):
+   * another account's or computer's, or its key is gone. Offered for setting
+   * aside, keeping the file.
+   */
+  | 'store-undecryptable'
 
 /**
  * What the capture screen can be asked to say.
@@ -119,6 +130,10 @@ export type DashboardFailure =
   | 'store-newer'
   /** One entry in the history cannot be read. Its own sentence, no button. */
   | 'store-record-unknown'
+  /** The key store cannot be reached now. Its own sentence, no button: it can clear. */
+  | 'store-locked'
+  /** The history will not open with this account's key. Its own sentence, and the button. */
+  | 'store-undecryptable'
   /** Anything else. Shown as a plain sentence; the original goes to the console. */
   | 'unknown'
 
@@ -163,6 +178,8 @@ const ON_CAPTURE: Record<TaggedFailure, CaptureFailure | null> = {
   'store-unreachable': 'unknown',
   'store-newer': 'unknown',
   'store-record-unknown': 'unknown',
+  'store-locked': 'unknown',
+  'store-undecryptable': 'unknown',
 }
 
 /** Where every tag goes on the submit path. Never null: see `classifySubmitError`. */
@@ -187,6 +204,11 @@ const ON_SUBMIT: Record<TaggedFailure, SubmitFailure> = {
   'store-newer': 'store-unreadable',
   // Likewise: it fails the same way every time until someone looks at the file.
   'store-record-unknown': 'store-unreadable',
+  // Like an unreachable file this can clear — the key store unlocks — and the
+  // answers are held meanwhile, so another go is the right thing to suggest.
+  'store-locked': 'unknown',
+  // This one will not clear here: it needs someone to look, not another go.
+  'store-undecryptable': 'store-unreadable',
 }
 
 /**
@@ -208,6 +230,8 @@ const ON_DASHBOARD: Record<TaggedFailure, DashboardFailure> = {
   'store-unreachable': 'store-unreachable',
   'store-newer': 'store-newer',
   'store-record-unknown': 'store-record-unknown',
+  'store-locked': 'store-locked',
+  'store-undecryptable': 'store-undecryptable',
 }
 
 /**

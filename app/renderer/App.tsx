@@ -11,6 +11,7 @@ import {
   type DashboardFailure,
   type SubmitFailure,
 } from '@core/capture/failure'
+import type { Protection } from '../shared/protection'
 import { CARD_BOX, CHART_BOX } from './components/boxes'
 import CaptureScreen from './components/CaptureScreen'
 import ConfirmRemoval from './components/ConfirmRemoval'
@@ -197,9 +198,17 @@ function Dashboard(): React.JSX.Element {
   const [deleting, setDeleting] = useState<string | null>(null)
   // When the history was last exported: null for never, undefined until known.
   const [lastExported, setLastExported] = useState<string | null | undefined>(undefined)
+  // Where its protection stands (KV-175): undefined until known.
+  const [protection, setProtection] = useState<Protection | undefined>(undefined)
 
   const refresh = useCallback(async (): Promise<void> => {
     setSessions(await window.kinvue.listSessions(DEMO_PERSON_ID))
+    // The file just read may not be the one the protection line described — a
+    // new history started, a restore written (review of #187) — so it is asked
+    // again here. Not worth a screen: the line is all it feeds.
+    window.kinvue.historyProtection().then(setProtection, (e: unknown) => {
+      console.error('Could not read whether the history is encrypted.', e)
+    })
     // A list that loaded is the current state of the screen, so an earlier
     // failure to load it is no longer true (KV-95 review). The post-submit
     // sentence is set only after its own refresh has failed, so this never
@@ -242,6 +251,31 @@ function Dashboard(): React.JSX.Element {
     })
   }, [loadLastExported])
 
+  // KV-175. Where the history's protection stands — asked again every few
+  // seconds while the file is still plain, so the line moves to "encrypted"
+  // once the seal lands on disk, and every thirty after that: "encrypted" is
+  // not taken as final, so the line cannot go on saying it over a file that has
+  // changed (review of #187). Asking changes nothing in main.
+  useEffect(() => {
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const ask = (): void => {
+      window.kinvue.historyProtection().then(
+        (now) => {
+          if (stopped) return
+          setProtection(now)
+          timer = setTimeout(ask, now === 'not-yet-encrypted' ? 3000 : 30_000)
+        },
+        (e: unknown) => console.error('Could not read whether the history is encrypted.', e),
+      )
+    }
+    ask()
+    return () => {
+      stopped = true
+      if (timer !== undefined) clearTimeout(timer)
+    }
+  }, [])
+
   /**
    * The one export (KV-21), for the panel's button and the confirm screen's
    * "Export first" alike (review of #185): the second used to say nothing, and
@@ -249,14 +283,17 @@ function Dashboard(): React.JSX.Element {
    * Resolves to what to say, or null when cancelled — or when it failed, which
    * it has already said.
    */
-  const exportHistory = useCallback(async (): Promise<string | null> => {
+  const exportHistory = useCallback(async (passphrase?: string): Promise<string | null> => {
     try {
-      const made = await window.kinvue.exportHistory(DEMO_PERSON_ID)
+      const made = await window.kinvue.exportHistory(DEMO_PERSON_ID, passphrase)
       if (made === null) return null
       await loadLastExported().catch((e: unknown) => {
         console.error('Could not read when the history was last exported.', e)
       })
-      return `Exported ${String(made.count)} check-in${made.count === 1 ? '' : 's'}.`
+      const count = `${String(made.count)} check-in${made.count === 1 ? '' : 's'}`
+      return made.protected
+        ? `Exported ${count}, protected with the passphrase.`
+        : `Exported ${count}, without a passphrase.`
     } catch (e) {
       showFailure(e, 'The history could not be exported.')
       return null
@@ -572,7 +609,10 @@ function Dashboard(): React.JSX.Element {
       {error !== null && (
         <div className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm">
           <p className="text-(--color-elevated)">{error.text}</p>
-          {error.failure === 'store-unreadable' && (
+          {/* Never for a key store that is only out of reach (store-locked): that
+              history opens once it is reachable, and setting it aside would move
+              a readable history (KV-175, review of #186). */}
+          {(error.failure === 'store-unreadable' || error.failure === 'store-undecryptable') && (
             <>
               <p className="mt-2 text-(--color-muted)">
                 Starting a new history keeps this file as it is, renamed beside it, and begins
@@ -686,6 +726,7 @@ function Dashboard(): React.JSX.Element {
             personId={DEMO_PERSON_ID}
             sessions={sessions}
             lastExported={lastExported}
+            protection={protection}
             onExport={exportHistory}
             onChanged={refresh}
             onFailure={showFailure}

@@ -52,4 +52,11 @@ describe('exportFileName', () => {
     expect(exportFileName(new Date(2026, 9, 5, 23, 30))).toBe('kinvue-history-2026-10-05.json')
     expect(exportFileName(new Date(2026, 0, 2, 0, 5))).toBe('kinvue-history-2026-01-02.json')
   })
+
+  it('says a protected export is one, so it can be told apart unopened (review of #187)', () => {
+    expect(exportFileName(new Date(2026, 9, 5, 9, 0), true)).toBe(
+      'kinvue-history-2026-10-05-protected.json',
+    )
+    expect(exportFileName(new Date(2026, 9, 5, 9, 0), false)).toBe('kinvue-history-2026-10-05.json')
+  })
 })

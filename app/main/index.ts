@@ -8,15 +8,22 @@ import {
   dialog,
   ipcMain,
   nativeImage,
+  safeStorage,
   session,
   type IpcMainInvokeEvent,
 } from "electron";
 import { scoreSession } from "@core/scoring";
-import { createJsonSessionStore } from "@core/session/store";
+import { createJsonSessionStore, type SessionStore } from "@core/session/store";
 import { createCheckIn } from "@core/session/checkin";
 import type { SessionRecord } from "@core/session/types";
 import { parseCheckInAnswers, parsePersonId } from "@core/session/validate";
-import { parseRemoval, type RestoreResult } from "@core/session/lifecycle";
+import { parseRemoval, type RestoreResult, type RestoreStep } from "@core/session/lifecycle";
+import {
+  isProtected,
+  MIN_PASSPHRASE_LENGTH,
+  passphraseLength,
+  protect,
+} from "@core/session/protect";
 import { DEMO_PERSON_ID, seedDemoHistory } from "@core/seed/persona";
 import { createGuidanceGate } from "@core/capture/guidance";
 import { deviceTimeZone } from "./device";
@@ -29,10 +36,13 @@ import {
 } from "./capture-length";
 import { loadDotEnv } from "./env";
 import { exportFileName, readExport } from "./history-file";
+import { protectedRestores } from "./protected-restore";
+import { localStateHoldsKey, osCipher, protectionOf } from "./cipher";
 import { captureVitals } from "./vitals";
 import { ERR_ABORTED, loadFailureMessage, showWhenReady } from "./window-show";
 import { isAppUrl, isTrustedSender, resolveAppPage } from "./security";
 import { toCaptureReply, type CaptureReply } from "../shared/capture-reply";
+import type { Protection } from "../shared/protection";
 
 /**
  * The SmartSpectra key lives in `.env` during development and reaches the SDK
@@ -188,8 +198,7 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-function registerIpc(): void {
-  const store = createJsonSessionStore(storePath());
+function registerIpc(store: SessionStore, protection: () => Promise<Protection>): void {
   // Holds each capture until its answers arrive; the rules live in core so they
   // are tested. Everything the renderer sends is validated here first.
   const checkIn = createCheckIn({
@@ -369,6 +378,24 @@ function registerIpc(): void {
     if (id === null) throw new Error(`${channel} needs a person id.`);
     return id;
   };
+  // A passphrase is checked here as well as on screen: it is the whole defence
+  // of a protected export (KV-175), so main does not take the renderer's word.
+  const passphraseFor = (channel: string, passphrase: unknown): string => {
+    if (typeof passphrase !== "string" || passphraseLength(passphrase) < MIN_PASSPHRASE_LENGTH) {
+      throw new Error(
+        `${channel} needs a passphrase of at least ${MIN_PASSPHRASE_LENGTH} characters.`,
+      );
+    }
+    return passphrase;
+  };
+  // A protected export waiting for its passphrase (KV-175), and the tries at
+  // it, one at a time: see `protectedRestores`.
+  const waiting = protectedRestores();
+
+  // KV-175. Where the history's protection stands, for the line that says so:
+  // what the file on disk is, not what the key is (review of #187). A query, so
+  // it changes nothing: the seal is main's own timer's to make.
+  handle("store:protection", (): Promise<Protection> => protection());
 
   handle(
     "history:lastExported",
@@ -378,12 +405,21 @@ function registerIpc(): void {
 
   handle(
     "history:export",
-    async (event, personId: unknown): Promise<{ count: number } | null> => {
+    async (
+      event,
+      personId: unknown,
+      passphrase: unknown,
+    ): Promise<{ count: number; protected: boolean } | null> => {
       const id = personFor("history:export", personId);
+      // None given: a plain export, as the person chose. One given: protected.
+      const secret =
+        passphrase === undefined || passphrase === null
+          ? null
+          : passphraseFor("history:export", passphrase);
       const options = {
         title: "Export check-in history",
         // A suggestion, from when the dialog opened; the person can change it.
-        defaultPath: exportFileName(new Date()),
+        defaultPath: exportFileName(new Date(), secret !== null),
         filters: [historyFilter],
       };
       const window = BrowserWindow.fromWebContents(event.sender);
@@ -397,17 +433,18 @@ function registerIpc(): void {
       // the line beside the control. Read then too, so it holds what is there now.
       const now = new Date();
       const file = await store.exportFor(id, now);
-      await writeFile(chosen.filePath, JSON.stringify(file, null, 2), "utf8");
+      const written = secret === null ? file : await protect(file, secret);
+      await writeFile(chosen.filePath, JSON.stringify(written, null, 2), "utf8");
       // Only once the file is written: the line beside the control must not
       // claim an export that did not happen.
       await store.markExported(id, now);
-      return { count: file.records.length };
+      return { count: file.records.length, protected: secret !== null };
     },
   );
 
   handle(
     "history:restore",
-    async (event, personId: unknown): Promise<RestoreResult | null> => {
+    async (event, personId: unknown): Promise<RestoreStep | null> => {
       const id = personFor("history:restore", personId);
       const options = {
         title: "Restore check-in history",
@@ -426,12 +463,37 @@ function registerIpc(): void {
       if (file.kind === "unopenable") {
         return { ok: false, refusal: { kind: "unopenable", code: file.code } };
       }
+      if (isProtected(file.contents)) {
+        waiting.hold(event.sender, id, file.contents);
+        return { needsPassphrase: true };
+      }
+      waiting.letGo();
       const plan = await store.restore(id, file.contents);
       // The outcome, not the merged history: the screen reads the history the
       // way it always does.
       return plan.ok ? { ok: true, outcome: plan.outcome } : { ok: false, refusal: plan.refusal };
     },
   );
+
+  handle(
+    "history:restoreProtected",
+    (_e, personId: unknown, passphrase: unknown): Promise<RestoreResult> => {
+      const id = personFor("history:restoreProtected", personId);
+      if (typeof passphrase !== "string") {
+        throw new Error("history:restoreProtected needs a passphrase.");
+      }
+      return waiting.unlock(id, passphrase, async (contents) => {
+        const plan = await store.restore(id, contents);
+        return plan.ok
+          ? { ok: true, outcome: plan.outcome }
+          : { ok: false, refusal: plan.refusal };
+      });
+    },
+  );
+
+  handle("history:cancelRestore", (): void => {
+    waiting.letGo();
+  });
 
   handle(
     "history:remove",
@@ -453,7 +515,7 @@ function registerIpc(): void {
   });
 }
 
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   if (envError !== null) {
     // The app still runs — the dashboard reads stored history without a key —
     // but capture will fail, and this says why while the .env is still the
@@ -479,12 +541,85 @@ void app.whenReady().then(() => {
   );
   session.defaultSession.setPermissionCheckHandler(() => false);
 
-  registerIpc();
+  // KV-175. The history encrypted with the operating system's key, where it
+  // holds one — asked here, after `ready`, when `safeStorage` can answer. A
+  // plain history is sealed as soon as it can be, not on the next check-in, so
+  // an install only read from does not stay plain. The store queues its writes,
+  // so a seal landing later cannot race a check-in's.
+  //
+  // Never with a key that is not on disk yet: on Windows the key lives in this
+  // app's own `Local State`, which Chromium writes seconds after the key is made,
+  // and a history sealed in that gap is lost to a crash. So the key is made now
+  // — `safeStorage` makes it on first use — and the seal waits until it is
+  // written down; until then writes stay plain. See `osCipher`.
+  const keyOnDisk =
+    process.platform === "win32"
+      ? localStateHoldsKey(join(app.getPath("userData"), "Local State"))
+      : async (): Promise<boolean> => true;
+  const cipher = osCipher(safeStorage, process.platform, keyOnDisk);
+  const store = createJsonSessionStore(storePath(), undefined, cipher);
+  const protection = async (): Promise<Protection> =>
+    protectionOf(cipher.holdsKey, cipher.encrypts, await store.atRest());
+
+  // Whether there is nothing left to seal: the key on disk, and the file sealed
+  // or holding nothing yet. A failed seal — a rename refused while another
+  // program holds the file, say — is logged once and tried again next time.
+  let failedBefore = false;
+  const settled = async (): Promise<boolean> => {
+    if (!(await cipher.keyLanded())) return false;
+    try {
+      await store.encryptAtRest();
+    } catch (err) {
+      if (!failedBefore) console.error("The history could not be encrypted yet.", err);
+      failedBefore = true;
+    }
+    return (await store.atRest()) !== "plain";
+  };
+  const sealUntilItHolds = async (): Promise<void> => {
+    if (!(await cipher.keyLanded())) {
+      try {
+        safeStorage.encryptString("kinvue");
+      } catch (err) {
+        console.error("The key store would not make a key.", err);
+      }
+    }
+    // Tried until it holds, never given up on (review of #187): every two
+    // seconds for two minutes — Chromium writes the key within a quarter of
+    // that — then every thirty. Meanwhile the dashboard says the history is not
+    // yet encrypted, because it reads the file; and any write once the key is
+    // down is sealed anyway, timer or not.
+    if (await settled()) return;
+    let tries = 0;
+    const again = (): void => {
+      tries += 1;
+      setTimeout(
+        () =>
+          void settled().then((done) => {
+            if (!done) again();
+          }),
+        tries <= 60 ? 2000 : 30_000,
+      );
+    };
+    again();
+  };
+
+  registerIpc(store, protection);
   createWindow();
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+
+  // The seal starts only once the window is up (review of #187). Sealing calls
+  // `safeStorage` synchronously, and on macOS — or a locked Linux keyring — that
+  // waits on the key store's own prompt, which must have the app's window behind
+  // it, not a hung app with none. Best-effort, as above: the store queues its
+  // writes, so a seal landing now cannot race a check-in's.
+  if (cipher.holdsKey) {
+    void sealUntilItHolds().catch((err: unknown) => {
+      console.error("The history could not be encrypted.", err);
+    });
+  }
 });
 
 app.on("window-all-closed", () => {
