@@ -18,7 +18,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@smartspectra/node-sdk": "3.3.0",
+    "@smartspectra/node-sdk": "3.4.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },
