@@ -16,10 +16,12 @@ updates:
     schedule:
       interval: weekly
     # Five kinds of PR stand open on their own — the group, Electron, the SDK,
-    # electron-builder and `@types/node` — before any major. Past the limit Dependabot opens nothing
-    # more and says nothing, and the one dropped could be the Electron patch
-    # README says to launch (review of #160).
-    open-pull-requests-limit: 8
+    # electron-builder and `@types/node` — before any major. Past the limit
+    # Dependabot opens nothing more and says nothing, and the one dropped could
+    # be the Electron patch README says to launch (review of #160). Nine leaves
+    # four open majors on top of them, as eight did before electron-builder
+    # joined (review of #193); tests/pins.test.ts holds that room.
+    open-pull-requests-limit: 9
     ignore:
       # `@types/node` is held to the Node major Electron ships (24 on Electron
       # 44), not the newest Node. Types a major ahead would let code compile
@@ -92,7 +94,9 @@ updates:
       # the rest of the group.
       minor-and-patch:
         update-types: ["minor", "patch"]
-        exclude-patterns: ["electron", "electron-builder", "@smartspectra/*", "@types/node"]
+        exclude-patterns: [
+          "electron", "electron-builder", "@smartspectra/*", "@types/node",
+        ]
 
   - package-ecosystem: github-actions
     directory: /

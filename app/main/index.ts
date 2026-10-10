@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import {
   app,
   BrowserWindow,
@@ -12,7 +11,6 @@ import {
   protocol,
   safeStorage,
   session,
-  shell,
   type IpcMainInvokeEvent,
 } from "electron";
 import { scoreSession } from "@core/scoring";
@@ -39,8 +37,9 @@ import {
 } from "./capture-length";
 import { loadDotEnv } from "./env";
 import { exportFileName, readExport } from "./history-file";
-import { APP_PAGE_URL, APP_SCHEME, appFileFor } from "./app-protocol";
+import { APP_PAGE_URL, APP_SCHEME, serveApp } from "./app-protocol";
 import { cameraAccess, readWindowsSwitch, type CameraAccess } from "./camera-access";
+import { openLink } from "./links";
 import { protectedRestores } from "./protected-restore";
 import { localStateHoldsKey, osCipher, protectionOf } from "./cipher";
 import { captureVitals } from "./vitals";
@@ -95,19 +94,9 @@ const { page, problem: pageProblem } = resolveAppPage(
   APP_PAGE_URL,
 );
 
-// Every renderer sandboxed, this window's and any other that ever exists: the
-// preload needs only `contextBridge` and `ipcRenderer`, which a sandboxed
-// preload keeps. Before `ready`, as Electron requires.
-app.enableSandbox();
-
-// KV-19. The built page's own scheme, in place of `file://` (Electron's
-// checklist item 18), registered before `ready` as Electron requires: standard,
-// so the page has an origin and `'self'` in its CSP matches its own bundle, and
-// secure, as `file://` was. What it serves is `appFileFor`'s; what is "our
-// page" is still `security.ts`'s, by protocol, host and path.
-protocol.registerSchemesAsPrivileged([
-  { scheme: APP_SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true } },
-]);
+// Everything that must happen before `ready` — the sandbox for every renderer,
+// and the `app://` scheme's privileges — is `boot.ts`'s, which runs before this
+// file is loaded (review of #193).
 
 // Whatever web contents exist, created now or later: the window stays on
 // Kinvue's own page, opens nothing new, and embeds nothing. A redirect is a
@@ -418,11 +407,14 @@ function registerIpc(store: SessionStore, protection: () => Promise<Protection>)
   handle(
     "setup:camera",
     (): Promise<CameraAccess> =>
-      process.platform === "win32" ? cameraAccess(readWindowsSwitch) : Promise.resolve("unknown"),
+      process.platform === "win32"
+        ? cameraAccess(readWindowsSwitch, process.execPath)
+        : Promise.resolve("unknown"),
   );
-  // Opens Windows's own camera privacy page; a fixed address, nothing the page sends.
+  // Opens Windows's own camera privacy page, from links.ts's fixed list: the
+  // page names nothing, and sends no address.
   handle("setup:openCameraSettings", async (): Promise<void> => {
-    if (process.platform === "win32") await shell.openExternal("ms-settings:privacy-webcam");
+    if (process.platform === "win32") await openLink("cameraSettings");
   });
 
   handle(
@@ -572,12 +564,9 @@ void app.whenReady().then(async () => {
   // KV-19. `app://kinvue/` serves the built renderer's files and nothing else:
   // not the rest of the app, not the disk. Before the window, which loads it.
   const rendererRoot = join(__dirname, "../renderer");
-  protocol.handle(APP_SCHEME, (request) => {
-    const file = appFileFor(request.url, rendererRoot);
-    return file === null
-      ? new Response("Not found", { status: 404 })
-      : net.fetch(pathToFileURL(file).href);
-  });
+  protocol.handle(APP_SCHEME, (request) =>
+    serveApp(request.url, rendererRoot, (fileUrl) => net.fetch(fileUrl)),
+  );
 
   // KV-175. The history encrypted with the operating system's key, where it
   // holds one — asked here, after `ready`, when `safeStorage` can answer. A

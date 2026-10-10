@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 /**
@@ -62,8 +63,31 @@ describe('the SDK is loaded when the app starts (KV-145)', () => {
     // SDK's hoisted require — at the top level, so it runs at start. Inside a
     // handler, it would load on demand, and a window would prove nothing. A
     // failure there is said in a dialog and the app exits: no window either way.
-    const boot = source('app/main/boot.ts')
-    expect(boot).toMatch(/^import\(['"]\.\/index['"]\)/m)
-    expect(boot).toMatch(/app\.exit\(1\)/)
+    const boot = ts.createSourceFile(
+      'boot.ts',
+      source('app/main/boot.ts'),
+      ts.ScriptTarget.Latest,
+      true,
+    )
+    const loads: ts.CallExpression[] = []
+    const walk = (node: ts.Node): void => {
+      if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments[0]?.getText(boot).slice(1, -1) === './index'
+      ) {
+        loads.push(node)
+      }
+      ts.forEachChild(node, walk)
+    }
+    walk(boot)
+    expect(loads).toHaveLength(1)
+    // Not inside any function: a handler, a callback, anything run later.
+    let node: ts.Node | undefined = loads[0]
+    while (node !== undefined) {
+      expect(ts.isFunctionLike(node), 'import(./index) is inside a function').toBe(false)
+      node = node.parent
+    }
+    expect(source('app/main/boot.ts')).toMatch(/app\.exit\(1\)/)
   })
 })

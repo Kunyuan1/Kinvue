@@ -54,6 +54,18 @@ describe('exact version pins (KV-131)', () => {
     expect(installed[`node_modules/${name}`]?.version).toBe(declared)
   })
 
+  it('leaves room for four open majors beside every PR that arrives alone (review of #193)', () => {
+    // Each package left out of the group is a PR of its own, standing open
+    // beside the group's; past the limit Dependabot opens nothing and says
+    // nothing. Pinning another package must raise the limit with it.
+    const yml = readFileSync('.github/dependabot.yml', 'utf8')
+    const excluded = /minor-and-patch:[\s\S]*?exclude-patterns: \[([^\]]*)\]/.exec(yml)?.[1] ?? ''
+    const alone = excluded.split(',').filter((p) => p.trim() !== '').length
+    const limit = Number(/open-pull-requests-limit: (\d+)/.exec(yml)?.[1])
+    expect(alone).toBeGreaterThan(0)
+    expect(limit - (alone + 1)).toBeGreaterThanOrEqual(4)
+  })
+
   it.each(PINNED)('keeps %s out of the routine group, so each bump arrives alone', (name) => {
     // A pinned package bumped inside the group's PR is a version change in a
     // chore nobody reads as one — the thing the pin is for (dependabot.yml).

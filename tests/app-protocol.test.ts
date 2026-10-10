@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import { join } from 'node:path'
-import { APP_PAGE_URL, appFileFor } from '../app/main/app-protocol'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { APP_PAGE_URL, appFileFor, serveApp } from '../app/main/app-protocol'
 import { runtimeLibraryPath } from '../app/main/runtime-path'
 
 /**
@@ -58,8 +62,52 @@ describe('appFileFor', () => {
   })
 })
 
+describe('serveApp (review of #193)', () => {
+  // A stand-in for `net.fetch` over `file:`: reads the file, and fails on a
+  // folder or a missing file as a real read would.
+  const fetchFile = async (fileUrl: string): Promise<Response> =>
+    new Response(await readFile(fileURLToPath(fileUrl)))
+
+  it('serves a file, and 404s a folder, a missing file, or anything refused', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'kinvue-renderer-'))
+    try {
+      mkdirSync(join(root, 'assets'))
+      writeFileSync(join(root, 'index.html'), '<p>ours</p>')
+      const page = await serveApp(APP_PAGE_URL, root, fetchFile)
+      expect(page.status).toBe(200)
+      expect(await page.text()).toBe('<p>ours</p>')
+      for (const url of [
+        'app://kinvue/assets',
+        'app://kinvue/assets/missing.js',
+        'app://kinvue/..%5c..%5cmain%5cboot.js',
+        'app://other/index.html',
+      ]) {
+        expect((await serveApp(url, root, fetchFile)).status, url).toBe(404)
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('never reads a file it refused', async () => {
+    let asked = 0
+    const counting = async (): Promise<Response> => {
+      asked++
+      return new Response('x')
+    }
+    await serveApp('app://kinvue/..%5c..%5cmain%5cboot.js', ROOT, counting)
+    await serveApp('app://other/index.html', ROOT, counting)
+    expect(asked).toBe(0)
+  })
+
+  it('turns a read that answers with an error into a 404, not a page of it', async () => {
+    const failing = async (): Promise<Response> => new Response('denied', { status: 500 })
+    expect((await serveApp(APP_PAGE_URL, ROOT, failing)).status).toBe(404)
+  })
+})
+
 describe('runtimeLibraryPath', () => {
-  it('points the SDK beside the archive on Windows, and leaves other platforms to it', () => {
+  it('points the SDK beside the archive on Windows, and nowhere on other platforms', () => {
     expect(runtimeLibraryPath('C:\\Kinvue\\resources', 'win32')).toBe(
       join('C:\\Kinvue\\resources', 'smartspectra-runtime', 'smartspectra_capi.dll'),
     )

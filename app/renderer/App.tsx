@@ -419,13 +419,18 @@ function Dashboard(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
-    // Not worth a screen if it cannot be asked: a capture says what is wrong.
+    // Not worth a screen if it cannot be asked: the dashboard is drawn, and a
+    // capture says what is wrong.
     void askCamera().catch((e: unknown) => {
       console.error('Could not read whether the camera is allowed.', e)
+      setCamera('unknown')
     })
   }, [askCamera])
 
-  const startCapture = useCallback((): void => {
+  // Starts a capture with no checks at all. Only `takeReading`, below, calls
+  // it: every button that starts a reading goes through that, so Windows is
+  // asked about the camera first (review of #193).
+  const startCaptureUnchecked = useCallback((): void => {
     setReading(null)
     setCaptureFailure(null)
     setCapturing(true)
@@ -584,6 +589,12 @@ function Dashboard(): React.JSX.Element {
     )
   }
 
+  // Nothing until Windows has answered — a moment, three registry reads — so
+  // the dashboard is never drawn only to be replaced by the setup screen
+  // (review of #193). The first state that picks a whole screen, unlike the
+  // others above, which feed a line of text.
+  if (camera === undefined) return <main className="mx-auto max-w-3xl px-6 py-10" />
+
   // Before the first reading (KV-19): a camera Windows keeps Kinvue from is
   // said here, not after a capture fails. Going past it reads the check-ins.
   if (cameraIsOff(camera) && !pastSetup) {
@@ -596,10 +607,10 @@ function Dashboard(): React.JSX.Element {
     void askCamera().then(
       (now) => {
         if (cameraIsOff(now)) setPastSetup(false)
-        else startCapture()
+        else startCaptureUnchecked()
       },
       // Not asked: the capture is tried, and says what is wrong if it fails.
-      () => startCapture(),
+      () => startCaptureUnchecked(),
     )
   }
 
@@ -638,7 +649,7 @@ function Dashboard(): React.JSX.Element {
       {reading !== null && (
         <ReadingSummary
           result={reading}
-          onRetake={startCapture}
+          onRetake={takeReading}
           onContinue={() => {
             setAnswering(reading)
             setReading(null)

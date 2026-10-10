@@ -35,9 +35,20 @@ describe('resolveAppPage', () => {
       page: { kind: 'file', pathname: '/C:/app/out/renderer/index.html', url: 'file:///C:/app/out/renderer/index.html' },
       problem: null,
     })
-    for (const url of ['javascript:alert(1)', 'data:text/html,x', 'about:blank', 'file:///C:/Windows/win.ini']) {
+    for (const url of [
+      'javascript:alert(1)',
+      'data:text/html,x',
+      'about:blank',
+      'file:///C:/Windows/win.ini',
+      // Our path on someone else's host (review of #169), kept for the file
+      // page when the built page moved to app:// (review of #193).
+      'file://attacker.example/C:/app/out/renderer/index.html',
+      'file://198.51.100.5/C:/app/out/renderer/index.html',
+    ]) {
       expect(isAppUrl(url, fileDev.page), url).toBe(false)
     }
+    // `localhost` is how a file URL says "this machine"; it normalises to no host.
+    expect(isAppUrl('file://localhost/C:/app/out/renderer/index.html', fileDev.page)).toBe(true)
     // Anything else falls back to the built page, and says why.
     for (const devUrl of ['data:text/html,x', 'about:blank', 'javascript:alert(1)', 'file://host/C:/x.html']) {
       const resolved = resolveAppPage(devUrl, BUILT_URL)
@@ -154,14 +165,33 @@ describe('the main process turns the sandbox on', () => {
   }
   walk(source)
 
-  it('calls app.enableSandbox() at the top level, before anything is ready', () => {
-    const calls = source.statements.filter(
-      (s) =>
-        ts.isExpressionStatement(s) &&
-        ts.isCallExpression(s.expression) &&
-        s.expression.expression.getText(source) === 'app.enableSandbox',
+  it('calls app.enableSandbox() in boot, at the top level, before index is loaded (review of #193)', () => {
+    // `index.ts` is reached by a dynamic import, so a call there runs before
+    // `ready` only by an accident of the bundle's module format. `boot.ts` runs
+    // first; the sandbox and the `app://` scheme are registered there, above
+    // the import, and nowhere else.
+    const boot = ts.createSourceFile(
+      'boot.ts',
+      readFileSync('app/main/boot.ts', 'utf8'),
+      ts.ScriptTarget.Latest,
+      true,
     )
-    expect(calls).toHaveLength(1)
+    const topLevel = (file: ts.SourceFile, callee: string): number =>
+      file.statements.findIndex(
+        (s) =>
+          ts.isExpressionStatement(s) &&
+          ts.isCallExpression(s.expression) &&
+          s.expression.expression.getText(file) === callee,
+      )
+    const sandbox = topLevel(boot, 'app.enableSandbox')
+    const scheme = topLevel(boot, 'protocol.registerSchemesAsPrivileged')
+    const loadsIndex = boot.statements.findIndex((s) => s.getText(boot).includes("import('./index')"))
+    expect(sandbox).toBeGreaterThanOrEqual(0)
+    expect(scheme).toBeGreaterThanOrEqual(0)
+    expect(loadsIndex).toBeGreaterThan(Math.max(sandbox, scheme))
+    // And not in index.ts as well, where a second copy would read as the one that counts.
+    expect(topLevel(source, 'app.enableSandbox')).toBe(-1)
+    expect(topLevel(source, 'protocol.registerSchemesAsPrivileged')).toBe(-1)
   })
 
   it('creates the window with sandbox: true', () => {

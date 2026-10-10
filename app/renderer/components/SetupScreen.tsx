@@ -22,6 +22,10 @@ const SAYS: Record<CameraOff, string> = {
     'Windows is keeping apps away from the camera, so Kinvue cannot take a reading yet. In ' +
     'Settings, under Privacy & security, then Camera, turn on “Let apps access your camera”, ' +
     'and then “Let desktop apps access your camera” below it.',
+  'off-for-kinvue':
+    'Windows has been set to keep Kinvue itself away from the camera, so it cannot take a ' +
+    'reading yet. There is no switch for this in Settings: it is set for this computer, ' +
+    'and whoever looks after it can lift it.',
   'off-for-this-computer':
     'The camera is turned off for this whole computer, so Kinvue cannot take a reading yet. ' +
     'In Settings, under Privacy & security, then Camera, turn on “Camera access”. That may ' +

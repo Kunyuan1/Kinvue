@@ -234,6 +234,22 @@ export default tseslint.config(
             'Register handlers through handle() in app/main/index.ts.',
         },
         {
+          // Electron's checklist item 15 (review of #193): `openExternal` hands
+          // its argument to the operating system, which runs whatever is
+          // registered for it. One helper holds a fixed list of addresses.
+          selector: "MemberExpression[property.name='openExternal']",
+          message:
+            'app/main opens a link outside the app only through openLink() in ' +
+            'app/main/links.ts, which takes a name from its fixed list, never an address ' +
+            'from the page (checklist item 15).',
+        },
+        {
+          selector: "ImportSpecifier[imported.name='shell']",
+          message:
+            'app/main imports shell only in app/main/links.ts, so every link out passes ' +
+            'its fixed list (checklist item 15).',
+        },
+        {
           selector: "Property[key.name='sandbox'][value.value!=true]",
           message:
             'The renderer is sandboxed: sandbox is the literal true, never false or a value ' +

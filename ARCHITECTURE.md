@@ -838,7 +838,7 @@ Electron's security checklist, item by item:
 | 12 | Verify `<webview>` options | Not applicable, as 11: none may be attached. |
 | 13 | Limit navigation | Done: `will-navigate` (the main frame), `will-frame-navigate` (any frame) and `will-redirect` refuse anything not Kinvue's own page. A subframe is also refused by IPC and held by the CSP. |
 | 14 | Limit new windows | Done: `setWindowOpenHandler` denies all. |
-| 15 | No `shell.openExternal` on untrusted content | Done: not used. A future link out must pass a fixed allowlist, not a URL from the page. |
+| 15 | No `shell.openExternal` on untrusted content | Done: one link out, Windows's camera privacy page for the setup screen (KV-19), through `openLink()` in `app/main/links.ts`, which takes a name from a fixed list and never an address from the page. A lint rule refuses `openExternal` and importing `shell` anywhere else in `app/main/`, and `tests/lint-main.test.ts` checks both fire (review of #193). |
 | 16 | A current Electron | Done: pinned exactly, and each bump arrives alone and is launched before merge (KV-131; "How much to check before merging an Electron bump", KV-145). |
 | 17 | Validate the IPC sender | Done: every handler is registered through `handle()`, which answers only the main frame (by identity, `event.sender.mainFrame`) of Kinvue's own page. A lint rule over all of `app/main/` refuses any other use of `ipcMain` (`handle`, `handleOnce`, `on`, `once`, a renamed import, `electron.ipcMain`), and `tests/lint-main.test.ts` checks it still fires. |
 | 18 | Avoid `file://`, prefer a custom protocol | **Done (KV-19):** the built page is `app://kinvue/index.html`, registered as privileged (standard, secure), served from the built renderer and nothing else (`app/main/app-protocol.ts`), with the checks matching protocol, host and path rather than an origin Node cannot give it. Verified in the packaged app: the page cannot fetch `file://`, and a path climbing out of the renderer is a 404. |
@@ -2105,14 +2105,19 @@ from the owner:
   installed, covers it. Writing there takes the person's own account, since the install is
   per user: T7's boundary, not a new one.
 - **The camera is checked on first run, not on the first failed capture.** On Windows a
-  desktop app cannot raise the camera prompt — the system setting *Let desktop apps access
-  your camera* decides — so when that setting is off, the first-run screen says so and
-  where to change it, before anyone sits down to a capture that cannot run.
+  desktop app cannot raise the camera prompt. Three switches in Settings decide — *Camera
+  access* for the whole computer, *Let apps access your camera*, *Let desktop apps access
+  your camera* — and a fourth value Windows keeps for each desktop app by its own path,
+  with no switch in Settings, which policy or a computer's maker can set (review of #193).
+  When any is off, the first-run screen says which, widest first, and where to change it,
+  before anyone sits down to a capture that cannot run.
 - **The installed app reads the history a development build wrote.** The same `userData`
-  folder — the packaged `package.json` is named `kinvue` and has no `productName`, so it
-  is `%APPDATA%\kinvue` exactly, not merely a name Windows treats as equal — the same
-  `Local State`, the same account: what KV-175 encrypted opens. Checked when built: a
-  history the development build sealed opened in the packaged app, all of it.
+  folder, for two reasons, either enough (review of #193): the packaged `package.json` is
+  named `kinvue` with no `productName`, so the folder is `%APPDATA%\kinvue` exactly; and
+  were electron-builder ever to write the `productName` in, `Kinvue` is a name Windows
+  does not tell from `kinvue`. The same `Local State`, the same account: what KV-175
+  encrypted opens. Checked when built: a history the development build sealed opened in
+  the packaged app, all of it.
 
 **What it costs.**
 - **A household registers with SmartSpectra once**, for the key.
@@ -2137,35 +2142,58 @@ from the owner:
 3. The release: the signing workflow, GitHub Releases, the updater, the "update waiting"
    line, and `README.md`'s privacy section. It needs the owner's Artifact Signing account
    and its three credentials as repository secrets first — accounts this project cannot
-   create for them.
+   create for them. The workflow builds the installer, so it also reads the fuses back
+   from the binary it built and fails on any that differ (review of #193): the config is
+   tested, but the config and the binary are two things, and a pinned electron-builder is
+   pinned for the difference.
 
 **Built: the installer (PR 1).** `npm run dist` builds `dist/Kinvue-Setup-<version>.exe`,
 about 157 MB, from `electron-builder.config.ts` — TypeScript, so `tsc` checks it against
 electron-builder's own types and `tests/packaging.test.ts` reads what the build reads.
 Found building it:
 
-- **The SDK's runtime path is set before anything imports the SDK, by an entry of its
-  own.** The SDK loads its runtime the moment it is imported, and the bundle hoists every
-  dependency's `require` above the module's own code, so a line in `index.ts` would have
-  run after the SDK had looked. `app/main/boot.ts` is the main process's first code: it
-  sets `SMARTSPECTRA_CAPI_PATH` in a packaged build, then loads `index.ts`, and says so in
-  a dialog if that fails rather than leaving no window and no word.
+- **`boot.ts` owns everything before `ready`; `index.ts` everything from `ready` on.** The
+  SDK loads its runtime the moment it is imported, and the bundle hoists every
+  dependency's `require` above the module's own code, so a line in `index.ts` setting
+  where the runtime is would have run after the SDK had looked. `app/main/boot.ts` is the
+  main process's first code: it turns on the sandbox for every renderer, registers
+  `app://`'s privileges — standard and secure, and no more: the page loads its module
+  bundle without `supportFetchAPI`, checked in the packaged app — and sets
+  `SMARTSPECTRA_CAPI_PATH` in a packaged build, then loads `index.ts` by a dynamic import.
+  The two calls Electron needs before `ready` moved there in review of #193: behind that
+  import they held only by an accident of the bundle's module format. A packaged build
+  with no runtime for its platform says so as the packaging fault it is; a failed start
+  says so in a dialog, rather than no window and no word.
 - **electron-builder only finds a config named `electron-builder.<ext>`,** and builds with
   its defaults when it finds none — an installer named `kinvue`, natives rebuilt, no fuses
   — saying nothing. `npm run dist` names the file, and the test holds that.
 - **koffi ships its native module for eighteen platforms;** only Windows x64's is packed.
-- **The first-run screen** (`SetupScreen.tsx`) is shown whenever one of Windows's three
-  camera switches is off, read from where Windows keeps them, not only on the first run,
-  and "Take a reading" asks again before a capture starts. The check-ins can still be read
-  past it.
+- **The first-run screen** (`SetupScreen.tsx`) is shown whenever one of the four camera
+  values is off, read from where Windows keeps them, not only on the first run. Every
+  button that starts a reading — "Take a reading" and "Try the camera again" alike — asks
+  again first (review of #193). Nothing is drawn until Windows has answered, so the
+  dashboard is never shown only to be swapped away.
+- **"Go to the check-ins" lasts until the app is closed, on purpose** (review of #193). A
+  camera Windows keeps from Kinvue stops every reading, and a household that cannot change
+  it — the whole-computer switch may need whoever looks after the machine — meets the
+  screen again at each start, before the check-ins it can still read. The screen costs one
+  press; a remembered "go past it" would hide, at the next start, a camera that still
+  cannot work.
+- **One link out, from a fixed list** (checklist item 15): `app/main/links.ts` opens
+  Windows's camera settings by name, and lint refuses `shell` and `openExternal` anywhere
+  else in `app/main/`.
 
 Checked in the packaged app (`dist/win-unpacked`, against copies of the real history): the
 page at `app://kinvue/index.html` with the origin `app://kinvue`, its bundle loaded under
 the CSP, IPC answered, the history listed, the camera read as allowed; the fuses read back
 from the binary; and a history the development build had sealed opened, whole. **Not
-checked: running the installer itself,** which installs for the account it runs in and
-would open the real history there, and a camera switch turned off, which is a system
-setting — both covered only by tests.
+checked:** running the installer itself, which installs for the account it runs in and
+would open the real history there; a camera value turned off, which is a system setting —
+both covered only by tests; and **a capture from the packaged app** (review of #193). A
+packaged build reads no `.env`, so until the key's PR it has a key only from its
+environment, and that takes the owner's own key: the capture is theirs to run. It is where
+the runtime's new place is tested — the library beside the archive, found by the override,
+with its graph and manifest beside it.
 
 ### What must hold before real check-ins are stored
 

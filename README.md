@@ -129,9 +129,10 @@ The session being scored is **never** part of the baseline it is compared agains
 ```
 app/
   main/
-    boot.ts              the main process's first code: where the SDK's runtime is,
-                         before the SDK is imported, then index.ts (KV-19)
+    boot.ts              the main process's first code: everything before `ready`, and
+                         where the SDK's runtime is, then index.ts (KV-19)
     index.ts             window, IPC handlers, store wiring
+    links.ts             the one place app/main opens a link out, from a fixed list
     app-protocol.ts      app://kinvue/: the built page, and nothing else (KV-19)
     camera-access.ts     whether Windows's camera switches let Kinvue use it (KV-19)
     runtime-path.ts      where a packaged install keeps the SDK's runtime (KV-19)

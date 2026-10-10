@@ -1435,6 +1435,7 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
       ['off-for-desktop-apps', /turn on “Let desktop apps access your camera”/],
       ['off-for-apps', /turn on “Let apps access your camera”/],
       ['off-for-this-computer', /turn on “Camera access”/],
+      ['off-for-kinvue', /keep Kinvue itself away from the camera/],
     ]
     for (const [access, sentence] of says) {
       cameraAccess.mockResolvedValue(access)
@@ -1472,6 +1473,40 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
     // Asked again, still off: back to the setup screen, and no capture.
     expect(await screen.findByText('Before the first reading')).toBeTruthy()
     expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('asks again before a retake too, which starts a reading as much as the first button (review of #193)', async () => {
+    listSessions.mockResolvedValue(days())
+    const empty = { ...session().vitals, pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null }
+    const capture = vi.fn(() => Promise.resolve({ captureId: 'c-1', vitals: empty }))
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    fireEvent.click(await screen.findByText('Take a reading'))
+    expect(await screen.findByText('Nothing was measured')).toBeTruthy()
+    // The switch goes off between the first reading and the retake.
+    cameraAccess.mockResolvedValue('off-for-desktop-apps')
+    fireEvent.click(screen.getByText('Try the camera again'))
+    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(capture).toHaveBeenCalledTimes(1)
+  })
+
+  it('draws no dashboard until Windows has answered, so it is never swapped away (review of #193)', async () => {
+    listSessions.mockResolvedValue(days())
+    let answer: (access: CameraAccess) => void = () => undefined
+    cameraAccess.mockImplementation(() => new Promise((resolve) => (answer = resolve)))
+    render(<App />)
+    await vi.waitFor(() => expect(listSessions).toHaveBeenCalled())
+    expect(screen.queryByText('Take a reading')).toBeNull()
+    answer('off-for-desktop-apps')
+    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+  })
+
+  it('draws the dashboard when Windows cannot be asked at all', async () => {
+    listSessions.mockResolvedValue(days())
+    cameraAccess.mockRejectedValue(new Error('reg.exe failed'))
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    render(<App />)
+    expect(await screen.findByText('Take a reading')).toBeTruthy()
   })
 
   it('asks again before a reading, so a switch turned off since is caught', async () => {
