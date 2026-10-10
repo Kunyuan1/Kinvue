@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "A daily check-in that tells a caregiver when an older adult's day looks different from their own baseline.",
-  "main": "./out/main/index.js",
+  "main": "./out/main/boot.js",
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
   },
@@ -11,6 +11,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "dist": "electron-vite build && electron-builder --config electron-builder.config.ts --win --x64",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
@@ -33,6 +34,7 @@
     "@types/semver": "^7.8.0",
     "@vitejs/plugin-react": "^5.2.0",
     "electron": "44.4.5",
+    "electron-builder": "26.17.0",
     "electron-vite": "^5.0.0",
     "eslint": "^10.11.0",
     "jsdom": "^30.1.1",

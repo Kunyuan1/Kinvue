@@ -6,7 +6,8 @@ import pkg from '../package.json'
 import lock from '../package-lock.json'
 
 /**
- * Electron and the SDK are pinned to exact versions (KV-131).
+ * Electron and the SDK are pinned to exact versions (KV-131), and so is
+ * electron-builder (KV-19), which packages, fuses and will sign the app.
  *
  * The comment in `.github/dependabot.yml` asks that nobody relax them back to
  * a range, and a comment is all that would stop it: restore a caret by hand,
@@ -15,9 +16,9 @@ import lock from '../package-lock.json'
  * `lint-boundary.test.ts` — a green run cannot tell "pinned" from "someone
  * relaxed it" — so it is asserted here instead.
  *
- * Why these two and nothing else is in the dependabot.yml comment: CI cannot
- * prove Electron's native ABI or the SDK's network behaviour, and the build
- * covers everything else.
+ * Why these three and nothing else is in the dependabot.yml comment: CI cannot
+ * prove Electron's native ABI or the SDK's network behaviour, and never builds
+ * the installer; the build covers everything else.
  */
 
 type Deps = Record<string, string>
@@ -26,6 +27,13 @@ const installed = lock.packages as Record<string, { version?: string } | undefin
 
 const PINNED: [name: string, declared: string | undefined, locked: string | undefined][] = [
   ['electron', (pkg.devDependencies as Deps).electron, root.devDependencies?.electron],
+  // KV-19: it packages, fuses and (later) signs the app, so a range would let
+  // a release change what is shipped and how without anyone deciding to.
+  [
+    'electron-builder',
+    (pkg.devDependencies as Deps)['electron-builder'],
+    root.devDependencies?.['electron-builder'],
+  ],
   [
     '@smartspectra/node-sdk',
     (pkg.dependencies as Deps)['@smartspectra/node-sdk'],
@@ -44,6 +52,27 @@ describe('exact version pins (KV-131)', () => {
     // next `npm ci`.
     expect(locked).toBe(declared)
     expect(installed[`node_modules/${name}`]?.version).toBe(declared)
+  })
+
+  it('leaves room for four open majors beside every PR that arrives alone (review of #193)', () => {
+    // Each package left out of the group is a PR of its own, standing open
+    // beside the group's; past the limit Dependabot opens nothing and says
+    // nothing. Pinning another package must raise the limit with it.
+    const yml = readFileSync('.github/dependabot.yml', 'utf8')
+    const excluded = /minor-and-patch:[\s\S]*?exclude-patterns: \[([^\]]*)\]/.exec(yml)?.[1] ?? ''
+    const alone = excluded.split(',').filter((p) => p.trim() !== '').length
+    const limit = Number(/open-pull-requests-limit: (\d+)/.exec(yml)?.[1])
+    expect(alone).toBeGreaterThan(0)
+    expect(limit - (alone + 1)).toBeGreaterThanOrEqual(4)
+  })
+
+  it.each(PINNED)('keeps %s out of the routine group, so each bump arrives alone', (name) => {
+    // A pinned package bumped inside the group's PR is a version change in a
+    // chore nobody reads as one — the thing the pin is for (dependabot.yml).
+    const yml = readFileSync('.github/dependabot.yml', 'utf8')
+    const excluded = /minor-and-patch:[\s\S]*?exclude-patterns: \[([^\]]*)\]/.exec(yml)?.[1] ?? ''
+    const pattern = name.startsWith('@smartspectra/') ? '"@smartspectra/*"' : `"${name}"`
+    expect(excluded).toContain(pattern)
   })
 })
 

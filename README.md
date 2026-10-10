@@ -129,7 +129,13 @@ The session being scored is **never** part of the baseline it is compared agains
 ```
 app/
   main/
-    index.ts             Electron entry: window, IPC handlers, store wiring
+    boot.ts              the main process's first code: everything before `ready`, and
+                         where the SDK's runtime is, then index.ts (KV-19)
+    index.ts             window, IPC handlers, store wiring
+    links.ts             the one place app/main opens a link out, from a fixed list
+    app-protocol.ts      app://kinvue/: the built page, and nothing else (KV-19)
+    camera-access.ts     whether Windows's camera switches let Kinvue use it (KV-19)
+    runtime-path.ts      where a packaged install keeps the SDK's runtime (KV-19)
     device.ts            what the device can honestly say about its time zone
     frames.ts            camera frames → a small picture a screen can show
     env.ts               loads .env into process.env before anything reads it
@@ -142,6 +148,8 @@ app/
   shared/
     capture-reply.ts     how a capture crosses IPC, so a pressed Stop is not logged as
                          a fault (KV-89). Main and preload both use it; no Electron here
+    protection.ts        where the history's encryption stands, as the dashboard says it
+    camera-access.ts     the camera switches' answers, as the setup screen says them
   renderer/
     index.html           CSP: default-src 'self' — the UI loads nothing off the
                          network. img-src also allows blob:, for the self-view.
@@ -157,6 +165,8 @@ app/
                          a card, the chart or a screen that fails to draw leaves a
                          sentence, not an empty window (KV-163)
       SessionCard.tsx    one check-in: readings, every answer, the rules that fired
+      SetupScreen.tsx    before the first reading: a camera Windows keeps Kinvue from,
+                         and where to turn it on (KV-19)
       TrendChart.tsx     one metric over the baseline window, drawn from core/trend (KV-4)
       boxes.ts           the box a card and the chart are drawn in, shared with the
                          gap each leaves when it fails to draw
@@ -270,6 +280,24 @@ npm run build        # electron-vite build
 `npm test` needs neither a camera nor an API key: `core/` is deliberately free of
 Electron and React imports, so the rules are testable in a plain node environment. That
 separation is load-bearing — keep Electron out of `core/`.
+
+Building the Windows installer (KV-19):
+
+```bash
+npm run dist         # electron-vite build, then electron-builder
+```
+
+It writes `dist/Kinvue-Setup-<version>.exe`, unsigned, and `dist/win-unpacked/`, the app
+it installs. **Installing it, or running `Kinvue.exe` without `--user-data-dir`, opens the
+real history in `%APPDATA%\kinvue`** — the same folder `npm run dev` uses — and, since
+KV-175, encrypts it at start. To try a build, run the unpacked app on a scratch folder:
+
+```powershell
+dist\win-unpacked\Kinvue.exe --user-data-dir="$env:TEMP\kinvue-try"
+```
+
+An unsigned build never updates itself, and nothing is published from this script; the
+release, signing and update channel are #19's next step.
 
 Without a key, `npm run dev` starts and the dashboard renders, but pressing capture
 throws `MissingApiKeyError`. That is deliberate: there is no synthetic fallback, because

@@ -2,8 +2,8 @@
  * The window's trust boundary: which page is Kinvue's own (KV-29).
  *
  * The window may be at one page only — the dev server in development, the
- * built `index.html` once packaged — and it is the only frame the main process
- * answers over IPC. Everything past that line, the camera, the API key and the
+ * built `index.html` at `app://kinvue/` otherwise (KV-19) — and it is the only
+ * frame the main process answers over IPC. Everything past that line, the camera, the API key and the
  * check-in history, is reached through those answers, so "is this our page"
  * is decided once, here, rather than in every handler.
  *
@@ -15,7 +15,13 @@
 export type AppPage =
   /** Development: the electron-vite dev server, matched by origin. */
   | { kind: 'dev'; origin: string; url: string }
-  /** Built: `index.html` on disk, matched by path. A `file:` origin is "null", and says nothing. */
+  /**
+   * Built: `app://kinvue/index.html` (KV-19), matched by protocol, host and
+   * path. Node's `URL` gives `app:` the origin "null", as it does `javascript:`
+   * and `data:`, so an origin would match them all (review of #192).
+   */
+  | { kind: 'app'; protocol: string; host: string; pathname: string; url: string }
+  /** A `file:` dev URL: `index.html` on disk, matched by path. A `file:` origin is "null" too. */
   | { kind: 'file'; pathname: string; url: string }
 
 /** The page, and what was wrong with the dev server's address, if anything. */
@@ -31,11 +37,23 @@ const filePage = (fileUrl: string): AppPage => ({
   url: new URL(fileUrl).href,
 })
 
+const appPage = (appUrl: string): AppPage => {
+  const parsed = new URL(appUrl)
+  return {
+    kind: 'app',
+    protocol: parsed.protocol,
+    host: parsed.host,
+    pathname: parsed.pathname,
+    url: parsed.href,
+  }
+}
+
 /**
  * The page the window loads: the dev server when electron-vite names one, the
- * built `index.html` otherwise. `createWindow` loads `page.url` itself, so the
- * URL the window is at and the URL these checks compare against are one string,
- * not two built different ways that must agree (review of #169).
+ * built page at `builtUrl` — `app://kinvue/index.html` (KV-19) — otherwise.
+ * `createWindow` loads `page.url` itself, so the URL the window is at and the
+ * URL these checks compare against are one string, not two built different
+ * ways that must agree (review of #169).
  *
  * Only an `http(s)` dev server is matched by origin. Anything else has no
  * origin to match — a `file:`, `data:` or `about:` URL's origin is the string
@@ -46,8 +64,8 @@ const filePage = (fileUrl: string): AppPage => ({
  * rather than inverting the boundary or throwing before there is a window to
  * say why (review of #169).
  */
-export function resolveAppPage(devUrl: string | undefined, indexHtmlFileUrl: string): ResolvedPage {
-  const built = filePage(indexHtmlFileUrl)
+export function resolveAppPage(devUrl: string | undefined, builtUrl: string): ResolvedPage {
+  const built = appPage(builtUrl)
   if (devUrl === undefined || devUrl === '') return { page: built, problem: null }
   let parsed: URL
   try {
@@ -83,13 +101,19 @@ export function isAppUrl(url: string, page: AppPage): boolean {
   } catch {
     return false
   }
+  if (page.kind === 'dev') return parsed.origin === page.origin
+  if (page.kind === 'app') {
+    return (
+      parsed.protocol === page.protocol &&
+      parsed.host === page.host &&
+      parsed.pathname === page.pathname
+    )
+  }
   // A `file:` URL can name a host — `file://attacker.example/C:/…/index.html`
   // has our path on someone else's machine — so the host must be empty too
   // (review of #169). `file://localhost/…` normalises to an empty host, and is
   // ours.
-  return page.kind === 'dev'
-    ? parsed.origin === page.origin
-    : parsed.protocol === 'file:' && parsed.host === '' && parsed.pathname === page.pathname
+  return parsed.protocol === 'file:' && parsed.host === '' && parsed.pathname === page.pathname
 }
 
 /** The frame an IPC message came from, as much as the check needs. */

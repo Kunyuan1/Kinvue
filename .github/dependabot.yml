@@ -15,11 +15,13 @@ updates:
     versioning-strategy: increase
     schedule:
       interval: weekly
-    # Four kinds of PR stand open on their own — the group, Electron, the SDK and
-    # `@types/node` — before any major. Past the limit Dependabot opens nothing
-    # more and says nothing, and the one dropped could be the Electron patch
-    # README says to launch (review of #160).
-    open-pull-requests-limit: 8
+    # Five kinds of PR stand open on their own — the group, Electron, the SDK,
+    # electron-builder and `@types/node` — before any major. Past the limit
+    # Dependabot opens nothing more and says nothing, and the one dropped could
+    # be the Electron patch README says to launch (review of #160). Nine leaves
+    # four open majors on top of them, as eight did before electron-builder
+    # joined (review of #193); tests/pins.test.ts holds that room.
+    open-pull-requests-limit: 9
     ignore:
       # `@types/node` is held to the Node major Electron ships (24 on Electron
       # 44), not the newest Node. Types a major ahead would let code compile
@@ -79,6 +81,12 @@ updates:
       # changes build output the build and tests do check. That is the line —
       # do not pin package by package past it, or reach for `save-exact`.
       #
+      # electron-builder is on the far side of it too (KV-19), and is pinned
+      # and left out the same way: CI never builds the installer, so a release
+      # that changed the fuses it flips, what it packs or how it signs would
+      # pass every check here. Its bumps are tried with `npm run dist` and the
+      # unpacked app launched, as an Electron bump is.
+      #
       # `@types/node` is on the same side of it, and is left out too (KV-159,
       # review of #152): its ceiling *is* Electron's Node version. It stays a
       # caret range — the test holds it under that minor — but it arrives alone,
@@ -86,7 +94,9 @@ updates:
       # the rest of the group.
       minor-and-patch:
         update-types: ["minor", "patch"]
-        exclude-patterns: ["electron", "@smartspectra/*", "@types/node"]
+        exclude-patterns: [
+          "electron", "electron-builder", "@smartspectra/*", "@types/node",
+        ]
 
   - package-ecosystem: github-actions
     directory: /

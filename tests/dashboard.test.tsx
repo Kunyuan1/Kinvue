@@ -15,6 +15,7 @@ import type { SessionRecord } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
 import { history, session } from './helpers'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
+import type { CameraAccess } from '../app/shared/camera-access'
 
 /**
  * A card, or the chart, that can be made to throw while drawing (KV-163).
@@ -126,6 +127,8 @@ let historyProtection: ReturnType<
 >
 let restoreProtected: ReturnType<typeof vi.fn<() => Promise<RestoreResult>>>
 let cancelRestore: ReturnType<typeof vi.fn<() => Promise<void>>>
+let cameraAccess: ReturnType<typeof vi.fn<() => Promise<CameraAccess>>>
+let openCameraSettings: ReturnType<typeof vi.fn<() => Promise<void>>>
 
 beforeEach(() => {
   listSessions = vi.fn<() => Promise<SessionRecord[]>>()
@@ -140,6 +143,8 @@ beforeEach(() => {
   )
   restoreProtected = vi.fn<() => Promise<RestoreResult>>()
   cancelRestore = vi.fn<() => Promise<void>>(() => Promise.resolve())
+  cameraAccess = vi.fn<() => Promise<CameraAccess>>(() => Promise.resolve('allowed'))
+  openCameraSettings = vi.fn<() => Promise<void>>(() => Promise.resolve())
   Object.defineProperty(window, 'kinvue', {
     configurable: true,
     value: {
@@ -153,6 +158,8 @@ beforeEach(() => {
       historyProtection,
       restoreProtected,
       cancelRestore,
+      cameraAccess,
+      openCameraSettings,
       captureSeconds: vi.fn(() => Promise.resolve(90)),
       cancelCapture: vi.fn(() => Promise.resolve()),
     },
@@ -1405,5 +1412,110 @@ describe('encryption at rest and protected exports (KV-175)', () => {
     expect(plainButton().disabled).toBe(true)
     fireEvent.change(screen.getByLabelText('The same passphrase again'), { target: { value: '' } })
     expect(plainButton().disabled).toBe(false)
+  })
+})
+
+describe('the setup screen: the camera, before the first reading (KV-19)', () => {
+  const days = (): SessionRecord[] => history(3).map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+
+  it('shows the dashboard, not the setup screen, when the camera is allowed or unknown', async () => {
+    listSessions.mockResolvedValue(days())
+    for (const access of ['allowed', 'unknown'] as const) {
+      cameraAccess.mockResolvedValue(access)
+      render(<App />)
+      expect(await screen.findByText('Take a reading')).toBeTruthy()
+      expect(screen.queryByText('Before the first reading')).toBeNull()
+      cleanup()
+    }
+  })
+
+  it('names the switch that is off, in Windows\'s own words, and where it is', async () => {
+    listSessions.mockResolvedValue(days())
+    const says: [CameraAccess, RegExp][] = [
+      ['off-for-desktop-apps', /turn on “Let desktop apps access your camera”/],
+      ['off-for-apps', /turn on “Let apps access your camera”/],
+      ['off-for-this-computer', /turn on “Camera access”/],
+      ['off-for-kinvue', /keep Kinvue itself away from the camera/],
+    ]
+    for (const [access, sentence] of says) {
+      cameraAccess.mockResolvedValue(access)
+      render(<App />)
+      expect(await screen.findByText('Before the first reading')).toBeTruthy()
+      expect(screen.getByText(sentence)).toBeTruthy()
+      expect(screen.queryByText('Take a reading')).toBeNull()
+      cleanup()
+    }
+  })
+
+  it('opens the settings, and goes once a check finds the camera allowed', async () => {
+    listSessions.mockResolvedValue(days())
+    cameraAccess.mockResolvedValue('off-for-desktop-apps')
+    render(<App />)
+    fireEvent.click(await screen.findByText('Open camera settings'))
+    expect(openCameraSettings).toHaveBeenCalled()
+
+    fireEvent.click(screen.getByText('Check again'))
+    expect(await screen.findByText('The camera is still turned off.')).toBeTruthy()
+
+    cameraAccess.mockResolvedValue('allowed')
+    fireEvent.click(screen.getByText('Check again'))
+    expect(await screen.findByText('Take a reading')).toBeTruthy()
+  })
+
+  it('lets the check-ins be read with the camera off, and never starts a reading that cannot run', async () => {
+    listSessions.mockResolvedValue(days())
+    cameraAccess.mockResolvedValue('off-for-apps')
+    const capture = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    fireEvent.click(await screen.findByText('Go to the check-ins'))
+    fireEvent.click(await screen.findByText('Take a reading'))
+    // Asked again, still off: back to the setup screen, and no capture.
+    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('asks again before a retake too, which starts a reading as much as the first button (review of #193)', async () => {
+    listSessions.mockResolvedValue(days())
+    const empty = { ...session().vitals, pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null }
+    const capture = vi.fn(() => Promise.resolve({ captureId: 'c-1', vitals: empty }))
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    fireEvent.click(await screen.findByText('Take a reading'))
+    expect(await screen.findByText('Nothing was measured')).toBeTruthy()
+    // The switch goes off between the first reading and the retake.
+    cameraAccess.mockResolvedValue('off-for-desktop-apps')
+    fireEvent.click(screen.getByText('Try the camera again'))
+    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(capture).toHaveBeenCalledTimes(1)
+  })
+
+  it('draws no dashboard until Windows has answered, so it is never swapped away (review of #193)', async () => {
+    listSessions.mockResolvedValue(days())
+    let answer: (access: CameraAccess) => void = () => undefined
+    cameraAccess.mockImplementation(() => new Promise((resolve) => (answer = resolve)))
+    render(<App />)
+    await vi.waitFor(() => expect(listSessions).toHaveBeenCalled())
+    expect(screen.queryByText('Take a reading')).toBeNull()
+    answer('off-for-desktop-apps')
+    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+  })
+
+  it('draws the dashboard when Windows cannot be asked at all', async () => {
+    listSessions.mockResolvedValue(days())
+    cameraAccess.mockRejectedValue(new Error('reg.exe failed'))
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    render(<App />)
+    expect(await screen.findByText('Take a reading')).toBeTruthy()
+  })
+
+  it('asks again before a reading, so a switch turned off since is caught', async () => {
+    listSessions.mockResolvedValue(days())
+    const capture = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    fireEvent.click(await screen.findByText('Take a reading'))
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(1))
+    expect(cameraAccess.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 })

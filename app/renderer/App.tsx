@@ -18,6 +18,8 @@ import ConfirmRemoval from './components/ConfirmRemoval'
 import HistoryPanel from './components/HistoryPanel'
 import QuestionFlow from './components/QuestionFlow'
 import SectionBoundary from './components/SectionBoundary'
+import SetupScreen, { cameraIsOff } from './components/SetupScreen'
+import type { CameraAccess } from '../shared/camera-access'
 import SessionCard from './components/SessionCard'
 import TrendChart from './components/TrendChart'
 import { dashboardErrorText } from './dashboardError'
@@ -198,6 +200,11 @@ function Dashboard(): React.JSX.Element {
   const [deleting, setDeleting] = useState<string | null>(null)
   // When the history was last exported: null for never, undefined until known.
   const [lastExported, setLastExported] = useState<string | null | undefined>(undefined)
+  // Whether Windows lets Kinvue use the camera (KV-19): undefined until known.
+  // Off, the setup screen is shown in place of this one, until the person
+  // turns it on or goes past it to read the check-ins.
+  const [camera, setCamera] = useState<CameraAccess | undefined>(undefined)
+  const [pastSetup, setPastSetup] = useState(false)
   // Where its protection stands (KV-175): undefined until known.
   const [protection, setProtection] = useState<Protection | undefined>(undefined)
 
@@ -404,7 +411,26 @@ function Dashboard(): React.JSX.Element {
    * the camera cannot be undone, and React runs an effect twice in development
    * — which asked main for two captures and had the second refused.
    */
-  const startCapture = useCallback((): void => {
+  // Asks main again each time: a switch can be turned on, or off, at any time.
+  const askCamera = useCallback(async (): Promise<CameraAccess> => {
+    const now = await window.kinvue.cameraAccess()
+    setCamera(now)
+    return now
+  }, [])
+
+  useEffect(() => {
+    // Not worth a screen if it cannot be asked: the dashboard is drawn, and a
+    // capture says what is wrong.
+    void askCamera().catch((e: unknown) => {
+      console.error('Could not read whether the camera is allowed.', e)
+      setCamera('unknown')
+    })
+  }, [askCamera])
+
+  // Starts a capture with no checks at all. Only `takeReading`, below, calls
+  // it: every button that starts a reading goes through that, so Windows is
+  // asked about the camera first (review of #193).
+  const startCaptureUnchecked = useCallback((): void => {
     setReading(null)
     setCaptureFailure(null)
     setCapturing(true)
@@ -563,6 +589,31 @@ function Dashboard(): React.JSX.Element {
     )
   }
 
+  // Nothing until Windows has answered — a moment, three registry reads — so
+  // the dashboard is never drawn only to be replaced by the setup screen
+  // (review of #193). The first state that picks a whole screen, unlike the
+  // others above, which feed a line of text.
+  if (camera === undefined) return <main className="mx-auto max-w-3xl px-6 py-10" />
+
+  // Before the first reading (KV-19): a camera Windows keeps Kinvue from is
+  // said here, not after a capture fails. Going past it reads the check-ins.
+  if (cameraIsOff(camera) && !pastSetup) {
+    return <SetupScreen access={camera} onCheckAgain={askCamera} onContinue={() => setPastSetup(true)} />
+  }
+
+  // A reading starts only once Windows has been asked again: a switch turned
+  // off since is said on the setup screen, not by a capture that cannot run.
+  const takeReading = (): void => {
+    void askCamera().then(
+      (now) => {
+        if (cameraIsOff(now)) setPastSetup(false)
+        else startCaptureUnchecked()
+      },
+      // Not asked: the capture is tried, and says what is wrong if it fails.
+      () => startCaptureUnchecked(),
+    )
+  }
+
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
       <header className="mb-8">
@@ -585,7 +636,7 @@ function Dashboard(): React.JSX.Element {
       <div className="mb-8 flex items-center gap-3">
         <button
           type="button"
-          onClick={startCapture}
+          onClick={takeReading}
           className="rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-raised)"
         >
           Take a reading
@@ -598,7 +649,7 @@ function Dashboard(): React.JSX.Element {
       {reading !== null && (
         <ReadingSummary
           result={reading}
-          onRetake={startCapture}
+          onRetake={takeReading}
           onContinue={() => {
             setAnswering(reading)
             setReading(null)

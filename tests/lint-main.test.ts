@@ -44,6 +44,8 @@ const SANDBOX = 'sandbox is the literal true'
 const ISOLATION = 'contextIsolation is the literal true'
 const NODE = 'nodeIntegration is the literal false'
 const WEB = 'webSecurity stays on'
+const LINK = 'opens a link outside the app only through openLink()'
+const SHELL = 'imports shell only in app/main/links.ts'
 
 const IMPORT = "import { ipcMain } from 'electron'\n"
 
@@ -72,12 +74,19 @@ const PROBES: Probe[] = [
   ['contextIsolation: false', 'export const w = { contextIsolation: false }', ISOLATION],
   ['nodeIntegration: true', 'export const w = { nodeIntegration: true }', NODE],
   ['webSecurity: false', 'export const w = { webSecurity: false }', WEB],
+  [
+    'shell.openExternal with an address from anywhere',
+    "import * as electron from 'electron'\nexport const open = (url: string) => electron.shell.openExternal(url)",
+    LINK,
+  ],
+  ['shell imported, to open links past the list', "import { shell } from 'electron'\nexport { shell }", SHELL],
 ]
 
 /** What app/main may do: the options as literals, a call to the checked wrapper, prose. */
 const ALLOWED: [string][] = [
   ['export const w = { sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true }'],
   ["declare function handle(c: string, f: () => unknown): void\nhandle('sessions:list', () => [])"],
+  ["declare function openLink(l: 'cameraSettings'): Promise<void>\nvoid openLink('cameraSettings')"],
   ['// Registered with ipcMain.handle( inside handle(); sandbox: false is never allowed.\nexport {}'],
 ]
 
