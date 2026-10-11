@@ -133,6 +133,8 @@ app/
                          where the SDK's runtime is, then index.ts (KV-19)
     index.ts             window, IPC handlers, store wiring
     links.ts             the one place app/main opens a link out, from a fixed list
+    api-key.ts           the household's SmartSpectra key: held, sealed, or asked again
+                         (KV-19)
     app-protocol.ts      app://kinvue/: the built page, and nothing else (KV-19)
     camera-access.ts     whether Windows's camera switches let Kinvue use it (KV-19)
     runtime-path.ts      where a packaged install keeps the SDK's runtime (KV-19)
@@ -150,6 +152,7 @@ app/
                          a fault (KV-89). Main and preload both use it; no Electron here
     protection.ts        where the history's encryption stands, as the dashboard says it
     camera-access.ts     the camera switches' answers, as the setup screen says them
+    api-key.ts           where the key stands, as the screens say it — never the key
   renderer/
     index.html           CSP: default-src 'self' — the UI loads nothing off the
                          network. img-src also allows blob:, for the self-view.
@@ -166,7 +169,8 @@ app/
                          sentence, not an empty window (KV-163)
       SessionCard.tsx    one check-in: readings, every answer, the rules that fired
       SetupScreen.tsx    before the first reading: a camera Windows keeps Kinvue from,
-                         and where to turn it on (KV-19)
+                         where to turn it on, and the household's key (KV-19)
+      KeyField.tsx       the key, typed in; KeySettings.tsx replaces it from the dashboard
       TrendChart.tsx     one metric over the baseline window, drawn from core/trend (KV-4)
       boxes.ts           the box a card and the chart are drawn in, shared with the
                          gap each leaves when it fails to draw
@@ -299,9 +303,10 @@ dist\win-unpacked\Kinvue.exe --user-data-dir="$env:TEMP\kinvue-try"
 An unsigned build never updates itself, and nothing is published from this script; the
 release, signing and update channel are #19's next step.
 
-Without a key, `npm run dev` starts and the dashboard renders, but pressing capture
-throws `MissingApiKeyError`. That is deliberate: there is no synthetic fallback, because
-a check-in that quietly invented vitals would be worse than no check-in at all.
+Without a key in `.env`, the app asks for one on its setup screen, as an installed copy
+does, and keeps it encrypted in `userData` (KV-19). Going past that screen with no key,
+pressing "Take a reading" brings it back. There is no synthetic fallback, because a
+check-in that quietly invented vitals would be worse than no check-in at all.
 
 ---
 
@@ -311,18 +316,19 @@ Everything is env-driven and read in the main process only.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SMARTSPECTRA_API_KEY` | — | SmartSpectra SDK key. Free from the [Presage portal](https://physiology.presagetech.com/auth/register). Read in `app/main` and never exposed to the renderer. |
+| `SMARTSPECTRA_API_KEY` | — | SmartSpectra SDK key, **development builds only**. Free from the [Presage portal](https://physiology.presagetech.com/auth/register). Read in `app/main` and never exposed to the renderer. When set, it is used over the key saved on the setup screen. A packaged build ignores it: an installed copy uses only the household's own key, asked for on first run (KV-19). |
 | `KINVUE_CAPTURE_SECONDS` | `30` | Seconds of capture. Clamped to `SHORTEST_USEFUL_SECONDS`–`LONGEST_REASONABLE_SECONDS`; a value outside that, or one that cannot be read, is replaced and the replacement is printed at startup. The countdown and the sentence under the button both follow it. Raising this is how #63 gets the timings it needs — HRV did not arrive at 43s of capture and did at 58s. |
 | `KINVUE_LOG_CAPTURE` | unset | Any non-empty value prints how long the camera took to close after each capture — `[capture] camera release: released in 340ms`. That figure is what `DEVICE_RELEASE_TIMEOUT_MS` is guessing at, and #63 is where it gets settled. A release that failed or outran the wait prints whether or not this is set. |
 
 `app/main/env.ts` loads `.env` into `process.env` at startup, **in development only** — a
 packaged app is launched from wherever its shortcut points, and reading whatever `.env`
 happens to sit there is not a route into the process that owns the camera and the key.
-Packaged installs therefore have no `.env` route at all yet; that is KV-19.
+An installed copy gets its key from the setup screen instead (KV-19), and ignores
+`SMARTSPECTRA_API_KEY` even when it is set in its environment.
 
 A variable already set in the environment wins over the file. A missing `.env` is normal
-— the app starts, and capture fails with `MissingApiKeyError` when it is asked for a
-reading. A `.env` that cannot be read is reported at startup instead.
+— the app starts and asks for a key on its setup screen. A `.env` that cannot be read is
+reported at startup instead.
 
 **Quote a key containing `#`** (`SMARTSPECTRA_API_KEY="ab#cd"`). Node's `.env` parser
 treats an unquoted `#` as the start of a comment and drops the rest of the value
@@ -403,7 +409,14 @@ them checkable:
   the traffic volume, not by decrypting it (KV-65). This app is not offline and does not
   claim to be. Details and the remaining gap are under Architecture & Flow.
 - **The API key stays in the main process.** The preload surface exposes named calls only
-  — no generic `invoke(channel, ...)` — so a compromised renderer cannot read it.
+  — no generic `invoke(channel, ...)` — so a compromised renderer cannot read it. The
+  page can hand main a new key and ask where the key stands; it is never given the key.
+- **The household's key is its own, and kept encrypted** (KV-19). An installed copy asks
+  for a SmartSpectra key on first run — free to register — and keeps it in
+  `userData\api-key.json`, encrypted with the computer's key like the history, or
+  unencrypted, and said so, where there is no key store. No key ships in the installer.
+  The cost, stated in ARCHITECTURE.md: the vendor's licence meter now arrives under the
+  household's own registration, so it can tie when check-ins happen to that account.
 - **Session data is local**, under Electron's `userData`, and `.gitignore` covers
   `sessions/` and video files so a check-in cannot be committed by accident.
 - **The history is encrypted with this computer's key, where it has one** (KV-175):

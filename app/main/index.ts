@@ -40,6 +40,8 @@ import { exportFileName, readExport } from "./history-file";
 import { APP_PAGE_URL, APP_SCHEME, serveApp } from "./app-protocol";
 import { cameraAccess, readWindowsSwitch, type CameraAccess } from "./camera-access";
 import { openLink } from "./links";
+import { checkKey, createApiKeyStore, type ApiKeyStore } from "./api-key";
+import type { KeyStatus, SetKeyResult } from "../shared/api-key";
 import { protectedRestores } from "./protected-restore";
 import { localStateHoldsKey, osCipher, protectionOf } from "./cipher";
 import { captureVitals } from "./vitals";
@@ -201,7 +203,31 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-function registerIpc(store: SessionStore, protection: () => Promise<Protection>): void {
+/**
+ * The SmartSpectra key a capture uses, and where it stands (KV-19). A packaged
+ * build uses only the household's stored key: a `SMARTSPECTRA_API_KEY` left in
+ * its environment can neither override the key the dashboard replaces nor
+ * quietly meter another account (review of #192). A development build takes
+ * the variable — from `.env` — when it is set, and the stored key otherwise.
+ */
+function keySource(keys: ApiKeyStore): { current(): string | null; status(): KeyStatus } {
+  const fromEnvironment = (): string | null => {
+    if (app.isPackaged) return null;
+    const key = process.env.SMARTSPECTRA_API_KEY;
+    return key === undefined || key === "" ? null : key;
+  };
+  return {
+    current: () => fromEnvironment() ?? keys.current(),
+    status: () => (fromEnvironment() !== null ? "environment" : keys.status()),
+  };
+}
+
+function registerIpc(
+  store: SessionStore,
+  protection: () => Promise<Protection>,
+  keys: ApiKeyStore,
+): void {
+  const apiKey = keySource(keys);
   // Holds each capture until its answers arrive; the rules live in core so they
   // are tested. Everything the renderer sends is validated here first.
   const checkIn = createCheckIn({
@@ -267,6 +293,7 @@ function registerIpc(store: SessionStore, protection: () => Promise<Protection>)
           // (KV-76). This callback only runs once the lock is held.
           inFlight.claim(controller);
           return captureVitals({
+            apiKey: apiKey.current(),
             durationSec: captureSeconds(process.env),
             signal: controller.signal,
             onProgress: (elapsedSec) => {
@@ -404,6 +431,21 @@ function registerIpc(store: SessionStore, protection: () => Promise<Protection>)
   // screen: said before anyone sits down to a capture that cannot run, not
   // after it fails. Read each time it is asked, so turning a switch on and
   // pressing "Check again" is enough.
+  // KV-19. Where the household's key stands, for the setup screen and the
+  // dashboard: never the key itself, which the page is not given.
+  handle("setup:apiKey", (): KeyStatus => apiKey.status());
+
+  // The key, typed on the setup screen or the dashboard. Checked here as well as
+  // there: a line with a label or a break in it is refused before it is kept.
+  handle("setup:setApiKey", async (_e, typed: unknown): Promise<SetKeyResult> => {
+    if (typeof typed !== "string" || checkKey(typed) === null) {
+      return { ok: false, why: "not-a-key", status: apiKey.status() };
+    }
+    if (keys.status() === "locked") return { ok: false, why: "locked", status: "locked" };
+    await keys.set(typed);
+    return { ok: true, status: apiKey.status() };
+  });
+
   handle(
     "setup:camera",
     (): Promise<CameraAccess> =>
@@ -416,6 +458,8 @@ function registerIpc(store: SessionStore, protection: () => Promise<Protection>)
   handle("setup:openCameraSettings", async (): Promise<void> => {
     if (process.platform === "win32") await openLink("cameraSettings");
   });
+  // SmartSpectra's registration page, from the same list: a fixed address.
+  handle("setup:openKeyRegistration", (): Promise<void> => openLink("keyRegistration"));
 
   handle(
     "history:lastExported",
@@ -587,6 +631,10 @@ void app.whenReady().then(async () => {
   const store = createJsonSessionStore(storePath(), undefined, cipher);
   const protection = async (): Promise<Protection> =>
     protectionOf(cipher.holdsKey, cipher.encrypts, await store.atRest());
+  // KV-19. The household's own SmartSpectra key, beside the history and sealed
+  // the same way; read once here, before any window can ask for it.
+  const keys = createApiKeyStore(join(app.getPath("userData"), "api-key.json"), cipher);
+  await keys.load();
 
   // Whether there is nothing left to seal: the key on disk, and the file sealed
   // or holding nothing yet. A failed seal — a rename refused while another
@@ -594,13 +642,17 @@ void app.whenReady().then(async () => {
   let failedBefore = false;
   const settled = async (): Promise<boolean> => {
     if (!(await cipher.keyLanded())) return false;
+    let keySealed = false;
     try {
       await store.encryptAtRest();
+      // And a key typed before the operating system's key was on disk, held
+      // in memory until now (KV-19).
+      keySealed = await keys.settle();
     } catch (err) {
       if (!failedBefore) console.error("The history could not be encrypted yet.", err);
       failedBefore = true;
     }
-    return (await store.atRest()) !== "plain";
+    return keySealed && (await store.atRest()) !== "plain";
   };
   const sealUntilItHolds = async (): Promise<void> => {
     if (!(await cipher.keyLanded())) {
@@ -630,7 +682,7 @@ void app.whenReady().then(async () => {
     again();
   };
 
-  registerIpc(store, protection);
+  registerIpc(store, protection, keys);
   createWindow();
 
   app.on("activate", () => {

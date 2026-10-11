@@ -20,8 +20,9 @@ import type { Vitals } from '@core/session/types'
 export class MissingApiKeyError extends Error {
   constructor() {
     super(
-      `${failureTag('no-api-key')}: SMARTSPECTRA_API_KEY is not set. Register free at ` +
-        'https://physiology.presagetech.com/auth/register and put the key in .env',
+      `${failureTag('no-api-key')}: No SmartSpectra key is set. Register free at ` +
+        'https://physiology.presagetech.com/auth/register and enter the key on the setup ' +
+        'screen (or, in development, set SMARTSPECTRA_API_KEY in .env)',
     )
     this.name = 'MissingApiKeyError'
   }
@@ -93,14 +94,23 @@ const CONNECTION_CODES: ReadonlySet<number> = new Set([
 export function sdkFailure(
   code: number | undefined,
   online: boolean,
-): Extract<TaggedFailure, 'no-api-key' | 'camera-unavailable' | 'no-connection'> {
+): Extract<
+  TaggedFailure,
+  'no-api-key' | 'camera-unavailable' | 'no-connection' | 'service-refused'
+> {
   // Account problems are named whether or not the device is online: the SDK
   // only learns of them by reaching Presage, so it was online enough to ask.
   if (code !== undefined && ACCOUNT_CODES.has(code)) return 'no-api-key'
   // A throw with no code is left alone too. The lifecycle path that produces
   // one is `useCamera()`, which is local, and the measured offline failure
   // arrived as code 8 on the `error` event — not as a throw.
-  if (!online && code !== undefined && CONNECTION_CODES.has(code)) return 'no-connection'
+  if (code !== undefined && CONNECTION_CODES.has(code)) {
+    // Offline, the connection explains it. Online, the same codes are what a
+    // refused or used-up key, or a service that is down, look like from here
+    // (KV-19): the household's own key makes the first possible, so it is
+    // named among them rather than blamed on the camera (review of #192).
+    return online ? 'service-refused' : 'no-connection'
+  }
   return 'camera-unavailable'
 }
 

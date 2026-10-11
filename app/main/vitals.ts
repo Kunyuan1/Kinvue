@@ -145,6 +145,12 @@ const SETTLING_CODES: ReadonlySet<ValidationCodeValue> = new Set([
 ])
 
 export interface CaptureOptions {
+  /**
+   * The SmartSpectra key to capture with, chosen in `app/main/index.ts` (KV-19):
+   * the household's stored key in a packaged build, `SMARTSPECTRA_API_KEY` in
+   * development. Null or empty is `MissingApiKeyError`, before any camera.
+   */
+  apiKey?: string | null
   /** How long to hold the camera open. The UI asks the person for ~30s. */
   durationSec?: number
   /** Called with elapsed seconds so the renderer can show a countdown. */
@@ -200,6 +206,7 @@ export interface CaptureOptions {
  */
 export async function captureVitals(options: CaptureOptions = {}): Promise<Vitals> {
   const {
+    apiKey,
     durationSec = DEFAULT_CAPTURE_SECONDS,
     onProgress,
     onGuidance,
@@ -209,8 +216,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
   } = options
   if (signal?.aborted === true) throw new CaptureCancelledError()
 
-  const apiKey = process.env.SMARTSPECTRA_API_KEY
-  if (apiKey === undefined || apiKey === '') throw new MissingApiKeyError()
+  if (apiKey === undefined || apiKey === null || apiKey === '') throw new MissingApiKeyError()
 
   // Sampled once, before the camera opens, and used for every failure below
   // (KV-104). The SDK reaches Presage when the session starts, so this is the

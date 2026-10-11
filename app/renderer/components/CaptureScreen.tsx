@@ -59,10 +59,13 @@ import type { CaptureFailure } from '@core/capture/failure'
  */
 const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
   'no-api-key': {
-    title: 'This app is not set up yet',
+    // Missing, or refused outright by the service (KV-19): either way it is the
+    // key, and whoever set Kinvue up enters it again.
+    title: 'Kinvue’s key is missing or was not accepted',
     detail:
-      'Kinvue has not been given what it needs to use the camera. Nothing is wrong on ' +
-      'your side — whoever set this up can finish it.',
+      'Kinvue needs a key from SmartSpectra to take a reading, and it has none, or the ' +
+      'one it has was not accepted. Nothing is wrong on your side — whoever set this up ' +
+      'can enter it again.',
   },
   'camera-unavailable': {
     // Still hedges toward the connection, because `net.isOnline()` returning
@@ -80,6 +83,16 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
     detail:
       'A reading needs the internet, and there is none right now, so this check-in ' +
       'could not be finished. It can be taken once the connection is back.',
+  },
+  'service-refused': {
+    // Online, and the service did not finish it: the household's key refused
+    // or used up, or the service down — the SDK says the same for each (KV-19).
+    // Names the key as a possibility, for whoever set it up, without claiming it.
+    title: 'The reading could not be finished',
+    detail:
+      'The service that reads the camera did not accept it. It may be busy, or the key ' +
+      'Kinvue was set up with may need replacing. Nothing is wrong on your side — ' +
+      'whoever set this up can check the key.',
   },
   'capture-in-progress': {
     // Says what the button does, because the button is the only way out of

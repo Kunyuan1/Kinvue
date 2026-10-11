@@ -42,6 +42,14 @@ export type TaggedFailure =
    * from `net.isOnline()` rather than from anything the SDK said.
    */
   | 'no-connection'
+  /**
+   * The capture failed online in a way the service could have caused: the
+   * household's key refused or used up, or the service itself down (KV-19,
+   * review of #192). The SDK reports all of them as `kProcessingFailed` (or
+   * says server or network), as it does a connection that is gone, so the
+   * sentence names the key as one possible cause and does not pretend to know.
+   */
+  | 'service-refused'
   /** A capture is already running, so another cannot start. */
   | 'capture-in-progress'
   /** The person stopped it. Not a failure to report as one. */
@@ -103,6 +111,7 @@ export type CaptureFailure =
   | 'no-api-key'
   | 'camera-unavailable'
   | 'no-connection'
+  | 'service-refused'
   | 'capture-in-progress'
   /** Anything unclassified. Shown as a short line, never as a stack trace. */
   | 'unknown'
@@ -162,6 +171,7 @@ const ON_CAPTURE: Record<TaggedFailure, CaptureFailure | null> = {
   'no-api-key': 'no-api-key',
   'camera-unavailable': 'camera-unavailable',
   'no-connection': 'no-connection',
+  'service-refused': 'service-refused',
   'capture-in-progress': 'capture-in-progress',
   // They pressed stop, so they already know. Null, not a sentence.
   cancelled: null,
@@ -188,8 +198,9 @@ const ON_SUBMIT: Record<TaggedFailure, SubmitFailure> = {
   // which has been closed since before the questions were asked.
   'no-api-key': 'unknown',
   'camera-unavailable': 'unknown',
-  // The submit path does not open the camera, so it cannot raise this either.
+  // The submit path does not open the camera, so it cannot raise these either.
   'no-connection': 'unknown',
+  'service-refused': 'unknown',
   'capture-in-progress': 'unknown',
   cancelled: 'unknown',
   expired: 'expired',
@@ -221,6 +232,7 @@ const ON_DASHBOARD: Record<TaggedFailure, DashboardFailure> = {
   'no-api-key': 'unknown',
   'camera-unavailable': 'unknown',
   'no-connection': 'unknown',
+  'service-refused': 'unknown',
   'capture-in-progress': 'unknown',
   cancelled: 'unknown',
   expired: 'unknown',

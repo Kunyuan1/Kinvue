@@ -88,8 +88,17 @@ describe('sdkFailure', () => {
   })
 
   it('does not guess at codes it has no opinion about', () => {
-    for (const code of [0, 1, 5, 6, 8, 9, 10, 11]) {
+    for (const code of [0, 1, 9, 10, 11]) {
       expect(sdkFailure(code, ONLINE)).toBe('camera-unavailable')
+    }
+  })
+
+  it('names the key and the service, online, for what a refused key looks like (KV-19)', () => {
+    // A household's own key can be mistyped, revoked or used up, and the SDK
+    // reports that as it does a connection that is gone. Online, the connection
+    // is not it, so the key and the service are named — not the camera.
+    for (const code of [5, 6, 8]) {
+      expect(sdkFailure(code, ONLINE), `code ${code}`).toBe('service-refused')
     }
   })
 
