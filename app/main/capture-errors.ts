@@ -64,6 +64,18 @@ const CONNECTION_CODES: ReadonlySet<number> = new Set([
 ])
 
 /**
+ * The connection codes that say, in themselves, the service or the way to it
+ * — so that online they name the service rather than the camera (KV-19). Not
+ * 8: `kProcessingFailed` is what an ordinary bad capture gets too, and naming
+ * the service or the key for every reading that did not work is the
+ * wrong-cause screen KV-104 removed, with the parts swapped (review of #195).
+ */
+const SERVICE_CODES: ReadonlySet<number> = new Set([
+  5, // kNetworkError
+  6, // kServerError
+])
+
+/**
  * Which failure an SDK error code is, for both the `error` event and the
  * throw out of a lifecycle call.
  *
@@ -73,12 +85,16 @@ const CONNECTION_CODES: ReadonlySet<number> = new Set([
  * testable in the ordinary no-camera suite. A boolean crosses that line; an
  * import would not.
  *
- * **Only `false` is acted on.** Electron's own documentation says a `false`
- * return is a strong indicator the device cannot reach remote sites, while
- * `true` is inconclusive — a link being up says nothing about whether Presage
- * answered. So an offline device gets a cause named, and an online one is left
- * at `camera-unavailable`, whose copy still hedges toward the connection
- * because that remains possible (KV-104).
+ * **`false` names the connection; `true` names nothing new.** Electron's own
+ * documentation says a `false` return is a strong indicator the device cannot
+ * reach remote sites, while `true` is inconclusive — a link being up says
+ * nothing about whether Presage answered. So an offline device gets the
+ * connection named. Online, only a code that itself says the service or the
+ * network (5, 6) is named `service-refused`, where the household's key is one
+ * possibility (KV-19); 8 stays `camera-unavailable`, whose copy still hedges
+ * toward the connection because that remains possible (KV-104). A refused key
+ * is expected among the account codes (2, 4), which say so; what a wrong key
+ * sends online has not been measured (review of #195).
  *
  * The SDK cannot answer this itself: measured on a real capture with the
  * network down, it reports `kProcessingFailed` (8) — the same code a genuinely
@@ -105,11 +121,11 @@ export function sdkFailure(
   // one is `useCamera()`, which is local, and the measured offline failure
   // arrived as code 8 on the `error` event — not as a throw.
   if (code !== undefined && CONNECTION_CODES.has(code)) {
-    // Offline, the connection explains it. Online, the same codes are what a
-    // refused or used-up key, or a service that is down, look like from here
-    // (KV-19): the household's own key makes the first possible, so it is
-    // named among them rather than blamed on the camera (review of #192).
-    return online ? 'service-refused' : 'no-connection'
+    // Offline, the connection explains it.
+    if (!online) return 'no-connection'
+    // Online, a code that says the service or the network names the service
+    // (KV-19). 8 does not: a bad capture sends it too (review of #195).
+    if (SERVICE_CODES.has(code)) return 'service-refused'
   }
   return 'camera-unavailable'
 }

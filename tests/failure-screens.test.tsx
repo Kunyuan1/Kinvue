@@ -59,7 +59,7 @@ describe('CaptureScreen says which failure it was', () => {
   // used to carry were copy no press could reach (KV-75).
   const cases: [CaptureFailure, RegExp][] = [
     // Check 1: rename .env. Not a registration URL and a dotfile instruction.
-    ['no-api-key', /key is missing or was not accepted/i],
+    ['no-api-key', /not set up to take a reading/i],
     // Check 2: the camera held by something else.
     ['camera-unavailable', /camera could not be used/i],
     // Check 3: Take a reading pressed twice.
@@ -68,8 +68,8 @@ describe('CaptureScreen says which failure it was', () => {
     // says what to do rather than that nothing is wrong on their side, which
     // is the one thing that would stop them fixing it (KV-104).
     ['no-connection', /no internet connection/i],
-    // Check 5 (KV-19): online, and the service refused it — the key may need replacing.
-    ['service-refused', /key Kinvue was set up with may need replacing/i],
+    // Check 5 (KV-19): online, and the SDK said the service or the network.
+    ['service-refused', /can check Kinvue’s key/i],
     ['unknown', /could not be taken/i],
   ]
 
@@ -215,7 +215,7 @@ describe('CaptureScreen says which failure it was', () => {
 
   it('shows nothing at all when there is no failure', () => {
     renderCapture(null)
-    expect(screen.queryByText(/key is missing or was not accepted/i)).toBeNull()
+    expect(screen.queryByText(/not set up to take a reading/i)).toBeNull()
   })
 })
 
@@ -310,7 +310,7 @@ describe('end to end, from the thrown error to the sentence', () => {
     expect(failure).toBe('no-api-key')
     renderCapture(failure)
 
-    expect(screen.getByText(/key is missing or was not accepted/i)).toBeDefined()
+    expect(screen.getByText(/not set up to take a reading/i)).toBeDefined()
     // The old behaviour: this exact string in front of the cared-for person.
     expect(document.body.textContent).not.toMatch(/SMARTSPECTRA_API_KEY/)
   })

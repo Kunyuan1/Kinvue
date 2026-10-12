@@ -435,12 +435,14 @@ function Dashboard(): React.JSX.Element {
     })
   }, [askCamera])
 
-  // Where the key stands (KV-19). Not asked, the dashboard is drawn as though
-  // a key were there, and a capture without one says so.
+  // Where the key stands (KV-19). Not asked, it is `unknown`: the dashboard is
+  // drawn without asking for a key, and a capture without one says so. Not
+  // `environment`, which would tell a household it runs a development build
+  // and hide the control that could fix it (review of #195).
   useEffect(() => {
     window.kinvue.apiKeyStatus().then(setKeyStatus, (e: unknown) => {
       console.error('Could not read where the SmartSpectra key stands.', e)
-      setKeyStatus('environment')
+      setKeyStatus('unknown')
     })
   }, [])
 
@@ -463,6 +465,9 @@ function Dashboard(): React.JSX.Element {
       .then((result) => {
         if (started !== captureGeneration.current) return
         setCapturing(false)
+        // A reading the service accepted: the last one was not refused after all
+        // (review of #195), so the key section stops saying it may be the key.
+        setKeySuspect(false)
         // The reading stays in main. What crosses back is its id, and the
         // questions are what turn it into a check-in. A capture that measured
         // nothing is shown first: answering four questions about a reading

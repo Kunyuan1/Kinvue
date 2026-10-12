@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { StoreCipher } from '@core/session/store'
 import type { KeyStatus } from '../shared/api-key'
@@ -70,6 +70,15 @@ export interface ApiKeyStore {
    * by main's own seal loop. Resolves true when nothing is left to seal.
    */
   settle(): Promise<boolean>
+  /**
+   * Deletes the saved key, so it can be entered again (review of #195): the
+   * way out of `locked`, which on Windows can be lasting — a key store that
+   * never comes back — and would otherwise leave no route but deleting the
+   * file by hand. A person's choice, made on the screen, never automatic. The
+   * history has `startNewHistory` for the same reason; a key needs it more, as
+   * it is a paste away and a history is not.
+   */
+  forget(): Promise<KeyStatus>
 }
 
 interface KeyFile {
@@ -164,7 +173,9 @@ export function createApiKeyStore(path: string, cipher: KeyCipher): ApiKeyStore 
         if (status === 'locked') {
           throw new Error('The key store is not available, so the saved key is left as it is.')
         }
-        key = checked
+        // The key in use changes only once it is kept (review of #195): a write
+        // refused — a backup agent holding the file — leaves the old key in use
+        // and on disk, matching the screen's "nothing has been changed".
         if (cipher.encrypts || (sealedOnDisk && cipher.holdsKey)) {
           await seal(checked)
         } else if (!cipher.holdsKey) {
@@ -174,6 +185,21 @@ export function createApiKeyStore(path: string, cipher: KeyCipher): ApiKeyStore 
           // The operating system's key is not on disk yet: kept in memory only.
           status = 'held'
         }
+        key = checked
+        return status
+      })
+    },
+
+    forget() {
+      return exclusive(async () => {
+        try {
+          await unlink(path)
+        } catch (err) {
+          if ((err as { code?: unknown }).code !== 'ENOENT') throw err
+        }
+        key = null
+        sealedOnDisk = false
+        status = 'none'
         return status
       })
     },
@@ -186,5 +212,46 @@ export function createApiKeyStore(path: string, cipher: KeyCipher): ApiKeyStore 
         return status !== 'held'
       })
     },
+  }
+}
+
+/** The key a capture uses, and where it stands, as `app/main/index.ts` asks for them. */
+export interface KeySource {
+  current(): string | null
+  status(): KeyStatus
+}
+
+/**
+ * Which key a capture uses (KV-19). A packaged build uses only the household's
+ * stored key: a `SMARTSPECTRA_API_KEY` left in its environment can neither
+ * override the key the dashboard replaces nor quietly meter another account
+ * (review of #192). A development build takes the variable — from `.env` —
+ * when it is set, and the stored key otherwise.
+ *
+ * The variable passes `checkKey` like a typed key (review of #195): a key the
+ * packaged setup screen would refuse must not work all through development.
+ * One that fails is ignored, and said once.
+ */
+export function keySource(options: {
+  keys: ApiKeyStore
+  packaged: boolean
+  env: Record<string, string | undefined>
+  warn: (message: string) => void
+}): KeySource {
+  const { keys, packaged, env, warn } = options
+  let fromEnvironment: string | null = null
+  const raw = env.SMARTSPECTRA_API_KEY
+  if (!packaged && raw !== undefined && raw !== '') {
+    fromEnvironment = checkKey(raw)
+    if (fromEnvironment === null) {
+      warn(
+        'SMARTSPECTRA_API_KEY is set but is not a key the setup screen would accept ' +
+          '(8 to 512 printable characters, no spaces), so it is ignored.',
+      )
+    }
+  }
+  return {
+    current: () => fromEnvironment ?? keys.current(),
+    status: () => (fromEnvironment !== null ? 'environment' : keys.status()),
   }
 }

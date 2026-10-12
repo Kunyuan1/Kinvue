@@ -93,13 +93,16 @@ describe('sdkFailure', () => {
     }
   })
 
-  it('names the key and the service, online, for what a refused key looks like (KV-19)', () => {
-    // A household's own key can be mistyped, revoked or used up, and the SDK
-    // reports that as it does a connection that is gone. Online, the connection
-    // is not it, so the key and the service are named — not the camera.
-    for (const code of [5, 6, 8]) {
+  it('names the service, online, for the codes that say the service or the network (KV-19)', () => {
+    for (const code of [5, 6]) {
       expect(sdkFailure(code, ONLINE), `code ${code}`).toBe('service-refused')
     }
+  })
+
+  it('leaves online code 8 at the camera, which a bad capture sends too (review of #195)', () => {
+    // Naming the service or the key for every reading that did not work is the
+    // wrong-cause screen KV-104 removed. A refused key is the account codes'.
+    expect(sdkFailure(8, ONLINE)).toBe('camera-unavailable')
   })
 
   it('names the connection when the device is offline', () => {

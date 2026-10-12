@@ -59,13 +59,15 @@ import type { CaptureFailure } from '@core/capture/failure'
  */
 const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
   'no-api-key': {
-    // Missing, or refused outright by the service (KV-19): either way it is the
-    // key, and whoever set Kinvue up enters it again.
-    title: 'Kinvue’s key is missing or was not accepted',
+    // Missing, refused, out of credit — or a configuration the service would
+    // not take, which is not the key (kConfigurationFailed): so the title
+    // claims setup, not the key, and the key is named as the likeliest part of
+    // it (KV-19, review of #195).
+    title: 'Kinvue is not set up to take a reading',
     detail:
-      'Kinvue needs a key from SmartSpectra to take a reading, and it has none, or the ' +
-      'one it has was not accepted. Nothing is wrong on your side — whoever set this up ' +
-      'can enter it again.',
+      'Its key from SmartSpectra is missing or was not accepted, or something else in how ' +
+      'it is set up is not right. Nothing is wrong on your side — whoever set this up can ' +
+      'check it.',
   },
   'camera-unavailable': {
     // Still hedges toward the connection, because `net.isOnline()` returning
@@ -85,14 +87,14 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
       'could not be finished. It can be taken once the connection is back.',
   },
   'service-refused': {
-    // Online, and the service did not finish it: the household's key refused
-    // or used up, or the service down — the SDK says the same for each (KV-19).
-    // Names the key as a possibility, for whoever set it up, without claiming it.
+    // Online, and the SDK said the service or the network (5, 6): likeliest
+    // busy or down, so trying later comes first; a key it will not take is
+    // possible, so the key is what to check if it keeps happening (KV-19).
     title: 'The reading could not be finished',
     detail:
-      'The service that reads the camera did not accept it. It may be busy, or the key ' +
-      'Kinvue was set up with may need replacing. Nothing is wrong on your side — ' +
-      'whoever set this up can check the key.',
+      'The service that reads the camera did not answer as it should. It may be busy, and ' +
+      'a reading later is worth a try. Nothing is wrong on your side — if it keeps ' +
+      'happening, whoever set this up can check Kinvue’s key.',
   },
   'capture-in-progress': {
     // Says what the button does, because the button is the only way out of

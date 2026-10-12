@@ -61,6 +61,9 @@ const api = {
   /** Keeps a typed key, sealed with the operating system's key where it can be. */
   setApiKey: (key: string): Promise<SetKeyResult> => ipcRenderer.invoke('setup:setApiKey', key),
 
+  /** Deletes the saved key, on the person's press, so it can be entered again. */
+  forgetApiKey: (): Promise<KeyStatus> => ipcRenderer.invoke('setup:forgetApiKey'),
+
   /** Opens SmartSpectra's free registration page, in the browser. */
   openKeyRegistration: (): Promise<void> => ipcRenderer.invoke('setup:openKeyRegistration'),
 

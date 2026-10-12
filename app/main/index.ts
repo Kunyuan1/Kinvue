@@ -40,7 +40,8 @@ import { exportFileName, readExport } from "./history-file";
 import { APP_PAGE_URL, APP_SCHEME, serveApp } from "./app-protocol";
 import { cameraAccess, readWindowsSwitch, type CameraAccess } from "./camera-access";
 import { openLink } from "./links";
-import { checkKey, createApiKeyStore, type ApiKeyStore } from "./api-key";
+import { checkKey, createApiKeyStore, keySource, type ApiKeyStore } from "./api-key";
+import { settleOnce } from "./seal-loop";
 import type { KeyStatus, SetKeyResult } from "../shared/api-key";
 import { protectedRestores } from "./protected-restore";
 import { localStateHoldsKey, osCipher, protectionOf } from "./cipher";
@@ -51,16 +52,16 @@ import { toCaptureReply, type CaptureReply } from "../shared/capture-reply";
 import type { Protection } from "../shared/protection";
 
 /**
- * The SmartSpectra key lives in `.env` during development and reaches the SDK
- * from the main process, never from the renderer. This runs before anything
- * *uses* the key — `captureVitals` reads it when a capture starts — rather than
- * before every other module is evaluated, which import order alone cannot give.
+ * In development, `.env` holds the SmartSpectra key, and this loads it into
+ * `process.env` before anything reads it: `keySource`, when IPC is registered,
+ * which hands the key to `captureVitals` as an argument (KV-19). The key reaches
+ * the SDK from the main process, never from the renderer.
  *
  * Development only. A packaged app is started from wherever the shortcut points,
  * so honouring `.env` there would mean the process that owns the camera, the key
- * and the session file loads whatever happens to sit in that directory. Where a
- * packaged install gets its key is KV-19; until then it has no `.env` route at
- * all, which is what the README says.
+ * and the session file loads whatever happens to sit in that directory. A
+ * packaged install gets the household's own key from its setup screen instead,
+ * and ignores the variable altogether (KV-19).
  */
 let envError: unknown = null;
 if (!app.isPackaged) {
@@ -203,31 +204,19 @@ function createWindow(): BrowserWindow {
   return window;
 }
 
-/**
- * The SmartSpectra key a capture uses, and where it stands (KV-19). A packaged
- * build uses only the household's stored key: a `SMARTSPECTRA_API_KEY` left in
- * its environment can neither override the key the dashboard replaces nor
- * quietly meter another account (review of #192). A development build takes
- * the variable — from `.env` — when it is set, and the stored key otherwise.
- */
-function keySource(keys: ApiKeyStore): { current(): string | null; status(): KeyStatus } {
-  const fromEnvironment = (): string | null => {
-    if (app.isPackaged) return null;
-    const key = process.env.SMARTSPECTRA_API_KEY;
-    return key === undefined || key === "" ? null : key;
-  };
-  return {
-    current: () => fromEnvironment() ?? keys.current(),
-    status: () => (fromEnvironment() !== null ? "environment" : keys.status()),
-  };
-}
-
 function registerIpc(
   store: SessionStore,
   protection: () => Promise<Protection>,
   keys: ApiKeyStore,
 ): void {
-  const apiKey = keySource(keys);
+  // Which key a capture uses: the stored key in a packaged build, `.env`'s in
+  // development when it is a key at all (KV-19). See `keySource`.
+  const apiKey = keySource({
+    keys,
+    packaged: app.isPackaged,
+    env: process.env,
+    warn: (message) => console.error(message),
+  });
   // Holds each capture until its answers arrive; the rules live in core so they
   // are tested. Everything the renderer sends is validated here first.
   const checkIn = createCheckIn({
@@ -446,6 +435,13 @@ function registerIpc(
     return { ok: true, status: apiKey.status() };
   });
 
+  // The way out of a key store that stays locked (review of #195): the saved
+  // key deleted, on the person's press, and asked for again.
+  handle("setup:forgetApiKey", async (): Promise<KeyStatus> => {
+    await keys.forget();
+    return apiKey.status();
+  });
+
   handle(
     "setup:camera",
     (): Promise<CameraAccess> =>
@@ -636,24 +632,30 @@ void app.whenReady().then(async () => {
   const keys = createApiKeyStore(join(app.getPath("userData"), "api-key.json"), cipher);
   await keys.load();
 
-  // Whether there is nothing left to seal: the key on disk, and the file sealed
-  // or holding nothing yet. A failed seal — a rename refused while another
-  // program holds the file, say — is logged once and tried again next time.
-  let failedBefore = false;
-  const settled = async (): Promise<boolean> => {
-    if (!(await cipher.keyLanded())) return false;
-    let keySealed = false;
-    try {
-      await store.encryptAtRest();
-      // And a key typed before the operating system's key was on disk, held
-      // in memory until now (KV-19).
-      keySealed = await keys.settle();
-    } catch (err) {
-      if (!failedBefore) console.error("The history could not be encrypted yet.", err);
-      failedBefore = true;
-    }
-    return keySealed && (await store.atRest()) !== "plain";
-  };
+  // Whether there is nothing left to seal: the key on disk, the household's
+  // key sealed, and the history sealed or holding nothing yet. The key and the
+  // history fail apart — an unreadable history must not keep a key typed on the
+  // first-run screen in memory only (review of #195) — and each failure, a
+  // rename refused while another program holds a file, say, is logged once and
+  // tried again next time. See `seal-loop.ts`.
+  const failedBefore = new Set<string>();
+  const settled = (): Promise<boolean> =>
+    settleOnce({
+      keyLanded: () => cipher.keyLanded(),
+      sealKey: () => keys.settle(),
+      sealHistory: () => store.encryptAtRest(),
+      historyPlain: async () => (await store.atRest()) === "plain",
+      failed: (what, err) => {
+        if (failedBefore.has(what)) return;
+        failedBefore.add(what);
+        console.error(
+          what === "key"
+            ? "The SmartSpectra key could not be encrypted yet."
+            : "The history could not be encrypted yet.",
+          err,
+        );
+      },
+    });
   const sealUntilItHolds = async (): Promise<void> => {
     if (!(await cipher.keyLanded())) {
       try {

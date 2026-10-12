@@ -5,13 +5,22 @@ const BUTTON =
   'rounded-lg border border-(--color-line) px-4 py-2' +
   ' enabled:hover:bg-(--color-raised) disabled:cursor-not-allowed disabled:opacity-50'
 
-/** What a key just kept means, said once it is: where it is and how it is kept. */
-export const KEPT: Partial<Record<KeyStatus, string>> = {
+/**
+ * What a key just kept means, said once it is: where it is and how it is kept.
+ * Total over `KeyStatus`, with null where keeping a key cannot end, so a new
+ * status does not compile until it is decided here (review of #195).
+ */
+export const KEPT: Record<KeyStatus, string | null> = {
   saved: "Saved, encrypted with this computer's key.",
   held:
     "Saved for now. It is stored encrypted in a moment, once this computer's key is ready; " +
     'if Kinvue is closed before then, it will ask for the key again.',
   'saved-plain': 'Saved, but not encrypted: this computer offers no key store.',
+  none: null,
+  lost: null,
+  locked: null,
+  environment: null,
+  unknown: null,
 }
 
 /**
@@ -55,7 +64,7 @@ export default function KeyField({
         return
       }
       setTyped('')
-      setSaid(KEPT[result.status] ?? null)
+      setSaid(KEPT[result.status])
       onKept(result.status)
     } catch (e) {
       console.error('Could not keep the key.', e)
@@ -67,7 +76,15 @@ export default function KeyField({
 
   return (
     <div className="mt-3">
-      <div className="flex flex-wrap items-center gap-2">
+      {/* A form, so Enter after a paste saves, as it does everywhere else
+          (review of #195); the button's own guard decides whether it can. */}
+      <form
+        className="flex flex-wrap items-center gap-2"
+        onSubmit={(e) => {
+          e.preventDefault()
+          if (!busy && typed.trim() !== '') void save()
+        }}
+      >
         <label htmlFor={`${id}-key`}>{label}</label>
         <input
           id={`${id}-key`}
@@ -79,15 +96,10 @@ export default function KeyField({
           onChange={(e) => setTyped(e.target.value)}
           className="min-w-64 rounded-lg border border-(--color-line) bg-transparent px-2 py-1"
         />
-        <button
-          type="button"
-          disabled={busy || typed.trim() === ''}
-          onClick={() => void save()}
-          className={BUTTON}
-        >
+        <button type="submit" disabled={busy || typed.trim() === ''} className={BUTTON}>
           Save the key
         </button>
-      </div>
+      </form>
       <p aria-live="polite" className="mt-2 min-h-5 text-sm text-(--color-muted)">
         {said}
       </p>

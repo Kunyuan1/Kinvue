@@ -43,11 +43,12 @@ export type TaggedFailure =
    */
   | 'no-connection'
   /**
-   * The capture failed online in a way the service could have caused: the
-   * household's key refused or used up, or the service itself down (KV-19,
-   * review of #192). The SDK reports all of them as `kProcessingFailed` (or
-   * says server or network), as it does a connection that is gone, so the
-   * sentence names the key as one possible cause and does not pretend to know.
+   * The capture failed online with a code that says the service or the way to
+   * it — `kNetworkError` or `kServerError` (KV-19). The service down or busy
+   * is likeliest; a key it will not take is possible, so the sentence names
+   * the key as the thing to check if it keeps happening, and claims neither.
+   * Not `kProcessingFailed`, which an ordinary bad capture gets too (review of
+   * #195).
    */
   | 'service-refused'
   /** A capture is already running, so another cannot start. */

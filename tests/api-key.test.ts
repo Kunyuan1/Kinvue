@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { checkKey, createApiKeyStore, type KeyCipher } from '../app/main/api-key'
+import { checkKey, createApiKeyStore, keySource, type KeyCipher } from '../app/main/api-key'
+// Type-only, so it is erased: the SDK behind vitals.ts is never loaded here.
+import type { CaptureOptions } from '../app/main/vitals'
 
 /**
  * The household's own SmartSpectra key (KV-19, T15), with a stand-in for the
@@ -13,7 +15,10 @@ import { checkKey, createApiKeyStore, type KeyCipher } from '../app/main/api-key
 
 const KEY = 'ss-live-0123456789abcdef'
 
-function cipher(name: string, state: { holds?: boolean; landed?: boolean; reachable?: boolean } = {}) {
+function cipher(
+  name: string,
+  state: { holds?: boolean; landed?: boolean; reachable?: boolean } = {},
+) {
   const s = { holds: true, landed: true, reachable: true, ...state }
   const c: KeyCipher & { s: typeof s } = {
     s,
@@ -48,7 +53,14 @@ afterEach(async () => {
 describe('checkKey', () => {
   it('trims a pasted key, and refuses what cannot be one', () => {
     expect(checkKey(`  ${KEY}\n`)).toBe(KEY)
-    for (const typed of ['', 'short', 'two words here', `key: ${KEY}`, 'x'.repeat(513), 'tab\tkey123']) {
+    for (const typed of [
+      '',
+      'short',
+      'two words here',
+      `key: ${KEY}`,
+      'x'.repeat(513),
+      'tab\tkey123',
+    ]) {
       expect(checkKey(typed), JSON.stringify(typed)).toBeNull()
     }
   })
@@ -124,6 +136,27 @@ describe('never sealed before the operating system key is on disk (review of #19
   })
 })
 
+describe('a write that fails changes nothing (review of #195)', () => {
+  it('keeps the old key in use and on disk when the new one cannot be written', async () => {
+    const path = await keyPath()
+    const c = cipher('mine')
+    const store = createApiKeyStore(path, c)
+    await store.load()
+    await store.set(KEY)
+    const before = await readFile(path, 'utf8')
+    // The next seal throws, as a refused write would.
+    const realSeal = c.seal
+    c.seal = () => {
+      throw new Error('EPERM: the file is held')
+    }
+    await expect(store.set('ss-live-replacement-0000')).rejects.toThrow(/EPERM/)
+    expect(store.current()).toBe(KEY)
+    expect(store.status()).toBe('saved')
+    expect(await readFile(path, 'utf8')).toBe(before)
+    c.seal = realSeal
+  })
+})
+
 describe('writes, one at a time', () => {
   it('lets a key typed while the seal loop settles land whole, and the last one win', async () => {
     const path = await keyPath()
@@ -192,13 +225,91 @@ describe("a key file that will not open: KV-175's two cases (review of #192)", (
     expect(next.current()).toBe(KEY)
   })
 
+  it('forgets a locked key on request, so it can be entered again (review of #195)', async () => {
+    const path = await sealedBy('mine')
+    const store = createApiKeyStore(path, cipher('mine', { reachable: false }))
+    await store.load()
+    expect(store.status()).toBe('locked')
+    expect(await store.forget()).toBe('none')
+    await expect(readFile(path, 'utf8')).rejects.toThrow()
+    expect(store.current()).toBeNull()
+    // And a new key is taken: nothing is locked any more.
+    const next = createApiKeyStore(path, cipher('mine'))
+    await next.load()
+    expect(next.status()).toBe('none')
+    expect(await next.set(KEY)).toBe('saved')
+  })
+
   it('asks again for a file that is not a key file at all', async () => {
-    for (const text of ['{ not json', '{"version":2,"sealed":"x"}', '{"version":1}', '{"version":1,"plain":"x"}']) {
+    for (const text of [
+      '{ not json',
+      '{"version":2,"sealed":"x"}',
+      '{"version":1}',
+      '{"version":1,"plain":"x"}',
+    ]) {
       const path = await keyPath()
       await writeFile(path, text, 'utf8')
       const store = createApiKeyStore(path, cipher('mine'))
       await store.load()
       expect(store.status(), text).toBe('lost')
     }
+  })
+})
+
+describe('keySource: which key a capture uses (KV-19)', () => {
+  async function stored(): Promise<ReturnType<typeof createApiKeyStore>> {
+    const store = createApiKeyStore(await keyPath(), cipher('mine'))
+    await store.load()
+    await store.set(KEY)
+    return store
+  }
+
+  it('uses only the stored key in a packaged build, whatever the environment holds', async () => {
+    const warn = vi.fn()
+    const source = keySource({
+      keys: await stored(),
+      packaged: true,
+      env: { SMARTSPECTRA_API_KEY: 'decoy-from-the-environment' },
+      warn,
+    })
+    expect(source.current()).toBe(KEY)
+    expect(source.status()).toBe('saved')
+    expect(warn).not.toHaveBeenCalled()
+  })
+
+  it("takes development's variable over the stored key", async () => {
+    const source = keySource({
+      keys: await stored(),
+      packaged: false,
+      env: { SMARTSPECTRA_API_KEY: '  ss-dev-key-from-env  ' },
+      warn: vi.fn(),
+    })
+    expect(source.current()).toBe('ss-dev-key-from-env')
+    expect(source.status()).toBe('environment')
+  })
+
+  it('ignores a variable the setup screen would refuse, and says so once (review of #195)', async () => {
+    const warn = vi.fn()
+    const source = keySource({
+      keys: await stored(),
+      packaged: false,
+      env: { SMARTSPECTRA_API_KEY: 'two words' },
+      warn,
+    })
+    source.current()
+    source.status()
+    expect(source.current()).toBe(KEY)
+    expect(source.status()).toBe('saved')
+    expect(warn).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('captureVitals takes the key as an argument (review of #195)', () => {
+  it('will not compile without one, so a caller cannot forget it', () => {
+    // @ts-expect-error apiKey is required: a forgotten key would build, and fail
+    // at the camera saying no key is set.
+    const forgotten: CaptureOptions = { durationSec: 30 }
+    const given: CaptureOptions = { apiKey: null }
+    expect([forgotten, given]).toHaveLength(2)
   })
 })

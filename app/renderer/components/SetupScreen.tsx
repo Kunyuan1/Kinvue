@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { CameraAccess } from '../../shared/camera-access'
-import { keyReady, type KeyStatus } from '../../shared/api-key'
+import { keyMissing, type KeyStatus } from '../../shared/api-key'
+import ForgetKey from './ForgetKey'
 import KeyField from './KeyField'
 
 const BUTTON =
@@ -16,7 +17,7 @@ export const cameraIsOff = (access: CameraAccess | undefined): access is CameraO
 
 /** Whether the setup screen has anything to ask for. */
 export const setupNeeded = (camera: CameraAccess, key: KeyStatus): boolean =>
-  cameraIsOff(camera) || !keyReady(key)
+  cameraIsOff(camera) || keyMissing(key)
 
 /** Which switch, and where it is: Windows's own words for it, so it can be found. */
 const SAYS: Record<CameraOff, string> = {
@@ -38,8 +39,11 @@ const SAYS: Record<CameraOff, string> = {
     'need whoever looks after this computer.',
 }
 
-/** Why the key is asked for, or why it cannot be, by where it stands. */
-const KEY_SAYS: Partial<Record<KeyStatus, string>> = {
+/**
+ * Why the key is asked for, or why it cannot be, by where it stands. Total, with
+ * null where the screen does not ask, so a new status is decided here.
+ */
+const KEY_SAYS: Record<KeyStatus, string | null> = {
   none:
     'Kinvue needs a key from SmartSpectra, the service that reads the camera, to take a ' +
     'reading. It is free: register, copy the key from the page you are given, and paste it ' +
@@ -50,7 +54,13 @@ const KEY_SAYS: Partial<Record<KeyStatus, string>> = {
     'and it replaces the old one.',
   locked:
     "A key is saved, but this computer's key store is not available just now — it may be " +
-    'locked. Kinvue will try again the next time it starts; nothing has been changed.',
+    'locked. Kinvue will try again the next time it starts; nothing has been changed. If ' +
+    'this keeps happening, forget the saved key and enter it again.',
+  held: null,
+  saved: null,
+  'saved-plain': null,
+  environment: null,
+  unknown: null,
 }
 
 /**
@@ -81,7 +91,7 @@ export default function SetupScreen({
   const [busy, setBusy] = useState(false)
   const [said, setSaid] = useState<string | null>(null)
   const askCamera = cameraIsOff(camera)
-  const askKey = !keyReady(keyStatus)
+  const askKey = keyMissing(keyStatus)
 
   const checkAgain = async (): Promise<void> => {
     setBusy(true)
@@ -151,6 +161,7 @@ export default function SetupScreen({
             The SmartSpectra key
           </h2>
           <p className="mt-2 text-base leading-relaxed">{KEY_SAYS[keyStatus]}</p>
+          {keyStatus === 'locked' && <ForgetKey onForgot={onKeyKept} />}
           {keyStatus !== 'locked' && (
             <>
               <button

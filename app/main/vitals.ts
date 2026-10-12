@@ -150,7 +150,7 @@ export interface CaptureOptions {
    * the household's stored key in a packaged build, `SMARTSPECTRA_API_KEY` in
    * development. Null or empty is `MissingApiKeyError`, before any camera.
    */
-  apiKey?: string | null
+  apiKey: string | null
   /** How long to hold the camera open. The UI asks the person for ~30s. */
   durationSec?: number
   /** Called with elapsed seconds so the renderer can show a countdown. */
@@ -204,7 +204,7 @@ export interface CaptureOptions {
  * a rating nobody gave is not a rating of worthless. See
  * `createVitalsAccumulator`.
  */
-export async function captureVitals(options: CaptureOptions = {}): Promise<Vitals> {
+export async function captureVitals(options: CaptureOptions): Promise<Vitals> {
   const {
     apiKey,
     durationSec = DEFAULT_CAPTURE_SECONDS,
@@ -216,7 +216,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
   } = options
   if (signal?.aborted === true) throw new CaptureCancelledError()
 
-  if (apiKey === undefined || apiKey === null || apiKey === '') throw new MissingApiKeyError()
+  if (apiKey === null || apiKey === '') throw new MissingApiKeyError()
 
   // Sampled once, before the camera opens, and used for every failure below
   // (KV-104). The SDK reaches Presage when the session starts, so this is the

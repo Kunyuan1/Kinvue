@@ -17,6 +17,12 @@ export type KeyStatus =
   | 'lost'
   /** A development build, using `SMARTSPECTRA_API_KEY` from its environment or `.env`. */
   | 'environment'
+  /**
+   * Where the key stands could not be asked (review of #195). Claims nothing —
+   * not a development key, not a missing one — and asks for nothing: a capture
+   * says what is wrong if there is no key after all.
+   */
+  | 'unknown'
 
 /**
  * What entering a key came to: kept, with where it stands now, or refused —
@@ -24,9 +30,12 @@ export type KeyStatus =
  * replace unseen.
  */
 export type SetKeyResult =
-  | { ok: true; status: KeyStatus }
-  | { ok: false; why: 'not-a-key' | 'locked'; status: KeyStatus }
+  { ok: true; status: KeyStatus } | { ok: false; why: 'not-a-key' | 'locked'; status: KeyStatus }
 
 /** Whether a reading can run with the key as it stands. */
 export const keyReady = (status: KeyStatus | undefined): boolean =>
   status === 'held' || status === 'saved' || status === 'saved-plain' || status === 'environment'
+
+/** Whether the setup screen asks about the key: none yet, one that will not open, or locked. */
+export const keyMissing = (status: KeyStatus | undefined): boolean =>
+  status === 'none' || status === 'lost' || status === 'locked'

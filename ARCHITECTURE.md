@@ -2033,14 +2033,17 @@ the three PRs listed at the end.
     `SMARTSPECTRA_API_KEY` and `.env` are read only by a development build, so a variable
     left in a household's environment can neither override the key the dashboard replaces
     nor quietly meter another account.
-  - **A refused key is said to be the key, not the network** (review of #192). The SDK
-    reports a refused licence check with the same code as a capture with no connection,
-    `kProcessingFailed` (KV-65), which is why the app decides from `net.isOnline()`
-    (KV-104). The household's own key makes a wrong key possible for the first time —
-    mistyped, revoked, over quota — and it cannot be checked when typed, since only a
-    capture uses it. So when that code comes back while the computer is online, the
-    sentence names the key as one possible cause beside the service, and points to
-    replacing it from the dashboard.
+  - **A refused key is said to be the key, not the network** (review of #192; narrowed in
+    review of #195). The household's own key makes a wrong key possible for the first time
+    — mistyped, revoked, over quota — and it cannot be checked when typed, since only a
+    capture uses it. The SDK has codes that say so — authentication failed, credit
+    exhausted — and those say the key. #192's review also had online `kProcessingFailed`
+    name it, reasoning from the offline run, where a failed licence check came back as
+    that code (KV-65); but an ordinary bad capture gets it too, and naming the key for
+    every reading that did not work is the wrong-cause screen KV-104 removed. So only a
+    code that itself says the service or the network names the service, with the key as
+    the thing to check if it keeps happening; 8 stays the camera's. What a wrong key sends
+    online has not been measured, and is the one check that would settle it.
 - **Signed from the first release** (T9). Microsoft's Artifact Signing (formerly Trusted
   Signing), from a release workflow on a GitHub Actions Windows runner; the signing
   credentials are repository secrets and are never on a developer's machine. What that
@@ -2205,21 +2208,33 @@ only ever told a `KeyStatus`. As decided:
   twenty seconds later, and opened at the next start.
 - **A key file that will not open is `locked` or `lost`.** Locked keeps the file and
   refuses a replacement until the next start; lost asks again, and the new key replaces
-  it. A sealed file is never written plain again, the history's ratchet (review of
-  #187), and writes go one at a time.
+  it. A sealed file is never written plain again, the history's ratchet (review of #187),
+  and writes go one at a time.
 - **A packaged build reads only its stored key.** Checked: relaunched with a decoy
   `SMARTSPECTRA_API_KEY` in its environment, it still used the saved key. A development
   build takes the variable when it is set.
-- **A refused key is named.** A rejected key (the SDK's account codes) says the key is
-  missing or was not accepted. A failure the service could have caused, while online — a
-  key refused or used up, or the service down, which the SDK reports alike — has its own
-  sentence, `service-refused`, naming the key as one possibility. The dashboard's key
-  section then says the key may be why, and offers the replacement there.
+- **A refused key is named.** The SDK's account codes say Kinvue is not set up to take a
+  reading — the key missing or not accepted, or its configuration (review of #195:
+  `kConfigurationFailed` is not the key, so the title claims setup). Online, a network or
+  server code has its own sentence, `service-refused`: likeliest busy, and the key the
+  thing to check if it keeps happening. Not code 8, which a bad capture gets too. After
+  either, the dashboard's key section says the key may be why, until a reading is
+  accepted.
+- **Every state is said on the dashboard** (review of #195): none, lost and locked too,
+  from records total over `KeyStatus`, so a new status does not compile until it has
+  words. While locked there is no field — a save would be refused — and instead **"Forget
+  the saved key and enter it again"**, asked twice, the way out of a key store that stays
+  locked. On Windows that can be lasting, and the key, unlike a history, is a paste away.
+  A status that could not be asked is `unknown`, which claims nothing.
+- **Found in review of #195, and fixed:** a write refused kept the old key in use, not the
+  new one; the key and the history seal in separate tries (`seal-loop.ts`), so an
+  unreadable history no longer keeps a typed key in memory only; a development key from
+  the environment passes the same check a typed one does; and Enter saves the field.
 - **Where to get one** opens SmartSpectra's registration page, from `links.ts`'s fixed
   list.
 
-Not checked: a capture with a key entered on the setup screen. The key that would take
-it is the owner's, and the capture is theirs to run.
+Checked by the owner (2026-10-11): a key pasted on the first-run screen of the packaged
+app, saved encrypted, then a reading, scored and saved.
 
 ### What must hold before real check-ins are stored
 
@@ -2315,7 +2330,7 @@ to check a card against. Integrity is protected as deliberately as confidentiali
 | T12 | Data the person deleted, or withdrew, survives elsewhere | Any copy holder | Deletion travels as a tombstone; a revoked viewer's app deletes its copy on next contact, and one that never reconnects keeps it — a limit; partial deletion is tested as a flow because it looks like success. | #21, #45, #175 | Decided (KV-21: a tombstone wins over a copy coming back through restore or sync); #21, #45 to build. A rollback of the store file restores records and tombstones together — T7's limit |
 | T13 | **A delivered card is altered, fabricated, replayed or dropped**, so a viewer reads a day that did not happen, or misses one that did | The relay; a network attacker; whoever breaches the relay | A per-viewer envelope — viewer id, stream number, previous envelope's hash, record — signed by the check-in device (Ed25519) and verified on the viewer's device before it is shown, so drops, renumbering, replays and reordering show, and a gap is shown as one (with #44); the pairing code derived from all four public keys; the daily summary composed from verified records only (KV-33). **Rests on the check-in device's signing key**, which is protected only as T7's data is: malware running as the person can sign forgeries. | #33, #39, #40, #42, #43, #175 | Decided; rests on #175 |
 | T14 | **The check-in device is lost, broken, wiped or replaced**, and with it every share's authority: nothing can be revoked, and the person cannot see who still holds their check-ins | Accident; theft | A printed recovery card that can see who has access and end every share, never approve anyone new; using it is delayed 72 hours and announced to every viewer, and can be cancelled from the check-in device if it still exists, so a card misused to cut the person off alerts every caregiver instead of silencing them (KV-33). A replacement device starts fresh, each viewer approved again at it. **The history is recovered only if it was exported:** a restored export brings back the history and its baseline as of that export (KV-21); without one it goes with the device — a backup of the encrypted file cannot be read under another account or on another machine (KV-175) — and the baseline restarts from zero. | #33, #40, #45, #21 | Decided; #40, #45 to build; history loss a limit, unless exported (KV-21) |
-| T15 | **The SmartSpectra API key at rest.** In development it is plain text in `.env`, beside `sessions.json`; a packaged install has no route to a key yet. A stolen key means vendor account abuse and billing, and reaches the metered record of when check-ins happen (T10) | The same actors as T7 | **Built (KV-19):** a packaged install never carries a key, and ignores `SMARTSPECTRA_API_KEY` in its environment; the household's own is asked for on first run and held encrypted with the operating system's key, as the history is (KV-175), and kept unencrypted, said so, where there is no key store. | #19, #175 | Done (KV-19): the household's key, sealed; the vendor can tie the meter to it (T10) |
+| T15 | **The SmartSpectra API key at rest.** In development it is plain text in `.env`, beside `sessions.json`; an installed copy keeps the household's own key in `userData`, beside the history (KV-19). A stolen key means vendor account abuse and billing, and reaches the metered record of when check-ins happen (T10) | The same actors as T7 | **Built (KV-19):** a packaged install never carries a key, and ignores `SMARTSPECTRA_API_KEY` in its environment; the household's own is asked for on first run and held encrypted with the operating system's key, as the history is (KV-175), and kept unencrypted, said so, where there is no key store. | #19, #175 | Done (KV-19): the household's key, sealed; the vendor can tie the meter to it (T10) |
 | T16 | **An exported history, read where it was put.** A complete, identified physiological history in plain JSON, copied by the person to a USB stick, a synced folder or an email (KV-21) — outside `userData`, so outside even T7's account boundary | Whoever finds or receives the file; the services it passes through | The screen that makes an export says it is the whole history, unprotected, and that it should be kept as carefully as the device. Restoring never deletes, so a file altered on its way can add check-ins, which are checked, but cannot remove any (review of #185). **Decided (KV-175):** an optional passphrase (scrypt, then AES-256-GCM), the container keeping its `kind` with its `version` raised, so a build that knows no protection says the file is newer. **Built** (KV-175): exporting asks first; a plain export's screen still says it is unprotected. | #21, #175 | Done (KV-175): an optional passphrase. A plain export remains a limit, said on its screen |
 
 Four of these are the ones most likely to be argued with. **T10 is live now**, not a Phase 5
