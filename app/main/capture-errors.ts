@@ -47,8 +47,12 @@ export { CaptureCancelledError } from '../shared/capture-reply'
  * the licence check, the model loader, usage verification — and the SDK
  * reported it as `kProcessingFailed` (8), "SmartSpectra processing failed",
  * not `kAuthenticationFailed` (2). So a wrong key arrives as the code an
- * ordinary bad capture gets, and nothing in the `error` event (code, a generic
- * message, `retryable`) is known yet to tell the two apart.
+ * ordinary bad capture gets. What tells them apart is *when* (measured the same
+ * day, beside a capture with the camera covered): the wrong key failed at 1.6
+ * seconds with no frame judged — no validation event at all — while the
+ * covered camera had its frames judged from the first second, ran its full
+ * time, and sent no error. So `sdkFailure` is told whether any frame was
+ * judged; `retryable` was true for the wrong key and says nothing.
  */
 const ACCOUNT_CODES: ReadonlySet<number> = new Set([
   2, // kAuthenticationFailed — key rejected, expired or revoked
@@ -98,9 +102,11 @@ const SERVICE_CODES: ReadonlySet<number> = new Set([
  * network (5, 6) is named `service-refused`, where the household's key is one
  * possibility (KV-19); 8 stays `camera-unavailable`, whose copy still hedges
  * toward the connection because that remains possible (KV-104). A wrong key
- * online arrives as 8 too — measured, see `ACCOUNT_CODES` — so it reads as the
- * camera today: naming the key for every 8 would blame it for every bad
- * capture, and nothing yet tells the two apart (review of #195).
+ * online arrives as 8 too — measured, see `ACCOUNT_CODES` — but before any
+ * frame was judged: the service refused the session. So an online 8 with no
+ * frame judged names the service and the key; one after frames were judged
+ * stays the camera's, since naming the key for every bad capture is the
+ * wrong-cause screen KV-104 removed (review of #195).
  *
  * The SDK cannot answer this itself: measured on a real capture with the
  * network down, it reports `kProcessingFailed` (8) — the same code a genuinely
@@ -116,6 +122,8 @@ const SERVICE_CODES: ReadonlySet<number> = new Set([
 export function sdkFailure(
   code: number | undefined,
   online: boolean,
+  /** Whether the SDK judged any frame before failing: a validation event or metrics. */
+  framesJudged: boolean,
 ): Extract<
   TaggedFailure,
   'no-api-key' | 'camera-unavailable' | 'no-connection' | 'service-refused'
@@ -130,8 +138,11 @@ export function sdkFailure(
     // Offline, the connection explains it.
     if (!online) return 'no-connection'
     // Online, a code that says the service or the network names the service
-    // (KV-19). 8 does not: a bad capture sends it too (review of #195).
+    // (KV-19); so does 8 before any frame was judged, which is the service
+    // refusing the session — measured as what a wrong key does. 8 after frames
+    // were judged is left to the camera (review of #195).
     if (SERVICE_CODES.has(code)) return 'service-refused'
+    if (!framesJudged) return 'service-refused'
   }
   return 'camera-unavailable'
 }

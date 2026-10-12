@@ -69,7 +69,7 @@ describe('CaptureScreen says which failure it was', () => {
     // is the one thing that would stop them fixing it (KV-104).
     ['no-connection', /no internet connection/i],
     // Check 5 (KV-19): online, and the SDK said the service or the network.
-    ['service-refused', /can check Kinvue’s key/i],
+    ['service-refused', /Kinvue’s key may be wrong or used up/i],
     ['unknown', /could not be taken/i],
   ]
 

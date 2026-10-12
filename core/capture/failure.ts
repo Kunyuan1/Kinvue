@@ -43,12 +43,12 @@ export type TaggedFailure =
    */
   | 'no-connection'
   /**
-   * The capture failed online with a code that says the service or the way to
-   * it — `kNetworkError` or `kServerError` (KV-19). The service down or busy
-   * is likeliest; a key it will not take is possible, so the sentence names
-   * the key as the thing to check if it keeps happening, and claims neither.
-   * Not `kProcessingFailed`, which an ordinary bad capture gets too (review of
-   * #195).
+   * The service would not run the reading, online (KV-19): a code that says the
+   * service or the network, or `kProcessingFailed` before any frame was judged
+   * — which is what a wrong key was measured doing (review of #195). A key it
+   * will not take is the likeliest, the service busy or down the other; the
+   * sentence names both and claims neither. Not `kProcessingFailed` after
+   * frames were judged, which is the camera's.
    */
   | 'service-refused'
   /** A capture is already running, so another cannot start. */

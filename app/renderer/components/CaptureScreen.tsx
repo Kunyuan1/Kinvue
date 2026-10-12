@@ -87,14 +87,15 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
       'could not be finished. It can be taken once the connection is back.',
   },
   'service-refused': {
-    // Online, and the SDK said the service or the network (5, 6): likeliest
-    // busy or down, so trying later comes first; a key it will not take is
-    // possible, so the key is what to check if it keeps happening (KV-19).
-    title: 'The reading could not be finished',
+    // Online, and the service would not run it: a network or server code, or a
+    // failure before any frame was judged — measured as what a wrong key does
+    // (KV-19, review of #195). The key is named first, the service second, and
+    // neither is claimed.
+    title: 'The reading could not be started',
     detail:
-      'The service that reads the camera did not answer as it should. It may be busy, and ' +
-      'a reading later is worth a try. Nothing is wrong on your side — if it keeps ' +
-      'happening, whoever set this up can check Kinvue’s key.',
+      'The service that reads the camera would not run it. Kinvue’s key may be wrong or ' +
+      'used up, or the service may be busy. Nothing is wrong on your side — whoever set ' +
+      'this up can check the key.',
   },
   'capture-in-progress': {
     // Says what the button does, because the button is the only way out of
