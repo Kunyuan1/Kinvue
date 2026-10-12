@@ -15,7 +15,9 @@ import type { SessionRecord } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
 import { history, session } from './helpers'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
+import { failureTag } from '@core/capture/failure'
 import type { CameraAccess } from '../app/shared/camera-access'
+import type { KeyStatus, SetKeyResult } from '../app/shared/api-key'
 
 /**
  * A card, or the chart, that can be made to throw while drawing (KV-163).
@@ -39,9 +41,16 @@ const drawControl = vi.hoisted(() => ({
 // and `failure-screens.test.tsx` draws both for real. Here only whether they
 // throw matters (review of #164).
 vi.mock('@renderer/components/CaptureScreen', () => ({
-  default: () => {
+  default: ({ onCancel }: { onCancel: () => void }) => {
     if (drawControl.captureThrows) throw new Error('capture screen failed to draw')
-    return <p>in front of the camera</p>
+    return (
+      <>
+        <p>in front of the camera</p>
+        <button type="button" onClick={onCancel}>
+          Go back
+        </button>
+      </>
+    )
   },
 }))
 
@@ -129,6 +138,10 @@ let restoreProtected: ReturnType<typeof vi.fn<() => Promise<RestoreResult>>>
 let cancelRestore: ReturnType<typeof vi.fn<() => Promise<void>>>
 let cameraAccess: ReturnType<typeof vi.fn<() => Promise<CameraAccess>>>
 let openCameraSettings: ReturnType<typeof vi.fn<() => Promise<void>>>
+let apiKeyStatus: ReturnType<typeof vi.fn<() => Promise<KeyStatus>>>
+let setApiKey: ReturnType<typeof vi.fn<(key: string) => Promise<SetKeyResult>>>
+let openKeyRegistration: ReturnType<typeof vi.fn<() => Promise<void>>>
+let forgetApiKey: ReturnType<typeof vi.fn<() => Promise<KeyStatus>>>
 
 beforeEach(() => {
   listSessions = vi.fn<() => Promise<SessionRecord[]>>()
@@ -145,6 +158,12 @@ beforeEach(() => {
   cancelRestore = vi.fn<() => Promise<void>>(() => Promise.resolve())
   cameraAccess = vi.fn<() => Promise<CameraAccess>>(() => Promise.resolve('allowed'))
   openCameraSettings = vi.fn<() => Promise<void>>(() => Promise.resolve())
+  apiKeyStatus = vi.fn<() => Promise<KeyStatus>>(() => Promise.resolve('saved'))
+  setApiKey = vi.fn<(key: string) => Promise<SetKeyResult>>(() =>
+    Promise.resolve({ ok: true, status: 'saved' }),
+  )
+  openKeyRegistration = vi.fn<() => Promise<void>>(() => Promise.resolve())
+  forgetApiKey = vi.fn<() => Promise<KeyStatus>>(() => Promise.resolve('none'))
   Object.defineProperty(window, 'kinvue', {
     configurable: true,
     value: {
@@ -160,6 +179,10 @@ beforeEach(() => {
       cancelRestore,
       cameraAccess,
       openCameraSettings,
+      apiKeyStatus,
+      setApiKey,
+      openKeyRegistration,
+      forgetApiKey,
       captureSeconds: vi.fn(() => Promise.resolve(90)),
       cancelCapture: vi.fn(() => Promise.resolve()),
     },
@@ -1519,3 +1542,212 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
     expect(cameraAccess.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 })
+
+describe('the household key, on the setup screen and the dashboard (KV-19)', () => {
+  const days = (): SessionRecord[] => history(3).map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+  const KEY = 'ss-live-0123456789abcdef'
+
+  it('asks for a key when there is none, says where to get one, and goes once kept', async () => {
+    listSessions.mockResolvedValue(days())
+    apiKeyStatus.mockResolvedValue('none')
+    render(<App />)
+    expect(await screen.findByText('The SmartSpectra key')).toBeTruthy()
+    // The camera is allowed, so only the key is asked for.
+    expect(screen.queryByText('Open camera settings')).toBeNull()
+    fireEvent.click(screen.getByText('Get a free key'))
+    expect(openKeyRegistration).toHaveBeenCalled()
+
+    fireEvent.change(screen.getByLabelText('Key'), { target: { value: KEY } })
+    fireEvent.click(screen.getByText('Save the key'))
+    expect(await screen.findByText('Take a reading')).toBeTruthy()
+    expect(setApiKey).toHaveBeenCalledWith(KEY)
+    // Never shown back: not in the page anywhere once kept.
+    expect(document.body.innerHTML).not.toContain(KEY)
+    expect(screen.getByText("Saved, encrypted with this computer's key.")).toBeTruthy()
+  })
+
+  it('keeps what was typed and says why when main refuses it', async () => {
+    listSessions.mockResolvedValue(days())
+    apiKeyStatus.mockResolvedValue('none')
+    setApiKey.mockResolvedValue({ ok: false, why: 'not-a-key', status: 'none' })
+    render(<App />)
+    const field = (await screen.findByLabelText('Key')) as HTMLInputElement
+    fireEvent.change(field, { target: { value: 'key: oops' } })
+    fireEvent.click(screen.getByText('Save the key'))
+    expect(await screen.findByText(/does not look like a SmartSpectra key/)).toBeTruthy()
+    expect(field.value).toBe('key: oops')
+    expect(screen.queryByText('Take a reading')).toBeNull()
+  })
+
+  it('says a key held in memory will be stored encrypted in a moment', async () => {
+    listSessions.mockResolvedValue(days())
+    apiKeyStatus.mockResolvedValue('none')
+    setApiKey.mockResolvedValue({ ok: true, status: 'held' })
+    render(<App />)
+    fireEvent.change(await screen.findByLabelText('Key'), { target: { value: KEY } })
+    fireEvent.click(screen.getByText('Save the key'))
+    expect(await screen.findByText(/stored encrypted in a moment/)).toBeTruthy()
+    expect(screen.getByText('Take a reading')).toBeTruthy()
+  })
+
+  it('asks again for a key this account cannot open, and nothing while locked', async () => {
+    listSessions.mockResolvedValue(days())
+    apiKeyStatus.mockResolvedValue('lost')
+    render(<App />)
+    expect(await screen.findByText(/could not be opened with this account's key/)).toBeTruthy()
+    expect(screen.getByLabelText('Key')).toBeTruthy()
+    cleanup()
+
+    apiKeyStatus.mockResolvedValue('locked')
+    render(<App />)
+    expect(await screen.findByText(/key store is not available just now/)).toBeTruthy()
+    // A good key is never replaced unseen while the store is out of reach.
+    expect(screen.queryByLabelText('Key')).toBeNull()
+    fireEvent.click(screen.getByText('Go to the check-ins'))
+    expect(await screen.findByText('Take a reading')).toBeTruthy()
+  })
+
+  it('asks for the camera and the key together, when both are missing', async () => {
+    listSessions.mockResolvedValue(days())
+    cameraAccess.mockResolvedValue('off-for-desktop-apps')
+    apiKeyStatus.mockResolvedValue('none')
+    render(<App />)
+    expect(await screen.findByText('Open camera settings')).toBeTruthy()
+    expect(screen.getByLabelText('Key')).toBeTruthy()
+  })
+
+  it('never starts a reading without a key, going back to the setup screen instead', async () => {
+    listSessions.mockResolvedValue(days())
+    apiKeyStatus.mockResolvedValue('none')
+    const capture = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    fireEvent.click(await screen.findByText('Go to the check-ins'))
+    fireEvent.click(await screen.findByText('Take a reading'))
+    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('replaces the key from the dashboard, and never for a development build', async () => {
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    fireEvent.click(await screen.findByText('Replace the key…'))
+    fireEvent.change(screen.getByLabelText('New key'), { target: { value: KEY } })
+    fireEvent.click(screen.getByText('Save the key'))
+    await vi.waitFor(() => expect(setApiKey).toHaveBeenCalledWith(KEY))
+    expect(await screen.findByText('Replace the key…')).toBeTruthy()
+    cleanup()
+
+    apiKeyStatus.mockResolvedValue('environment')
+    render(<App />)
+    expect(await screen.findByText(/development build/)).toBeTruthy()
+    expect(screen.queryByText('Replace the key…')).toBeNull()
+  })
+
+  it('says the key may be why after the service refuses a reading (review of #192)', async () => {
+    listSessions.mockResolvedValue(days())
+    const capture = vi.fn(() =>
+      // 6, kServerError: online, one of the codes that names the service.
+      Promise.reject(new Error(`Error invoking remote method: ${failureTag('service-refused')}`)),
+    )
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    fireEvent.click(await screen.findByText('Take a reading'))
+    // The capture screen's own sentence is failure-screens.test.tsx's; here,
+    // what the dashboard says once the person goes back from it.
+    fireEvent.click(await screen.findByRole('button', { name: 'Go back' }))
+    expect(await screen.findByText(/The last reading was not accepted by the service/)).toBeTruthy()
+  })
+})
+
+describe('the key, after review of #195', () => {
+  const days = (): SessionRecord[] => history(3).map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+  const KEY = 'ss-live-0123456789abcdef'
+
+  it('claims nothing when the key cannot be asked about: no setup, no dev build', async () => {
+    listSessions.mockResolvedValue(days())
+    apiKeyStatus.mockRejectedValue(new Error('ipc failed'))
+    vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    render(<App />)
+    expect(await screen.findByText('Take a reading')).toBeTruthy()
+    expect(screen.getByText('Where the key stands could not be read just now.')).toBeTruthy()
+    expect(screen.queryByText(/development build/)).toBeNull()
+    expect(screen.getByText('Replace the key…')).toBeTruthy()
+  })
+
+  it('stops saying the key may be why once a reading is accepted', async () => {
+    listSessions.mockResolvedValue(days())
+    const capture = vi
+      .fn()
+      .mockRejectedValueOnce(new Error(`${failureTag('service-refused')}: 6`))
+      .mockResolvedValueOnce({
+        captureId: 'c-2',
+        vitals: {
+          ...session().vitals,
+          pulseRateBpm: null,
+          breathingRateBrpm: null,
+          hrvRmssdMs: null,
+        },
+      })
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    fireEvent.click(await screen.findByText('Take a reading'))
+    fireEvent.click(await screen.findByRole('button', { name: 'Go back' }))
+    expect(await screen.findByText(/The last reading was not accepted/)).toBeTruthy()
+    fireEvent.click(screen.getByText('Take a reading'))
+    expect(await screen.findByText('Nothing was measured')).toBeTruthy()
+    expect(screen.queryByText(/The last reading was not accepted/)).toBeNull()
+  })
+
+  it('says why on the dashboard in every state, with a field only where it can work', async () => {
+    listSessions.mockResolvedValue(days())
+    apiKeyStatus.mockResolvedValue('none')
+    render(<App />)
+    fireEvent.click(await screen.findByText('Go to the check-ins'))
+    expect(await screen.findByText(/No key yet, so no reading can be taken/)).toBeTruthy()
+    expect(screen.getByLabelText('Key')).toBeTruthy()
+    cleanup()
+
+    apiKeyStatus.mockResolvedValue('locked')
+    render(<App />)
+    fireEvent.click(await screen.findByText('Go to the check-ins'))
+    expect(await screen.findByText(/forget the saved key and enter it again\./)).toBeTruthy()
+    // Every save would be refused while locked, so there is no field.
+    expect(screen.queryByLabelText('Key')).toBeNull()
+    expect(screen.queryByLabelText('New key')).toBeNull()
+    expect(screen.queryByText('Replace the key…')).toBeNull()
+    // The way out is on the dashboard too, past the setup screen.
+    expect(screen.getByText('Forget the saved key and enter it again…')).toBeTruthy()
+  })
+
+  it('forgets a locked key on a confirmed press, and then asks for it', async () => {
+    listSessions.mockResolvedValue(days())
+    apiKeyStatus.mockResolvedValue('locked')
+    render(<App />)
+    fireEvent.click(await screen.findByText('Forget the saved key and enter it again…'))
+    // Keep it, first and focused: a store only locked for now opens it next start.
+    fireEvent.click(screen.getByText('Keep it'))
+    expect(forgetApiKey).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByText('Forget the saved key and enter it again…'))
+    fireEvent.click(screen.getByText('Forget it'))
+    expect(await screen.findByLabelText('Key')).toBeTruthy()
+    expect(forgetApiKey).toHaveBeenCalledTimes(1)
+  })
+
+  it('saves on Enter, as a form does', async () => {
+    listSessions.mockResolvedValue(days())
+    apiKeyStatus.mockResolvedValue('none')
+    render(<App />)
+    const field = await screen.findByLabelText('Key')
+    fireEvent.change(field, { target: { value: KEY } })
+    fireEvent.submit(field.closest('form')!)
+    await vi.waitFor(() => expect(setApiKey).toHaveBeenCalledWith(KEY))
+    // An empty field does nothing on Enter.
+    setApiKey.mockClear()
+    cleanup()
+    render(<App />)
+    fireEvent.submit((await screen.findByLabelText('Key')).closest('form')!)
+    expect(setApiKey).not.toHaveBeenCalled()
+  })
+})
+

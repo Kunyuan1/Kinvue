@@ -18,8 +18,10 @@ import ConfirmRemoval from './components/ConfirmRemoval'
 import HistoryPanel from './components/HistoryPanel'
 import QuestionFlow from './components/QuestionFlow'
 import SectionBoundary from './components/SectionBoundary'
-import SetupScreen, { cameraIsOff } from './components/SetupScreen'
+import SetupScreen, { setupNeeded } from './components/SetupScreen'
+import KeySettings from './components/KeySettings'
 import type { CameraAccess } from '../shared/camera-access'
+import type { KeyStatus } from '../shared/api-key'
 import SessionCard from './components/SessionCard'
 import TrendChart from './components/TrendChart'
 import { dashboardErrorText } from './dashboardError'
@@ -204,6 +206,12 @@ function Dashboard(): React.JSX.Element {
   // Off, the setup screen is shown in place of this one, until the person
   // turns it on or goes past it to read the check-ins.
   const [camera, setCamera] = useState<CameraAccess | undefined>(undefined)
+  // Where the household's SmartSpectra key stands (KV-19): undefined until
+  // known. Missing, it is asked for on the same setup screen.
+  const [keyStatus, setKeyStatus] = useState<KeyStatus | undefined>(undefined)
+  // The last reading was refused by the service, or its key was: the key
+  // section at the foot of the page says the key may be the cause.
+  const [keySuspect, setKeySuspect] = useState(false)
   const [pastSetup, setPastSetup] = useState(false)
   // Where its protection stands (KV-175): undefined until known.
   const [protection, setProtection] = useState<Protection | undefined>(undefined)
@@ -427,6 +435,17 @@ function Dashboard(): React.JSX.Element {
     })
   }, [askCamera])
 
+  // Where the key stands (KV-19). Not asked, it is `unknown`: the dashboard is
+  // drawn without asking for a key, and a capture without one says so. Not
+  // `environment`, which would tell a household it runs a development build
+  // and hide the control that could fix it (review of #195).
+  useEffect(() => {
+    window.kinvue.apiKeyStatus().then(setKeyStatus, (e: unknown) => {
+      console.error('Could not read where the SmartSpectra key stands.', e)
+      setKeyStatus('unknown')
+    })
+  }, [])
+
   // Starts a capture with no checks at all. Only `takeReading`, below, calls
   // it: every button that starts a reading goes through that, so Windows is
   // asked about the camera first (review of #193).
@@ -446,6 +465,9 @@ function Dashboard(): React.JSX.Element {
       .then((result) => {
         if (started !== captureGeneration.current) return
         setCapturing(false)
+        // A reading the service accepted: the last one was not refused after all
+        // (review of #195), so the key section stops saying it may be the key.
+        setKeySuspect(false)
         // The reading stays in main. What crosses back is its id, and the
         // questions are what turn it into a check-in. A capture that measured
         // nothing is shown first: answering four questions about a reading
@@ -468,6 +490,9 @@ function Dashboard(): React.JSX.Element {
           setCapturing(false)
           return
         }
+        // The key missing or refused, or the service refusing the reading: the
+        // key section says the key may be why (KV-19).
+        if (failure === 'no-api-key' || failure === 'service-refused') setKeySuspect(true)
         setCaptureFailure(failure)
       })
   }, [])
@@ -593,20 +618,32 @@ function Dashboard(): React.JSX.Element {
   // the dashboard is never drawn only to be replaced by the setup screen
   // (review of #193). The first state that picks a whole screen, unlike the
   // others above, which feed a line of text.
-  if (camera === undefined) return <main className="mx-auto max-w-3xl px-6 py-10" />
+  if (camera === undefined || keyStatus === undefined) {
+    return <main className="mx-auto max-w-3xl px-6 py-10" />
+  }
 
-  // Before the first reading (KV-19): a camera Windows keeps Kinvue from is
-  // said here, not after a capture fails. Going past it reads the check-ins.
-  if (cameraIsOff(camera) && !pastSetup) {
-    return <SetupScreen access={camera} onCheckAgain={askCamera} onContinue={() => setPastSetup(true)} />
+  // Before the first reading (KV-19): a camera Windows keeps Kinvue from, or no
+  // key to read it with, is said here, not after a capture fails. Going past it
+  // reads the check-ins.
+  if (setupNeeded(camera, keyStatus) && !pastSetup) {
+    return (
+      <SetupScreen
+        camera={camera}
+        keyStatus={keyStatus}
+        onCheckAgain={askCamera}
+        onKeyKept={setKeyStatus}
+        onContinue={() => setPastSetup(true)}
+      />
+    )
   }
 
   // A reading starts only once Windows has been asked again: a switch turned
-  // off since is said on the setup screen, not by a capture that cannot run.
+  // off since, or a key that is not there, is said on the setup screen, not by
+  // a capture that cannot run.
   const takeReading = (): void => {
     void askCamera().then(
       (now) => {
-        if (cameraIsOff(now)) setPastSetup(false)
+        if (setupNeeded(now, keyStatus)) setPastSetup(false)
         else startCaptureUnchecked()
       },
       // Not asked: the capture is tried, and says what is wrong if it fails.
@@ -784,6 +821,20 @@ function Dashboard(): React.JSX.Element {
           />
         </SectionBoundary>
       )}
+
+      <SectionBoundary
+        fallback="The key could not be shown here. Readings are unaffected."
+        className="mt-10"
+      >
+        <KeySettings
+          status={keyStatus}
+          suspect={keySuspect}
+          onKept={(next) => {
+            setKeyStatus(next)
+            setKeySuspect(false)
+          }}
+        />
+      </SectionBoundary>
     </main>
   )
 }

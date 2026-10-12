@@ -42,6 +42,15 @@ export type TaggedFailure =
    * from `net.isOnline()` rather than from anything the SDK said.
    */
   | 'no-connection'
+  /**
+   * The service would not run the reading, online (KV-19): a code that says the
+   * service or the network, or `kProcessingFailed` before any frame was judged
+   * — which is what a wrong key was measured doing (review of #195). A key it
+   * will not take is the likeliest, the service busy or down the other; the
+   * sentence names both and claims neither. Not `kProcessingFailed` after
+   * frames were judged, which is the camera's.
+   */
+  | 'service-refused'
   /** A capture is already running, so another cannot start. */
   | 'capture-in-progress'
   /** The person stopped it. Not a failure to report as one. */
@@ -103,6 +112,7 @@ export type CaptureFailure =
   | 'no-api-key'
   | 'camera-unavailable'
   | 'no-connection'
+  | 'service-refused'
   | 'capture-in-progress'
   /** Anything unclassified. Shown as a short line, never as a stack trace. */
   | 'unknown'
@@ -162,6 +172,7 @@ const ON_CAPTURE: Record<TaggedFailure, CaptureFailure | null> = {
   'no-api-key': 'no-api-key',
   'camera-unavailable': 'camera-unavailable',
   'no-connection': 'no-connection',
+  'service-refused': 'service-refused',
   'capture-in-progress': 'capture-in-progress',
   // They pressed stop, so they already know. Null, not a sentence.
   cancelled: null,
@@ -188,8 +199,9 @@ const ON_SUBMIT: Record<TaggedFailure, SubmitFailure> = {
   // which has been closed since before the questions were asked.
   'no-api-key': 'unknown',
   'camera-unavailable': 'unknown',
-  // The submit path does not open the camera, so it cannot raise this either.
+  // The submit path does not open the camera, so it cannot raise these either.
   'no-connection': 'unknown',
+  'service-refused': 'unknown',
   'capture-in-progress': 'unknown',
   cancelled: 'unknown',
   expired: 'expired',
@@ -221,6 +233,7 @@ const ON_DASHBOARD: Record<TaggedFailure, DashboardFailure> = {
   'no-api-key': 'unknown',
   'camera-unavailable': 'unknown',
   'no-connection': 'unknown',
+  'service-refused': 'unknown',
   'capture-in-progress': 'unknown',
   cancelled: 'unknown',
   expired: 'unknown',

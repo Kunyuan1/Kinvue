@@ -145,6 +145,12 @@ const SETTLING_CODES: ReadonlySet<ValidationCodeValue> = new Set([
 ])
 
 export interface CaptureOptions {
+  /**
+   * The SmartSpectra key to capture with, chosen in `app/main/index.ts` (KV-19):
+   * the household's stored key in a packaged build, `SMARTSPECTRA_API_KEY` in
+   * development. Null or empty is `MissingApiKeyError`, before any camera.
+   */
+  apiKey: string | null
   /** How long to hold the camera open. The UI asks the person for ~30s. */
   durationSec?: number
   /** Called with elapsed seconds so the renderer can show a countdown. */
@@ -198,8 +204,9 @@ export interface CaptureOptions {
  * a rating nobody gave is not a rating of worthless. See
  * `createVitalsAccumulator`.
  */
-export async function captureVitals(options: CaptureOptions = {}): Promise<Vitals> {
+export async function captureVitals(options: CaptureOptions): Promise<Vitals> {
   const {
+    apiKey,
     durationSec = DEFAULT_CAPTURE_SECONDS,
     onProgress,
     onGuidance,
@@ -209,8 +216,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
   } = options
   if (signal?.aborted === true) throw new CaptureCancelledError()
 
-  const apiKey = process.env.SMARTSPECTRA_API_KEY
-  if (apiKey === undefined || apiKey === '') throw new MissingApiKeyError()
+  if (apiKey === null || apiKey === '') throw new MissingApiKeyError()
 
   // Sampled once, before the camera opens, and used for every failure below
   // (KV-104). The SDK reaches Presage when the session starts, so this is the
@@ -250,6 +256,10 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
   // several seconds, and those come straight out of the window a reading has
   // to appear in — counting them would report a short capture as a full one.
   let firstFrameAt: number | undefined
+  // Whether the SDK has judged any frame — a validation event or metrics. A
+  // failure before one is the service refusing the session (a wrong key was
+  // measured failing so), not a capture that went wrong (review of #195).
+  let framesJudged = false
 
   // The teardown this capture started, so the capture can wait for it before
   // it settles (KV-84). Until then the *lock* cleared the moment the promise
@@ -363,6 +373,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       // so there is exactly one registration per event here. Do not add a second.
       sdk.on('metrics', (buf: Buffer) => {
         firstFrameAt ??= Date.now()
+        framesJudged = true
         try {
           collected.add(decodeMetrics(buf))
         } catch (err) {
@@ -375,6 +386,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
 
       sdk.on('validationStatus', (code: ValidationCodeValue, _ts: number) => {
         firstFrameAt ??= Date.now()
+        framesJudged = true
         if (code === ValidationCode.kOk) {
           onGuidance?.(null)
           return
@@ -414,13 +426,14 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
 
       sdk.on('error', (code: number, message: string) => {
         cleanUp()
-        // Not all of the SDK's failures are the camera's. A key that is present
-        // but rejected, expired or out of credit surfaces here, and calling that
+        // Not all of the SDK's failures are the camera's. An account code — should
+        // the SDK send one; a wrong key was measured arriving as 8 — surfaces
+        // here, and calling that
         // a busy camera sends the person to close a video call that was never
         // the problem. `sdkFailure` keeps the two apart (KV-7) — and keeps a
         // capture that failed with the network down from being called a camera
         // fault either, which the SDK's own code cannot tell us (KV-104).
-        reject(captureError(sdkFailure(code, online), `SmartSpectra — ${message}`))
+        reject(captureError(sdkFailure(code, online, framesJudged), `SmartSpectra — ${message}`))
       })
     } catch (err) {
       cleanUp()
@@ -439,7 +452,7 @@ export async function captureVitals(options: CaptureOptions = {}): Promise<Vital
       // which it was rather than the call site assuming. The original error
       // rides along as `cause`: the tag must be in the message to cross IPC,
       // the class and stack need not be lost to a log on this side.
-      const failure = sdkFailure(sdkErrorCode(err), online)
+      const failure = sdkFailure(sdkErrorCode(err), online, framesJudged)
       reject(captureError(failure, 'the camera could not be started.', err))
     }
   }).finally(async () => {

@@ -60,6 +60,9 @@ describe('the errors the capture throws', () => {
   })
 })
 
+const JUDGED = true
+const NONE_JUDGED = false
+
 describe('sdkFailure', () => {
   const ONLINE = true
   const OFFLINE = false
@@ -71,7 +74,7 @@ describe('sdkFailure', () => {
   ])('calls code %i setup rather than a busy camera (%s)', (code) => {
     // The harm this prevents: the person closes the video call they were told
     // about, retries, fails again, and the cause is a .env nobody has touched.
-    expect(sdkFailure(code, ONLINE)).toBe('no-api-key')
+    expect(sdkFailure(code, ONLINE, JUDGED)).toBe('no-api-key')
   })
 
   it('still calls an account problem an account problem when offline', () => {
@@ -79,18 +82,43 @@ describe('sdkFailure', () => {
     // enough to ask. A stale `isOnline()` must not rewrite that as a
     // connection fault and send someone to check their router (KV-104).
     for (const code of [2, 3, 4]) {
-      expect(sdkFailure(code, OFFLINE)).toBe('no-api-key')
+      expect(sdkFailure(code, OFFLINE, JUDGED)).toBe('no-api-key')
     }
   })
 
   it('still calls a genuinely unavailable input the camera', () => {
-    expect(sdkFailure(7, ONLINE)).toBe('camera-unavailable')
+    expect(sdkFailure(7, ONLINE, JUDGED)).toBe('camera-unavailable')
   })
 
   it('does not guess at codes it has no opinion about', () => {
-    for (const code of [0, 1, 5, 6, 8, 9, 10, 11]) {
-      expect(sdkFailure(code, ONLINE)).toBe('camera-unavailable')
+    for (const code of [0, 1, 9, 10, 11]) {
+      expect(sdkFailure(code, ONLINE, JUDGED)).toBe('camera-unavailable')
     }
+  })
+
+  it('names the service, online, for the codes that say the service or the network (KV-19)', () => {
+    for (const code of [5, 6]) {
+      for (const judged of [JUDGED, NONE_JUDGED]) {
+        expect(sdkFailure(code, ONLINE, judged), `code ${code}`).toBe('service-refused')
+      }
+    }
+  })
+
+  it('names the service and the key for online 8 before any frame was judged', () => {
+    // Measured: a wrong key, online — every endpoint 401 — failed as 8 at 1.6s
+    // with no validation event. The service refused the session.
+    expect(sdkFailure(8, ONLINE, NONE_JUDGED)).toBe('service-refused')
+  })
+
+  it('leaves online 8 after frames were judged to the camera (review of #195)', () => {
+    // Naming the key for every reading that went wrong mid-way is the
+    // wrong-cause screen KV-104 removed.
+    expect(sdkFailure(8, ONLINE, JUDGED)).toBe('camera-unavailable')
+  })
+
+  it('names the connection for 8 offline, judged or not', () => {
+    expect(sdkFailure(8, OFFLINE, NONE_JUDGED)).toBe('no-connection')
+    expect(sdkFailure(8, OFFLINE, JUDGED)).toBe('no-connection')
   })
 
   it('names the connection when the device is offline', () => {
@@ -98,7 +126,7 @@ describe('sdkFailure', () => {
     // `kProcessingFailed` — the same code a genuinely bad capture gets — so
     // the code cannot carry this. `kNetworkError` (5) never arrives (KV-104).
     for (const code of [5, 6, 8]) {
-      expect(sdkFailure(code, OFFLINE), `code ${code}`).toBe('no-connection')
+      expect(sdkFailure(code, OFFLINE, JUDGED), `code ${code}`).toBe('no-connection')
     }
   })
 
@@ -107,15 +135,15 @@ describe('sdkFailure', () => {
     // connection screen would send them to reconnect, and the next try would
     // tell them about the camera — two trips, the first to the wrong place.
     for (const code of [0, 1, 7, 9, 10, 11]) {
-      expect(sdkFailure(code, OFFLINE), `code ${code}`).toBe('camera-unavailable')
+      expect(sdkFailure(code, OFFLINE, JUDGED), `code ${code}`).toBe('camera-unavailable')
     }
   })
 
   it('does not name the connection for a throw with no code, online or off', () => {
     // The lifecycle path: `useCamera()` throwing carries no numeric code, and
     // selecting an input is local. The measured offline failure was code 8.
-    expect(sdkFailure(undefined, ONLINE)).toBe('camera-unavailable')
-    expect(sdkFailure(undefined, OFFLINE)).toBe('camera-unavailable')
+    expect(sdkFailure(undefined, ONLINE, JUDGED)).toBe('camera-unavailable')
+    expect(sdkFailure(undefined, OFFLINE, JUDGED)).toBe('camera-unavailable')
   })
 })
 

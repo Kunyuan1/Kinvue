@@ -14,6 +14,8 @@ import { shell } from 'electron'
 export const LINKS = {
   /** Windows's camera privacy page, where the switches the setup screen names are. */
   cameraSettings: 'ms-settings:privacy-webcam',
+  /** SmartSpectra's free registration, where the household's own key comes from (KV-19). */
+  keyRegistration: 'https://physiology.presagetech.com/auth/register',
 } as const
 
 export type Link = keyof typeof LINKS

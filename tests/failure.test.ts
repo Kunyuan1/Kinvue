@@ -37,6 +37,7 @@ describe('reading a failure off the wire', () => {
     ['no-api-key'],
     ['camera-unavailable'],
     ['no-connection'],
+    ['service-refused'],
     ['cancelled'],
     ['capture-in-progress'],
     ['expired'],

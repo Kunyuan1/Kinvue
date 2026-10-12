@@ -59,10 +59,15 @@ import type { CaptureFailure } from '@core/capture/failure'
  */
 const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
   'no-api-key': {
-    title: 'This app is not set up yet',
+    // Missing, refused, out of credit — or a configuration the service would
+    // not take, which is not the key (kConfigurationFailed): so the title
+    // claims setup, not the key, and the key is named as the likeliest part of
+    // it (KV-19, review of #195).
+    title: 'Kinvue is not set up to take a reading',
     detail:
-      'Kinvue has not been given what it needs to use the camera. Nothing is wrong on ' +
-      'your side — whoever set this up can finish it.',
+      'Its key from SmartSpectra is missing or was not accepted, or something else in how ' +
+      'it is set up is not right. Nothing is wrong on your side — whoever set this up can ' +
+      'check it.',
   },
   'camera-unavailable': {
     // Still hedges toward the connection, because `net.isOnline()` returning
@@ -80,6 +85,17 @@ const FAILURE: Record<CaptureFailure, { title: string; detail: string }> = {
     detail:
       'A reading needs the internet, and there is none right now, so this check-in ' +
       'could not be finished. It can be taken once the connection is back.',
+  },
+  'service-refused': {
+    // Online, and the service would not run it: a network or server code, or a
+    // failure before any frame was judged — measured as what a wrong key does
+    // (KV-19, review of #195). The key is named first, the service second, and
+    // neither is claimed.
+    title: 'The reading could not be started',
+    detail:
+      'The service that reads the camera would not run it. Kinvue’s key may be wrong or ' +
+      'used up, or the service may be busy. Nothing is wrong on your side — whoever set ' +
+      'this up can check the key.',
   },
   'capture-in-progress': {
     // Says what the button does, because the button is the only way out of
