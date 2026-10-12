@@ -36,14 +36,19 @@ export class MissingApiKeyError extends Error {
 export { CaptureCancelledError } from '../shared/capture-reply'
 
 /**
- * Codes that mean the account or its key, not the camera.
- *
- * A key that is present but rejected, expired or out of credit fails here
- * rather than at the `SMARTSPECTRA_API_KEY` check, because the SDK only finds
- * out when it reaches Presage at session start. Reporting that as a busy
- * camera sends the person to close a video call that was never the problem —
- * a setup fault stated as a hardware one, on the screen least able to afford
+ * Codes that mean the account or its key, not the camera, should the SDK send
+ * them. Reporting a setup fault as a busy camera sends the person to close a
+ * video call that was never the problem, on the screen least able to afford
  * it (KV-7).
+ *
+ * A key that is simply wrong does *not* arrive here. Measured 2026-10-12, in
+ * the packaged app with a made-up key, online: every SmartSpectra endpoint
+ * answered HTTP 401 ("User authentication required") — the initialize call,
+ * the licence check, the model loader, usage verification — and the SDK
+ * reported it as `kProcessingFailed` (8), "SmartSpectra processing failed",
+ * not `kAuthenticationFailed` (2). So a wrong key arrives as the code an
+ * ordinary bad capture gets, and nothing in the `error` event (code, a generic
+ * message, `retryable`) is known yet to tell the two apart.
  */
 const ACCOUNT_CODES: ReadonlySet<number> = new Set([
   2, // kAuthenticationFailed — key rejected, expired or revoked
@@ -92,9 +97,10 @@ const SERVICE_CODES: ReadonlySet<number> = new Set([
  * connection named. Online, only a code that itself says the service or the
  * network (5, 6) is named `service-refused`, where the household's key is one
  * possibility (KV-19); 8 stays `camera-unavailable`, whose copy still hedges
- * toward the connection because that remains possible (KV-104). A refused key
- * is expected among the account codes (2, 4), which say so; what a wrong key
- * sends online has not been measured (review of #195).
+ * toward the connection because that remains possible (KV-104). A wrong key
+ * online arrives as 8 too — measured, see `ACCOUNT_CODES` — so it reads as the
+ * camera today: naming the key for every 8 would blame it for every bad
+ * capture, and nothing yet tells the two apart (review of #195).
  *
  * The SDK cannot answer this itself: measured on a real capture with the
  * network down, it reports `kProcessingFailed` (8) — the same code a genuinely

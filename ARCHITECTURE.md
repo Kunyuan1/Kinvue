@@ -2042,8 +2042,16 @@ the three PRs listed at the end.
     that code (KV-65); but an ordinary bad capture gets it too, and naming the key for
     every reading that did not work is the wrong-cause screen KV-104 removed. So only a
     code that itself says the service or the network names the service, with the key as
-    the thing to check if it keeps happening; 8 stays the camera's. What a wrong key sends
-    online has not been measured, and is the one check that would settle it.
+    the thing to check if it keeps happening; 8 stays the camera's.
+
+**Then measured (2026-10-12), and it is the gap:** in the packaged app with a made-up key,
+online, every SmartSpectra endpoint answered HTTP 401 — and the SDK reported it as
+`kProcessingFailed` (8), not `kAuthenticationFailed`. So #192's review was right that a
+wrong key arrives as 8, and #195's that a bad capture does too: from the code alone the
+two cannot be told apart, and a wrong key reads today as "The camera could not be used".
+The `error` event carries only the code, a generic message and a `retryable` flag; the 401
+is in the SDK's own log, which the app does not read. **Open:** what would tell them
+apart, decided with the owner.
 - **Signed from the first release** (T9). Microsoft's Artifact Signing (formerly Trusted
   Signing), from a release workflow on a GitHub Actions Windows runner; the signing
   credentials are repository secrets and are never on a developer's machine. What that
@@ -2213,13 +2221,14 @@ only ever told a `KeyStatus`. As decided:
 - **A packaged build reads only its stored key.** Checked: relaunched with a decoy
   `SMARTSPECTRA_API_KEY` in its environment, it still used the saved key. A development
   build takes the variable when it is set.
-- **A refused key is named.** The SDK's account codes say Kinvue is not set up to take a
-  reading — the key missing or not accepted, or its configuration (review of #195:
-  `kConfigurationFailed` is not the key, so the title claims setup). Online, a network or
-  server code has its own sentence, `service-refused`: likeliest busy, and the key the
-  thing to check if it keeps happening. Not code 8, which a bad capture gets too. After
-  either, the dashboard's key section says the key may be why, until a reading is
-  accepted.
+- **A refused key is named — where the SDK says so.** The SDK's account codes say Kinvue
+  is not set up to take a reading — the key missing or not accepted, or its configuration
+  (review of #195: `kConfigurationFailed` is not the key, so the title claims setup).
+  Online, a network or server code has its own sentence, `service-refused`: likeliest
+  busy, and the key the thing to check if it keeps happening. After either, the
+  dashboard's key section says the key may be why, until a reading is accepted. **But a
+  wrong key does not arrive as either:** measured, it comes back as code 8, which stays
+  the camera's (above) — the open gap.
 - **Every state is said on the dashboard** (review of #195): none, lost and locked too,
   from records total over `KeyStatus`, so a new status does not compile until it has
   words. While locked there is no field — a save would be refused — and instead **"Forget

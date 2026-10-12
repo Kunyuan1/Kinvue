@@ -420,8 +420,9 @@ export async function captureVitals(options: CaptureOptions): Promise<Vitals> {
 
       sdk.on('error', (code: number, message: string) => {
         cleanUp()
-        // Not all of the SDK's failures are the camera's. A key that is present
-        // but rejected, expired or out of credit surfaces here, and calling that
+        // Not all of the SDK's failures are the camera's. An account code — should
+        // the SDK send one; a wrong key was measured arriving as 8 — surfaces
+        // here, and calling that
         // a busy camera sends the person to close a video call that was never
         // the problem. `sdkFailure` keeps the two apart (KV-7) — and keeps a
         // capture that failed with the network down from being called a camera
