@@ -1230,6 +1230,51 @@ those two apart.
 
 ---
 
+## The cared-for person's path, sized for them (KV-20)
+
+Decided 2026-10-13 with the owner. The dashboard is read by the caregiver, at a desk. Four
+things are not: *Take a reading*, the capture, the card that says what a reading measured,
+and the four questions. Those are walked by the older adult, who may not see well and may
+not have a steady hand — so they are the screens where size, contrast, focus and what is
+read aloud decide whether the check-in happens at all.
+
+- **The path, not two screens.** The ticket named the capture and the questions; the
+  button that starts a reading and the card between camera and questions are on the same
+  walk, so they are sized the same. The rest of the dashboard is the caregiver's and is unchanged.
+  The sizes are written once, in `components/person.ts`, so one screen cannot drift from
+  the next.
+- **Large, not the minimum.** No text under 18px; no control under 48px tall; an answer
+  64px tall with 20px text. WCAG's AA target (24px) is for every reader; this is for one.
+  *Not now* and *Stop* were small underlined links and are now buttons like the rest: a
+  target too small to hit on purpose is one hit by accident. Checked at 200% zoom at the
+  window's narrowest (880px): nothing runs off the side.
+- **Contrast, measured from the theme.** Every colour that text is drawn in clears 4.5:1
+  on both surfaces. `--color-unknown` did not — 3.7:1 for "Nothing was measured" — and is
+  lighter now. Controls were outlined in `--color-line`, 1.3:1, which is a card's edge and
+  made a button read as text; they have `--color-control` (3:1 or more). Keyboard focus is
+  a ring in `--color-focus`, everywhere, on `:focus-visible` only. The amber of
+  `--color-elevated`, the one colour that carries meaning, is over 10:1. The tests read
+  the numbers out of `styles.css`, so a token changed later is measured, not trusted.
+- **Never colour alone.** A card's verdict is a word as well as a colour (unchanged, and
+  kept). A chosen answer was its outline and a heavier weight; it now carries a tick as
+  well, and says `aria-pressed` to a screen reader.
+- **Focus follows the screen, never the capture.** Each question's heading takes focus as
+  it opens, with its place in the four read alongside it, and its answers are a group
+  named by it. The capture's heading takes focus as it opens and again when a failure
+  replaces it, the reading card as it appears, and the dashboard's heading on the way
+  back — each time because the button pressed to get there is gone, and focus left on
+  nothing starts a screen reader from the top. Nothing moves focus while the camera runs.
+- **Announced, not focused.** The framing advice, as it changes (KV-3). The countdown
+  twice only: how long it takes, a second after the screen opens so the heading is read
+  first, and that it is finishing — said every second, it would talk over the advice that
+  is the point of the screen. The end of the questions, since focus stays on the *No* just
+  pressed; and a check-in that could not be saved, as an alert.
+- **Motion.** Nothing on the path animates. The self-view moves because the person does,
+  and it is what they frame themselves by. Anything animated later honours
+  `prefers-reduced-motion`.
+- **What a DOM cannot check.** Whether Narrator or NVDA reads all of this in the order the
+  markup says is a manual check, on the machine, as the camera's failures are (KV-7).
+
 ## Planning for remote access
 
 Everything above describes an app used at one machine. The product it is for is not: the

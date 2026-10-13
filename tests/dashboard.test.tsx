@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import App from '@renderer/App'
 import SectionBoundary from '@renderer/components/SectionBoundary'
 import {
@@ -1038,6 +1038,59 @@ describe('one section that cannot be drawn (KV-163)', () => {
       .mocked(console.error)
       .mock.calls.filter(([first]) => first === 'A dashboard section could not be drawn.')
     expect(logged.length).toBe(1)
+  })
+})
+
+describe('the cared-for person’s path through the dashboard (KV-20)', () => {
+  const sessions = (): SessionRecord[] =>
+    history(3).map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+  const nothingMeasured = {
+    captureId: 'c-1',
+    vitals: { pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null },
+  }
+  const startReading = async (capture: () => Promise<unknown>): Promise<void> => {
+    Object.assign(window.kinvue, { capture: vi.fn(capture) })
+    listSessions.mockResolvedValue(sessions())
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Take a reading' }))
+  }
+  const heading = (): HTMLElement =>
+    screen.getByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })
+
+  it('starts at a Take a reading sized for them, not for the caregiver’s desk', async () => {
+    listSessions.mockResolvedValue(sessions())
+    render(<App />)
+    const take = await screen.findByRole('button', { name: 'Take a reading' })
+    expect(take.className).toMatch(/\bmin-h-12\b/)
+    expect(take.className).toMatch(/\btext-lg\b/)
+  })
+
+  it('puts focus on the dashboard heading when they come back from the camera', async () => {
+    await startReading(() => new Promise(() => undefined))
+    fireEvent.click(await screen.findByRole('button', { name: 'Go back' }))
+    expect(document.activeElement).toBe(heading())
+  })
+
+  it('puts focus on the card instead when a reading is waiting, sized as the path is', async () => {
+    // Settled once the camera screen is up, as a real one is half a minute
+    // later: settled at once, the dashboard would never have been left.
+    let settle: (result: typeof nothingMeasured) => void = () => undefined
+    await startReading(() => new Promise((resolve) => (settle = resolve)))
+    await screen.findByText('in front of the camera')
+    await act(async () => settle(nothingMeasured))
+
+    const card = await screen.findByRole('heading', { name: 'Nothing was measured' })
+    expect(document.activeElement).toBe(card)
+    for (const name of ['Try the camera again', 'Answer the questions anyway']) {
+      expect(screen.getByRole('button', { name }).className).toMatch(/\bmin-h-12\b/)
+    }
+  })
+
+  it('leaves focus alone on a dashboard nobody left', async () => {
+    listSessions.mockResolvedValue(sessions())
+    render(<App />)
+    await screen.findByRole('button', { name: 'Take a reading' })
+    expect(document.activeElement).toBe(document.body)
   })
 })
 

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import {
   ANSWER_STEPS,
   answeredCount,
@@ -8,6 +8,7 @@ import {
 import type { SubmitFailure } from '@core/capture/failure'
 import type { CheckInAnswers } from '@core/session/types'
 import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
+import { PERSON_BUTTON, PERSON_NOTE, PERSON_PRIMARY, useFocusWhenShown } from './person'
 
 /**
  * The four questions, asked one at a time.
@@ -29,6 +30,10 @@ import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
  * fires `skipped-meal` on a question nobody put to them; as `false`, it says
  * "skipped meals no" on the card for a meal nobody asked about. Either is an
  * answer invented. See `core/session/answers.ts`.
+ *
+ * Sized for that reader and walkable without a mouse (KV-20): each question
+ * takes focus as it opens, its answers are a group named by it, and the one
+ * chosen says so in a mark as well as an outline — never in colour alone.
  */
 
 /**
@@ -108,15 +113,12 @@ export default function QuestionFlow({
   }
 
   const done = answeredCount(draft)
+  const position = `Question ${Math.min(step + 1, TOTAL)} of ${TOTAL}`
 
   return (
     <section className="mx-auto max-w-xl">
-      <p className="text-center text-sm text-(--color-muted)">
-        Question {Math.min(step + 1, TOTAL)} of {TOTAL}
-      </p>
-
       {step === 0 && (
-        <Question title="How are you feeling today?">
+        <Question position={position} title="How are you feeling today?">
           <Choice chosen={draft.mood === 'good'} onClick={() => answer({ mood: 'good' })}>
             Good
           </Choice>
@@ -130,7 +132,7 @@ export default function QuestionFlow({
       )}
 
       {step === 1 && (
-        <Question title="How did you sleep?">
+        <Question position={position} title="How did you sleep?">
           <Choice chosen={draft.sleep === 'well'} onClick={() => answer({ sleep: 'well' })}>
             Well
           </Choice>
@@ -150,7 +152,7 @@ export default function QuestionFlow({
         // Asked about a meal skipped, not whether they have eaten "today": at
         // 8am "not yet" was breakfast still to come, and it counted the same as
         // a missed day (KV-16). This means the same at any hour.
-        <Question title="Have you skipped any meals since yesterday?">
+        <Question position={position} title="Have you skipped any meals since yesterday?">
           <Choice
             chosen={draft.skippedMeal === false}
             onClick={() => answer({ skippedMeal: false })}
@@ -167,7 +169,7 @@ export default function QuestionFlow({
       )}
 
       {step === 3 && (
-        <Question title="Are you in any pain today?">
+        <Question position={position} title="Are you in any pain today?">
           {/* Still on screen once answered: "No" was as final as a mis-tap on
               any other question, and this is the one that decides whether the
               note is even offered. */}
@@ -184,15 +186,16 @@ export default function QuestionFlow({
             Yes
           </Choice>
 
-          {draft.painReported === false && (
-            <p className="text-center text-sm text-(--color-muted)">
-              Good. That is everything.
-            </p>
-          )}
+          {/* Said aloud as well as shown: focus stays on the No just pressed,
+              so without a live region a screen reader would not hear that the
+              questions are over, or that Finish has appeared below. */}
+          <p aria-live="polite" className={`text-center ${PERSON_NOTE}`}>
+            {draft.painReported === false ? 'Good. That is everything.' : ''}
+          </p>
 
           {draft.painReported === true && (
             <label className="block text-left">
-              <span className="text-sm text-(--color-muted)">
+              <span className={PERSON_NOTE}>
                 If you would like to say where, you can. It is not required.
               </span>
               {/* Capped where the caller can see it rather than at the process
@@ -205,46 +208,41 @@ export default function QuestionFlow({
                 onChange={(e) => setDraft({ ...draft, painNote: e.target.value })}
                 maxLength={MAX_PAIN_NOTE_LENGTH}
                 rows={3}
-                className="mt-2 w-full rounded-lg border border-(--color-line) bg-(--color-raised) p-3 text-base"
+                className="mt-2 w-full rounded-lg border-2 border-(--color-control) bg-(--color-raised) p-3 text-lg"
               />
             </label>
           )}
         </Question>
       )}
 
+      {/* An alert: it appears after Finish, where focus already is, and a
+          screen reader would otherwise read on as though it had been saved. */}
       {failure !== null && (
-        <p className="mt-6 rounded-lg border border-(--color-line) p-4 text-center text-base text-(--color-elevated)">
+        <p
+          role="alert"
+          className="mt-6 rounded-lg border border-(--color-line) p-4 text-center text-lg text-(--color-elevated)"
+        >
           {SUBMIT_FAILURE[failure]}
         </p>
       )}
 
-      <div className="mt-8 flex items-center justify-between">
-        <div className="flex items-center gap-4">
+      <div className="mt-8 flex flex-wrap items-center justify-between gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           {step > 0 && (
-            <button
-              type="button"
-              onClick={() => setStep(step - 1)}
-              className="rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-raised)"
-            >
+            <button type="button" onClick={() => setStep(step - 1)} className={PERSON_BUTTON}>
               Back
             </button>
           )}
-          <button
-            type="button"
-            onClick={onCancel}
-            className="text-sm text-(--color-muted) underline hover:text-(--color-ink)"
-          >
+          {/* A button the size of the others, not a small underlined link: it
+              sits under the answers, and a target too small to hit on purpose
+              is one hit by accident instead. */}
+          <button type="button" onClick={onCancel} className={PERSON_BUTTON}>
             Not now
           </button>
         </div>
 
         {done === TOTAL && (
-          <button
-            type="button"
-            onClick={finish}
-            disabled={submitting}
-            className="rounded-lg border border-(--color-line) px-5 py-3 text-base hover:bg-(--color-raised) disabled:opacity-50"
-          >
+          <button type="button" onClick={finish} disabled={submitting} className={PERSON_PRIMARY}>
             {submitting ? 'Saving…' : 'Finish'}
           </button>
         )}
@@ -253,25 +251,52 @@ export default function QuestionFlow({
   )
 }
 
+/**
+ * One question. Its heading takes focus as it opens, so a screen reader reads
+ * the new question rather than starting again from the top, and the keyboard
+ * goes on from there to its answers; its position ("Question 2 of 4") is read
+ * with it. Each question is its own mount, so going Back focuses too.
+ */
 function Question({
+  position,
   title,
   children,
 }: {
+  position: string
   title: string
   children: React.ReactNode
 }): React.JSX.Element {
+  const heading = useFocusWhenShown<HTMLHeadingElement>()
+  const positionId = useId()
+  const titleId = useId()
   return (
-    <div className="mt-6">
-      <h2 className="text-center text-xl font-semibold">{title}</h2>
-      <div className="mt-6 space-y-3">{children}</div>
+    <div>
+      <p id={positionId} className={`text-center ${PERSON_NOTE}`}>
+        {position}
+      </p>
+      <h2
+        ref={heading}
+        id={titleId}
+        tabIndex={-1}
+        aria-describedby={positionId}
+        className="mt-6 text-center text-2xl font-semibold"
+      >
+        {title}
+      </h2>
+      <div role="group" aria-labelledby={titleId} className="mt-6 space-y-3">
+        {children}
+      </div>
     </div>
   )
 }
 
 /**
- * Deliberately large: the person answering may not have a steady hand. `chosen`
- * is what makes an answer correctable — the button stays on screen showing what
- * was tapped, and tapping another one replaces it.
+ * Deliberately large: the person answering may not have a steady hand — 64px
+ * tall, 20px text (KV-20). `chosen` is what makes an answer correctable — the
+ * button stays on screen showing what was tapped, and tapping another one
+ * replaces it. It shows three ways at once — a tick, the outline, the weight —
+ * and is `aria-pressed` for a screen reader; an outline alone is what a
+ * low-vision reader misses.
  */
 function Choice({
   chosen,
@@ -287,11 +312,14 @@ function Choice({
       type="button"
       onClick={onClick}
       aria-pressed={chosen}
-      className={`w-full rounded-xl border bg-(--color-raised) px-5 py-4 text-left text-lg hover:border-(--color-muted) ${
-        chosen ? 'border-(--color-ink) font-medium' : 'border-(--color-line)'
+      className={`flex min-h-16 w-full items-center justify-between rounded-xl border-2 bg-(--color-raised) px-5 py-3 text-left text-xl ${
+        chosen
+          ? 'border-(--color-ink) font-semibold'
+          : 'border-(--color-control) hover:border-(--color-muted)'
       }`}
     >
-      {children}
+      <span>{children}</span>
+      {chosen && <span aria-hidden="true">✓</span>}
     </button>
   )
 }
