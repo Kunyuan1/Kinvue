@@ -43,14 +43,26 @@ body {
 /*
  * Where the keyboard is, said by a ring that clears 3:1 against what it sits
  * on (KV-20). Only on `:focus-visible`, so a press with a mouse or a finger
- * draws nothing. A heading given focus when its screen opens — the questions,
- * the capture — is a place to read from, not a control, so it draws none.
+ * draws nothing.
  */
 :focus-visible {
   outline: 3px solid var(--color-focus);
   outline-offset: 2px;
 }
 
-[tabindex='-1']:focus {
-  outline: none;
+/*
+ * A heading given focus as its screen opens — a question, the capture, the
+ * dashboard on the way back — is a place to read from, not a control, so it
+ * does not wear a control's ring: it gets a dashed one, set further out. Not
+ * none (review of #196): someone who sees the screen but moves by keyboard
+ * would otherwise have no sign of where the keyboard went until the next Tab.
+ * Still `:focus-visible`, so it shows after a key press and not after a click,
+ * which a mouse user needs no marker for.
+ *
+ * Keyed on the heading, not on `tabindex="-1"` alone, so a control taken out
+ * of the tab order later — a roving tabindex — keeps the ring it needs.
+ */
+:is(h1, h2)[tabindex='-1']:focus-visible {
+  outline: 2px dashed var(--color-focus);
+  outline-offset: 6px;
 }

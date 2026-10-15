@@ -223,11 +223,18 @@ function Dashboard(): React.JSX.Element {
   // section at the foot of the page says the key may be the cause.
   const [keySuspect, setKeySuspect] = useState(false)
   const [pastSetup, setPastSetup] = useState(false)
-  // Back on the dashboard from the camera or the questions, focus goes to its
-  // heading (KV-20): the button pressed to leave — Stop, Go back, Finish — is
-  // gone, and focus left on nothing starts a screen reader from the top. Not
-  // when a reading is waiting: its card takes focus itself.
-  const away = capturing || answering !== null
+  // Back on the dashboard from the camera, the questions or the setup screen,
+  // focus goes to its heading (KV-20): the button pressed to leave — Stop, Go
+  // back, Finish, Go to the check-ins — is gone, and focus left on nothing
+  // starts a screen reader from the top. Not when a reading is waiting: its
+  // card takes focus itself.
+  //
+  // The setup screen counts because Take a reading can open it, when the
+  // camera is off or the key is missing (review of #196); it is also where a
+  // first run starts.
+  const showingSetup =
+    camera !== undefined && keyStatus !== undefined && setupNeeded(camera, keyStatus) && !pastSetup
+  const away = capturing || answering !== null || showingSetup
   const wasAway = useRef(away)
   const dashboardHeading = useRef<HTMLHeadingElement>(null)
   useEffect(() => {
@@ -645,8 +652,8 @@ function Dashboard(): React.JSX.Element {
 
   // Before the first reading (KV-19): a camera Windows keeps Kinvue from, or no
   // key to read it with, is said here, not after a capture fails. Going past it
-  // reads the check-ins.
-  if (setupNeeded(camera, keyStatus) && !pastSetup) {
+  // reads the check-ins. The same test as focus's, so the two cannot disagree.
+  if (showingSetup) {
     return (
       <SetupScreen
         camera={camera}
@@ -717,7 +724,11 @@ function Dashboard(): React.JSX.Element {
 
       {error !== null && (
         <div className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm">
-          <p className="text-(--color-elevated)">{error.text}</p>
+          {/* An alert, which is spoken as it appears (review of #196): only the
+              sentence, not the way out below it, which is read in its turn. */}
+          <p role="alert" className="text-(--color-elevated)">
+            {error.text}
+          </p>
           {/* Never for a key store that is only out of reach (store-locked): that
               history opens once it is reachable, and setting it aside would move
               a readable history (KV-175, review of #186). */}
@@ -740,11 +751,19 @@ function Dashboard(): React.JSX.Element {
         </div>
       )}
 
-      {notice !== null && (
-        <p className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm text-(--color-muted)">
-          {notice}
-        </p>
-      )}
+      {/* Said as well as shown (review of #196). Several are written for the
+          way back from the person's path — the camera stopped, the questions
+          that could not be drawn, a check-in saved but not reloaded — and focus
+          lands on the heading above them, so unannounced they went unheard.
+          The region is always there, so a notice arriving in it is spoken: one
+          drawn already holding its text often is not. */}
+      <div role="status">
+        {notice !== null && (
+          <p className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm text-(--color-muted)">
+            {notice}
+          </p>
+        )}
+      </div>
 
       {sessions !== null && sessions.length === 0 && (
         <div className="rounded-xl border border-dashed border-(--color-line) p-8 text-center">

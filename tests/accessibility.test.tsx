@@ -6,6 +6,8 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { CaptureFailure } from '@core/capture/failure'
 import CaptureScreen, { COUNTDOWN_ANNOUNCE_DELAY_MS } from '@renderer/components/CaptureScreen'
 import QuestionFlow from '@renderer/components/QuestionFlow'
+import { PERSON_PRIMARY } from '@renderer/components/person'
+import { expectPersonSized } from './person-sized'
 
 /**
  * The cared-for person's path, held to what KV-20 decided: contrast measured
@@ -69,22 +71,36 @@ describe('the theme’s contrast (KV-20)', () => {
   it('draws a focus ring from the focus colour, for the keyboard only', () => {
     expect(STYLES).toMatch(/:focus-visible\s*\{[^}]*outline:\s*3px solid var\(--color-focus\)/)
   })
-})
 
-/**
- * Nothing on the path under the path's own sizes: every button at least 48px
- * tall (`min-h-12`, or an answer's `min-h-16`), and no text set below 18px.
- */
-const expectPersonSized = (root: HTMLElement): void => {
-  const buttons = root.querySelectorAll('button')
-  expect(buttons.length).toBeGreaterThan(0)
-  for (const button of buttons) {
-    expect(button.className, button.textContent ?? '').toMatch(/\bmin-h-1[26]\b/)
-  }
-  for (const element of root.querySelectorAll('[class]')) {
-    expect(element.className, element.textContent ?? '').not.toMatch(/\btext-(xs|sm|base)\b/)
-  }
-}
+  it('keeps Finish readable while it says Saving…, at half opacity (review of #196)', () => {
+    // `disabled:opacity-50` on PERSON_PRIMARY. A hex token cannot show this:
+    // the text is drawn half-transparent over whatever surface it sits on.
+    const blend = (fg: string, bg: string, alpha: number): string =>
+      '#' +
+      [1, 3, 5]
+        .map((at) => {
+          const [f, b] = [fg, bg].map((hex) => parseInt(hex.slice(at, at + 2), 16))
+          return Math.round(alpha * (f ?? 0) + (1 - alpha) * (b ?? 0))
+            .toString(16)
+            .padStart(2, '0')
+        })
+        .join('')
+    expect(PERSON_PRIMARY).toMatch(/\bdisabled:opacity-50\b/)
+    for (const surface of surfaces) {
+      const faded = blend(token('ink'), token(surface), 0.5)
+      expect(contrast(faded, token(surface)), surface).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('marks a focused heading differently, never not at all (review of #196)', () => {
+    expect(STYLES).toMatch(
+      /:is\(h1, h2\)\[tabindex='-1'\]:focus-visible\s*\{[^}]*outline:\s*2px dashed var\(--color-focus\)/,
+    )
+    // Nothing takes the ring away. A rule keyed on tabindex alone did, and
+    // would have from any control later taken out of the tab order too.
+    expect(STYLES).not.toMatch(/outline:\s*(none|0)\b/)
+  })
+})
 
 describe('the questions, walked without a mouse (KV-20)', () => {
   const renderQuestions = (failure: Parameters<typeof QuestionFlow>[0]['failure'] = null) =>
@@ -142,18 +158,44 @@ describe('the questions, walked without a mouse (KV-20)', () => {
     expect(other.textContent).not.toContain('✓')
   })
 
-  it('says aloud that the questions are over when the last answer is No', () => {
+  /** The last question's live region: the only polite one on these screens. */
+  const toLastQuestion = (): Element => {
     renderQuestions()
     for (const answer of ['Good', 'Well', 'No']) {
       fireEvent.click(screen.getByRole('button', { name: answer }))
     }
-    const live = screen
-      .getByRole('heading', { name: 'Are you in any pain today?' })
-      .parentElement?.querySelector('[aria-live="polite"]')
-    expect(live?.textContent).toBe('')
+    screen.getByRole('heading', { name: 'Are you in any pain today?' })
+    const live = document.querySelector('[aria-live="polite"]')
+    if (live === null) throw new Error('no live region on the last question')
+    // There before anything is said into it, so what is said is heard.
+    expect(live.textContent).toBe('')
+    return live
+  }
 
+  it('says aloud that the questions are over, and where Finish is, when the last answer is No', () => {
+    const live = toLastQuestion()
     fireEvent.click(screen.getByRole('button', { name: 'No' }))
-    expect(live?.textContent).toBe('Good. That is everything.')
+    expect(live.textContent).toBe('Good. That is everything. Finish is below.')
+    // Only the first sentence is on screen; where Finish is, the eye can see.
+    expect(live.querySelector('.sr-only')?.textContent).toBe(' Finish is below.')
+  })
+
+  it('keeps the empty region out of the layout: outside the answers, no margin, no content', () => {
+    // Inside the group it took the group's spacing while empty, and the row
+    // below sat 12px lower on this question than on the others (review of #196).
+    const live = toLastQuestion()
+    expect(live.closest('[role="group"]')).toBeNull()
+    expect(live.childNodes).toHaveLength(0)
+    expect(live.className).toMatch(/\bempty:mt-0\b/)
+  })
+
+  it('says so for Yes too, and that a box for the note has opened (review of #196)', () => {
+    const live = toLastQuestion()
+    fireEvent.click(screen.getByRole('button', { name: 'Yes' }))
+    expect(live.textContent).toMatch(/^That is everything\. Below is a box to say where/)
+    expect(live.textContent).toMatch(/not required\. Finish is after it\.$/)
+    // All of it spoken-only: the box and its label are on screen already.
+    expect(live.querySelector('.sr-only')?.textContent).toBe(live.textContent)
   })
 
   it('announces a failure to save, which appears where focus already is', () => {
@@ -244,8 +286,14 @@ describe('the capture, read without being moved (KV-20)', () => {
 
     // The visible line counts down; what is announced does not change.
     act(() => emit.progress?.(7))
-    expect(screen.getByText('Up to 23 seconds left')).toBeDefined()
     expect(countdownRegion().textContent).toBe('This takes up to 30 seconds.')
+    // And the visible count is not read beside it: two numbers that disagree
+    // (review of #196). Hidden from the tree, so a query by role cannot find it.
+    const shown = screen.getByText('Up to 23 seconds left')
+    expect(shown.getAttribute('aria-hidden')).toBe('true')
+    expect(
+      screen.queryByText('Up to 23 seconds left', { ignore: '[aria-hidden="true"]' }),
+    ).toBeNull()
   })
 
   it('says when it is finishing, whether main says so or the ceiling is reached', () => {
@@ -286,7 +334,7 @@ describe('the capture, read without being moved (KV-20)', () => {
     expect(screen.getByText('Holding still is all that is needed.')).toBeDefined()
   })
 
-  it('moves focus to a failure as it replaces the capture, and reads its detail with it', () => {
+  it('moves focus to a failure as it replaces the capture, with its detail read next, once', () => {
     const { rerender } = renderCapture()
     screen.getByRole('button', { name: 'Stop' }).focus()
 
@@ -299,8 +347,10 @@ describe('the capture, read without being moved (KV-20)', () => {
     )
     const heading = screen.getByRole('heading', { name: 'The camera could not be used' })
     expect(document.activeElement).toBe(heading)
-    const detail = document.getElementById(heading.getAttribute('aria-describedby') ?? '')
-    expect(detail?.textContent).toMatch(/Another program may have it open/)
+    // Next in reading order, and not also the heading's description, which
+    // read it twice one arrow apart (review of #196).
+    expect(heading.nextElementSibling?.textContent).toMatch(/Another program may have it open/)
+    expect(heading.hasAttribute('aria-describedby')).toBe(false)
   })
 
   it('draws every control and line at the path’s sizes, running and failed', () => {

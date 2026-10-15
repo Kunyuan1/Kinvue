@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { CaptureFailure } from '@core/capture/failure'
 import { PERSON_BUTTON, PERSON_NOTE, useFocusWhenShown } from './person'
 
@@ -170,7 +170,6 @@ export default function CaptureScreen({
   // Focused on opening, and again when a failure replaces the capture: the
   // Stop button that had focus is gone with it.
   const heading = useFocusWhenShown<HTMLHeadingElement>(failure)
-  const detailId = useId()
 
   useEffect(() => {
     const timer = setTimeout(() => setLengthSaid(true), COUNTDOWN_ANNOUNCE_DELAY_MS)
@@ -226,17 +225,13 @@ export default function CaptureScreen({
     const { title, detail } = FAILURE[failure]
     return (
       <section className="mx-auto max-w-xl text-center">
-        <h2
-          ref={heading}
-          tabIndex={-1}
-          aria-describedby={detailId}
-          className="text-2xl font-semibold"
-        >
+        {/* The detail is not tied to the heading with aria-describedby: it is
+            the next thing read after it, so describing it too read the same
+            sentence twice, one arrow apart (review of #196). */}
+        <h2 ref={heading} tabIndex={-1} className="text-2xl font-semibold">
           {title}
         </h2>
-        <p id={detailId} className={`mt-3 ${PERSON_NOTE}`}>
-          {detail}
-        </p>
+        <p className={`mt-3 ${PERSON_NOTE}`}>{detail}</p>
         <button type="button" onClick={onCancel} className={`mt-6 ${PERSON_BUTTON}`}>
           Go back
         </button>
@@ -289,8 +284,11 @@ export default function CaptureScreen({
         )}
       </div>
 
-      {/* Shown every second, not announced every second (KV-20). */}
-      <p className={`mt-2 ${PERSON_NOTE}`}>
+      {/* Shown every second, not announced every second (KV-20) — and hidden
+          from a screen reader, which hears the region below instead. Left in,
+          reading on from the heading said "Up to 23 seconds left. This takes
+          up to 30 seconds.": two numbers that disagree (review of #196). */}
+      <p aria-hidden="true" className={`mt-2 ${PERSON_NOTE}`}>
         {finishing ? 'Finishing up…' : `Up to ${remaining} seconds left`}
       </p>
       <p aria-live="polite" className="sr-only">

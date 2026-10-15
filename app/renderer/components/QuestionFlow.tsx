@@ -186,13 +186,6 @@ export default function QuestionFlow({
             Yes
           </Choice>
 
-          {/* Said aloud as well as shown: focus stays on the No just pressed,
-              so without a live region a screen reader would not hear that the
-              questions are over, or that Finish has appeared below. */}
-          <p aria-live="polite" className={`text-center ${PERSON_NOTE}`}>
-            {draft.painReported === false ? 'Good. That is everything.' : ''}
-          </p>
-
           {draft.painReported === true && (
             <label className="block text-left">
               <span className={PERSON_NOTE}>
@@ -213,6 +206,36 @@ export default function QuestionFlow({
             </label>
           )}
         </Question>
+      )}
+      {step === 3 && (
+        <>
+          {/* Said aloud as well as shown: focus stays on the answer just
+              pressed, so without a live region a screen reader would not hear
+              that the questions are over, or that Finish has appeared below.
+              Yes finishes them too, and opens the note — which a sighted reader
+              sees and a screen reader would not hear of (review of #196). The
+              spoken-only parts are `sr-only`: on screen, Finish and the box
+              say themselves.
+
+              Outside the answers' group, and with no margin while empty: inside
+              it, the empty region still took the group's spacing, and the row
+              below sat 12px lower on this question than on the other three
+              (review of #196). */}
+          <p aria-live="polite" className={`mt-3 text-center empty:mt-0 ${PERSON_NOTE}`}>
+            {draft.painReported === false && (
+              <>
+                Good. That is everything.
+                <span className="sr-only"> Finish is below.</span>
+              </>
+            )}
+            {draft.painReported === true && (
+              <span className="sr-only">
+                That is everything. Below is a box to say where, if you would like to; it is
+                not required. Finish is after it.
+              </span>
+            )}
+          </p>
+        </>
       )}
 
       {/* An alert: it appears after Finish, where focus already is, and a
