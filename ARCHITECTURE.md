@@ -1230,6 +1230,80 @@ those two apart.
 
 ---
 
+## The cared-for person's path, sized for them (KV-20)
+
+Decided 2026-10-13 with the owner; reviewed in #196. The dashboard is read by the
+caregiver, at a desk. Four things are not: *Take a reading*, the capture, the card that
+says what a reading measured, and the four questions. Those are walked by the older adult,
+who may not see well and may not have a steady hand — so they are the screens where size,
+contrast, focus and what is read aloud decide whether the check-in happens at all.
+
+- **The path, not two screens.** The ticket named the capture and the questions; the
+  button that starts a reading and the card between camera and questions are on the same
+  walk, so they are sized the same. The sizes are written once, in
+  `components/person.ts`, so one screen cannot drift from the next. The rest of the
+  dashboard is the caregiver's and is not resized, but two changes reach it: the focus
+  ring, which is everywhere, and `--color-unknown`, which is also a card's "Not enough to
+  say" (review of #196).
+- **Large, not the minimum.** No text under 18px; no control under 48px tall; an answer
+  64px tall with 20px text. WCAG's AA target (24px) is for every reader; this is for one.
+  *Not now* and *Stop* were small underlined links and are now buttons like the rest: a
+  target too small to hit on purpose is one hit by accident. Checked at 200% zoom at the
+  window's narrowest (880px): nothing runs off the side. The tests hold every line of
+  text on the path to a size of 18px or more, set on it or above it — not merely to no
+  small size, which a line with no size at all passed at 16px (review of #196).
+- **Contrast, measured from the theme.** Every colour that text is drawn in clears 4.5:1
+  on both surfaces. `--color-unknown` did not — 3.7:1 for "Nothing was measured" — and is
+  lighter now. Controls were outlined in `--color-line`, 1.3:1, which is a card's edge and
+  made a button read as text; they have `--color-control` (3:1 or more). The amber of
+  `--color-elevated`, the one colour that carries meaning, is over 10:1, and *Finish* at
+  half opacity while it says *Saving…* still clears 4.5:1. The tests read the numbers out
+  of `styles.css`, so a token changed later is measured, not trusted.
+- **Never colour alone.** A card's verdict is a word as well as a colour (unchanged, and
+  kept). A chosen answer was its outline and a heavier weight; it now carries a tick as
+  well, and says `aria-pressed` to a screen reader.
+- **Toggle buttons, not radio buttons** (review of #196). One answer of three is what a
+  radio group is for: it is one tab stop, says "1 of 3", and moves by arrow key. But a
+  radio is chosen *as the arrow lands on it*, and these answers move the person on as
+  soon as one is chosen — so the first arrow press would answer the question and open the
+  next. Radios that did not move on would need a *Next* press on every question, a step
+  more for the reader this path is for. And nothing here may start chosen: a question
+  nobody answered is not an answer (`core/session/answers.ts`). So each answer is a
+  button, pressed on purpose, in a group named by its question.
+- **Focus follows the screen, never the capture.** Each question's heading takes focus as
+  it opens, with its place in the four read alongside it. The capture's heading takes
+  focus as it opens and again when a failure replaces it; the reading card as it appears;
+  the setup screen's heading when *Take a reading* leads there instead of to the camera;
+  and the dashboard's heading on the way back from any of them (review of #196) — each
+  time because the button pressed to get there is gone, and focus left on nothing starts
+  a screen reader from the top. Nothing moves focus while the camera runs.
+- **Where focus is, seen.** A control's ring is solid, in `--color-focus`, on
+  `:focus-visible` only. A heading that takes focus is a place to read from, not a
+  control, so its marker is dashed and set further out — but it has one: drawing none
+  left someone who sees the screen and moves by keyboard with no sign of where the
+  keyboard went (review of #196). Both show after a key press, not after a click.
+- **Announced, not focused.** The framing advice, as it changes (KV-3). The end of the
+  questions, either way — after *No*, that Finish is below; after *Yes*, that a box to say
+  where has opened as well (review of #196). A check-in that could not be saved, as an
+  alert; and on the dashboard the person is returned to, its notices as a status and its
+  errors as an alert, since focus lands on the heading above them.
+- **The countdown, twice — and silent between, deliberately.** It says how long the
+  reading takes, a second after the screen opens so the heading is read first, and that
+  it is finishing. The visible count is hidden from a screen reader, which otherwise read
+  "Up to 23 seconds left" beside "This takes up to 30 seconds" (review of #196). Between
+  the two the countdown says nothing, and that is the decision, not a by-product: the
+  advice is the point of the screen, and anything else spoken while the camera runs is
+  heard over it or instead of it. Checkpoints ("halfway", "ten seconds") and an
+  on-demand `role="timer"` were weighed in review; the cost is up to half a minute
+  without hearing the time, for someone who has been told how long it takes and will hear
+  when it ends.
+- **Motion.** Nothing on the path animates. The self-view moves because the person does,
+  and it is what they frame themselves by. Anything animated later honours
+  `prefers-reduced-motion`.
+- **What a DOM cannot check.** Whether a screen reader reads all of this in the order the
+  markup says is checked on the machine, as the camera's failures are (KV-7): the owner
+  went through a real reading with Narrator on 2026-10-15.
+
 ## Planning for remote access
 
 Everything above describes an app used at one machine. The product it is for is not: the

@@ -10,7 +10,10 @@
   /* Flag colours. Amber, not red: this is an early flag, not an emergency. */
   --color-normal: #4ade80;
   --color-elevated: #fbbf24;
-  --color-unknown: #64748b;
+  /* Read as text ("Nothing was measured", a card's verdict), so it is held to
+     4.5:1 on both surfaces like any text: #64748b gave 3.7:1 on --color-raised
+     (KV-20). Contrast is asserted in tests/accessibility.test.tsx. */
+  --color-unknown: #7c8aa0;
 
   /*
    * The trend's line and points (KV-4). Not a flag colour — those are reserved
@@ -19,9 +22,47 @@
    * contrast all pass.
    */
   --color-series: #5b8def;
+
+  /*
+   * The edge of a control on the cared-for person's path (KV-20). --color-line
+   * is 1.3:1 on the ground — fine for a card's edge, which is decoration, but a
+   * button outlined in it read as text. 3:1 on both surfaces, the minimum for
+   * the boundary that says "this can be pressed".
+   */
+  --color-control: #6b778a;
+
+  /* The keyboard focus ring, everywhere. Not a flag colour, and not the trend's. */
+  --color-focus: #8ab4f8;
 }
 
 body {
   background: var(--color-ground);
   color: var(--color-ink);
+}
+
+/*
+ * Where the keyboard is, said by a ring that clears 3:1 against what it sits
+ * on (KV-20). Only on `:focus-visible`, so a press with a mouse or a finger
+ * draws nothing.
+ */
+:focus-visible {
+  outline: 3px solid var(--color-focus);
+  outline-offset: 2px;
+}
+
+/*
+ * A heading given focus as its screen opens — a question, the capture, the
+ * dashboard on the way back — is a place to read from, not a control, so it
+ * does not wear a control's ring: it gets a dashed one, set further out. Not
+ * none (review of #196): someone who sees the screen but moves by keyboard
+ * would otherwise have no sign of where the keyboard went until the next Tab.
+ * Still `:focus-visible`, so it shows after a key press and not after a click,
+ * which a mouse user needs no marker for.
+ *
+ * Keyed on the heading, not on `tabindex="-1"` alone, so a control taken out
+ * of the tab order later — a roving tabindex — keeps the ring it needs.
+ */
+:is(h1, h2)[tabindex='-1']:focus-visible {
+  outline: 2px dashed var(--color-focus);
+  outline-offset: 6px;
 }

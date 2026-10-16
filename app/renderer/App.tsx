@@ -20,6 +20,12 @@ import QuestionFlow from './components/QuestionFlow'
 import SectionBoundary from './components/SectionBoundary'
 import SetupScreen, { setupNeeded } from './components/SetupScreen'
 import KeySettings from './components/KeySettings'
+import {
+  PERSON_BUTTON,
+  PERSON_NOTE,
+  PERSON_PRIMARY,
+  useFocusWhenShown,
+} from './components/person'
 import type { CameraAccess } from '../shared/camera-access'
 import type { KeyStatus } from '../shared/api-key'
 import SessionCard from './components/SessionCard'
@@ -34,6 +40,9 @@ import { dashboardErrorText } from './dashboardError'
  * taken", which is the reassuring direction and the wrong one. The camera runs
  * for a fixed time whether or not the person is framed, so an empty result is
  * a normal outcome and has to say what to do about it.
+ *
+ * On the cared-for person's path, between the camera and the questions, so it
+ * is sized as they are and takes focus as it appears (KV-20).
  */
 function ReadingSummary({
   result,
@@ -54,18 +63,25 @@ function ReadingSummary({
   // Asked of the scorer rather than decided again here: the retake is offered
   // on exactly the question the scorer answers with `insufficient-signal`.
   const measuredSomething = hasScorableVitals(result.vitals)
+  const heading = useFocusWhenShown<HTMLHeadingElement>()
 
   return (
     <div className="mb-8 rounded-xl border border-(--color-line) bg-(--color-raised) p-5">
       {!measuredSomething ? (
         <>
-          <p className="font-medium text-(--color-unknown)">Nothing was measured</p>
-          <p className="mt-1 text-sm text-(--color-muted)">
+          <h2
+            ref={heading}
+            tabIndex={-1}
+            className="text-xl font-semibold text-(--color-unknown)"
+          >
+            Nothing was measured
+          </h2>
+          <p className={`mt-1 ${PERSON_NOTE}`}>
             The camera ran, but no reading came out of it. That usually means the framing
             was not right for long enough — the face centred, chest in view, reasonably
             lit, and still.
           </p>
-          <p className="mt-1 text-sm text-(--color-muted)">
+          <p className={`mt-1 ${PERSON_NOTE}`}>
             Another try is worth it. Either way the day is worth recording: a check-in
             that says the camera could not tell is still something a caregiver should
             see.
@@ -73,28 +89,22 @@ function ReadingSummary({
         </>
       ) : (
         <>
-          <p className="font-medium">Reading taken</p>
-          <p className="mt-1 text-sm text-(--color-muted)">{measured.join(' · ')}</p>
+          <h2 ref={heading} tabIndex={-1} className="text-xl font-semibold">
+            Reading taken
+          </h2>
+          <p className={`mt-1 ${PERSON_NOTE}`}>{measured.join(' · ')}</p>
           {measured.length < parts.length && (
-            <p className="mt-1 text-sm text-(--color-muted)">
+            <p className={`mt-1 ${PERSON_NOTE}`}>
               The rest did not settle in the time the camera ran.
             </p>
           )}
         </>
       )}
-      <div className="mt-4 flex gap-3">
-        <button
-          type="button"
-          onClick={onRetake}
-          className="rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-ground)"
-        >
+      <div className="mt-4 flex flex-wrap gap-3">
+        <button type="button" onClick={onRetake} className={PERSON_BUTTON}>
           Try the camera again
         </button>
-        <button
-          type="button"
-          onClick={onContinue}
-          className="rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-ground)"
-        >
+        <button type="button" onClick={onContinue} className={PERSON_BUTTON}>
           Answer the questions anyway
         </button>
       </div>
@@ -213,6 +223,24 @@ function Dashboard(): React.JSX.Element {
   // section at the foot of the page says the key may be the cause.
   const [keySuspect, setKeySuspect] = useState(false)
   const [pastSetup, setPastSetup] = useState(false)
+  // Back on the dashboard from the camera, the questions or the setup screen,
+  // focus goes to its heading (KV-20): the button pressed to leave — Stop, Go
+  // back, Finish, Go to the check-ins — is gone, and focus left on nothing
+  // starts a screen reader from the top. Not when a reading is waiting: its
+  // card takes focus itself.
+  //
+  // The setup screen counts because Take a reading can open it, when the
+  // camera is off or the key is missing (review of #196); it is also where a
+  // first run starts.
+  const showingSetup =
+    camera !== undefined && keyStatus !== undefined && setupNeeded(camera, keyStatus) && !pastSetup
+  const away = capturing || answering !== null || showingSetup
+  const wasAway = useRef(away)
+  const dashboardHeading = useRef<HTMLHeadingElement>(null)
+  useEffect(() => {
+    if (wasAway.current && !away && reading === null) dashboardHeading.current?.focus()
+    wasAway.current = away
+  }, [away, reading])
   // Where its protection stands (KV-175): undefined until known.
   const [protection, setProtection] = useState<Protection | undefined>(undefined)
 
@@ -624,8 +652,8 @@ function Dashboard(): React.JSX.Element {
 
   // Before the first reading (KV-19): a camera Windows keeps Kinvue from, or no
   // key to read it with, is said here, not after a capture fails. Going past it
-  // reads the check-ins.
-  if (setupNeeded(camera, keyStatus) && !pastSetup) {
+  // reads the check-ins. The same test as focus's, so the two cannot disagree.
+  if (showingSetup) {
     return (
       <SetupScreen
         camera={camera}
@@ -654,7 +682,9 @@ function Dashboard(): React.JSX.Element {
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
       <header className="mb-8">
-        <h1 className="text-2xl font-semibold">{DEMO_PERSON_NAME}&rsquo;s check-ins</h1>
+        <h1 ref={dashboardHeading} tabIndex={-1} className="text-2xl font-semibold">
+          {DEMO_PERSON_NAME}&rsquo;s check-ins
+        </h1>
         <p className="mt-1 text-sm text-(--color-muted)">
           A daily look at whether today is different from {DEMO_PERSON_NAME}&rsquo;s own
           usual. Not a diagnosis, and not an emergency alert.
@@ -670,15 +700,13 @@ function Dashboard(): React.JSX.Element {
         )}
       </header>
 
-      <div className="mb-8 flex items-center gap-3">
-        <button
-          type="button"
-          onClick={takeReading}
-          className="rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-raised)"
-        >
+      {/* Where the cared-for person's path starts, so sized as the rest of it
+          is (KV-20), on a dashboard that is otherwise the caregiver's. */}
+      <div className="mb-8 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <button type="button" onClick={takeReading} className={PERSON_PRIMARY}>
           Take a reading
         </button>
-        <span className="text-sm text-(--color-muted)">
+        <span className={PERSON_NOTE}>
           Up to {captureSeconds} seconds in front of the camera.
         </span>
       </div>
@@ -696,7 +724,11 @@ function Dashboard(): React.JSX.Element {
 
       {error !== null && (
         <div className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm">
-          <p className="text-(--color-elevated)">{error.text}</p>
+          {/* An alert, which is spoken as it appears (review of #196): only the
+              sentence, not the way out below it, which is read in its turn. */}
+          <p role="alert" className="text-(--color-elevated)">
+            {error.text}
+          </p>
           {/* Never for a key store that is only out of reach (store-locked): that
               history opens once it is reachable, and setting it aside would move
               a readable history (KV-175, review of #186). */}
@@ -719,11 +751,19 @@ function Dashboard(): React.JSX.Element {
         </div>
       )}
 
-      {notice !== null && (
-        <p className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm text-(--color-muted)">
-          {notice}
-        </p>
-      )}
+      {/* Said as well as shown (review of #196). Several are written for the
+          way back from the person's path — the camera stopped, the questions
+          that could not be drawn, a check-in saved but not reloaded — and focus
+          lands on the heading above them, so unannounced they went unheard.
+          The region is always there, so a notice arriving in it is spoken: one
+          drawn already holding its text often is not. */}
+      <div role="status">
+        {notice !== null && (
+          <p className="mb-6 rounded-lg border border-(--color-line) p-4 text-sm text-(--color-muted)">
+            {notice}
+          </p>
+        )}
+      </div>
 
       {sessions !== null && sessions.length === 0 && (
         <div className="rounded-xl border border-dashed border-(--color-line) p-8 text-center">

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import App from '@renderer/App'
 import SectionBoundary from '@renderer/components/SectionBoundary'
 import {
@@ -14,6 +14,7 @@ import type { Removal, RestoreResult, RestoreStep } from '@core/session/lifecycl
 import type { SessionRecord } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
 import { history, session } from './helpers'
+import { expectPersonSized } from './person-sized'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
 import { failureTag } from '@core/capture/failure'
 import type { CameraAccess } from '../app/shared/camera-access'
@@ -732,7 +733,10 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     fireEvent.pointerMove(svg!.querySelector('rect[data-pointer-area]')!, { clientX: 630 })
     const readout = screen.getByRole('tooltip')
     expect(readout.getAttribute('aria-live')).toBeNull()
-    expect(screen.queryByRole('status')).toBeNull()
+    // Not announced: no status region holds it. The dashboard has one of its
+    // own, for notices (review of #196), so the page is not checked for none.
+    expect(readout.closest('[role="status"], [aria-live]')).toBeNull()
+    expect(readout.querySelector('[role="status"], [aria-live]')).toBeNull()
     expect(readout.textContent).toContain('80 bpm')
     expect(readout.textContent).toContain('latest')
   })
@@ -1038,6 +1042,101 @@ describe('one section that cannot be drawn (KV-163)', () => {
       .mocked(console.error)
       .mock.calls.filter(([first]) => first === 'A dashboard section could not be drawn.')
     expect(logged.length).toBe(1)
+  })
+})
+
+describe('the cared-for person’s path through the dashboard (KV-20)', () => {
+  const sessions = (): SessionRecord[] =>
+    history(3).map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+  const nothingMeasured = {
+    captureId: 'c-1',
+    vitals: { pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null },
+  }
+  const startReading = async (capture: () => Promise<unknown>): Promise<void> => {
+    Object.assign(window.kinvue, { capture: vi.fn(capture) })
+    listSessions.mockResolvedValue(sessions())
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Take a reading' }))
+  }
+  const heading = (): HTMLElement =>
+    screen.getByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })
+
+  it('starts at a Take a reading sized for them, not for the caregiver’s desk', async () => {
+    listSessions.mockResolvedValue(sessions())
+    render(<App />)
+    const take = await screen.findByRole('button', { name: 'Take a reading' })
+    expect(take.className).toMatch(/\bmin-h-12\b/)
+    expect(take.className).toMatch(/\btext-lg\b/)
+  })
+
+  it('puts focus on the dashboard heading when they come back from the camera', async () => {
+    await startReading(() => new Promise(() => undefined))
+    fireEvent.click(await screen.findByRole('button', { name: 'Go back' }))
+    expect(document.activeElement).toBe(heading())
+  })
+
+  it('puts focus on the card instead when a reading is waiting, sized as the path is', async () => {
+    // Settled once the camera screen is up, as a real one is half a minute
+    // later: settled at once, the dashboard would never have been left.
+    let settle: (result: typeof nothingMeasured) => void = () => undefined
+    await startReading(() => new Promise((resolve) => (settle = resolve)))
+    await screen.findByText('in front of the camera')
+    await act(async () => settle(nothingMeasured))
+
+    const card = await screen.findByRole('heading', { name: 'Nothing was measured' })
+    expect(document.activeElement).toBe(card)
+    // The whole card, text and buttons, held to the path's sizes like the
+    // capture and the questions (review of #196).
+    const box = card.parentElement
+    if (box === null) throw new Error('the card heading has no card')
+    expectPersonSized(box)
+    expect(box.querySelectorAll('button')).toHaveLength(2)
+  })
+
+  it('follows Take a reading to the setup screen and back, when the camera is off (review of #196)', async () => {
+    listSessions.mockResolvedValue(sessions())
+    render(<App />)
+    const take = await screen.findByRole('button', { name: 'Take a reading' })
+    // Turned off since: Take a reading opens the setup screen, not the camera.
+    cameraAccess.mockResolvedValue('off-for-apps')
+    take.focus()
+    fireEvent.click(take)
+
+    const setup = await screen.findByRole('heading', { name: 'Before the first reading' })
+    expect(document.activeElement).toBe(setup)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Go to the check-ins' }))
+    await vi.waitFor(() => expect(document.activeElement).toBe(heading()))
+  })
+
+  it('says aloud the notice it returns them to, from a region there before it (review of #196)', async () => {
+    drawControl.captureThrows = true
+    Object.assign(window.kinvue, { capture: vi.fn(() => new Promise(() => undefined)) })
+    listSessions.mockResolvedValue(sessions())
+    render(<App />)
+    // Before anything is said: the region is there, empty.
+    const region = (await screen.findAllByRole('status')).find((r) => r.textContent === '')
+    expect(region).toBeDefined()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+    await vi.waitFor(() =>
+      expect(screen.getByRole('status').textContent).toMatch(/^The camera screen could not be shown/),
+    )
+    expect(document.activeElement).toBe(heading())
+  })
+
+  it('announces a dashboard error as an alert, and only its sentence', async () => {
+    listSessions.mockRejectedValue(new Error('disk on fire'))
+    render(<App />)
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toBe('The check-ins could not be shown.')
+  })
+
+  it('leaves focus alone on a dashboard nobody left', async () => {
+    listSessions.mockResolvedValue(sessions())
+    render(<App />)
+    await screen.findByRole('button', { name: 'Take a reading' })
+    expect(document.activeElement).toBe(document.body)
   })
 })
 

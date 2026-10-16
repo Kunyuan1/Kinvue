@@ -3,6 +3,7 @@ import type { CameraAccess } from '../../shared/camera-access'
 import { keyMissing, type KeyStatus } from '../../shared/api-key'
 import ForgetKey from './ForgetKey'
 import KeyField from './KeyField'
+import { useFocusWhenShown } from './person'
 
 const BUTTON =
   'rounded-lg border border-(--color-line) px-4 py-2' +
@@ -92,6 +93,9 @@ export default function SetupScreen({
   const [said, setSaid] = useState<string | null>(null)
   const askCamera = cameraIsOff(camera)
   const askKey = keyMissing(keyStatus)
+  // Focused as it opens (KV-20): Take a reading can lead here, and the button
+  // pressed is gone with the dashboard (review of #196).
+  const heading = useFocusWhenShown<HTMLHeadingElement>()
 
   const checkAgain = async (): Promise<void> => {
     setBusy(true)
@@ -116,7 +120,9 @@ export default function SetupScreen({
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-10">
-      <h1 className="text-2xl font-semibold">Before the first reading</h1>
+      <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold">
+        Before the first reading
+      </h1>
 
       {askCamera && (
         <section aria-labelledby="setup-camera" className="mt-6">

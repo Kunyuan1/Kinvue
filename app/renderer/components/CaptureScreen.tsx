@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CaptureFailure } from '@core/capture/failure'
+import { PERSON_BUTTON, PERSON_NOTE, useFocusWhenShown } from './person'
+
+/**
+ * How long after the screen opens the countdown's length is said aloud (KV-20).
+ * The heading is read first, as focus lands on it; a live region filled in the
+ * same moment it is drawn is one screen readers often miss, and one filled
+ * while the heading is still being read is talked over.
+ */
+export const COUNTDOWN_ANNOUNCE_DELAY_MS = 1000
 
 /**
  * The ~30 seconds in front of the camera.
@@ -15,6 +24,12 @@ import type { CaptureFailure } from '@core/capture/failure'
  * way a capture comes back empty, and the only failure the person can fix
  * while it is still running — so the self-view and the guidance line are the
  * point of this screen, not decoration around a countdown.
+ *
+ * Read by someone who may not see well (KV-20): its heading takes focus as it
+ * opens and when a failure replaces it, and nothing else moves focus while the
+ * camera runs. The advice is announced as it changes; the countdown only twice,
+ * how long it will take and that it is finishing — said every second, it would
+ * talk over the advice that is the point of the screen.
  */
 
 /**
@@ -151,6 +166,15 @@ export default function CaptureScreen({
   const [previewFailed, setPreviewFailed] = useState(false)
   const latestUrl = useRef<string | null>(null)
   const previousUrl = useRef<string | null>(null)
+  const [lengthSaid, setLengthSaid] = useState(false)
+  // Focused on opening, and again when a failure replaces the capture: the
+  // Stop button that had focus is gone with it.
+  const heading = useFocusWhenShown<HTMLHeadingElement>(failure)
+
+  useEffect(() => {
+    const timer = setTimeout(() => setLengthSaid(true), COUNTDOWN_ANNOUNCE_DELAY_MS)
+    return () => clearTimeout(timer)
+  }, [])
 
   useEffect(() => {
     // Subscriptions only, which are safe to set up and tear down twice.
@@ -195,18 +219,20 @@ export default function CaptureScreen({
   // arrived, which is usually sooner (#63). So this counts down the longest it
   // could take, and finishing early is the common case rather than a surprise.
   const remaining = Math.max(0, captureSeconds - elapsedSec)
+  const finishing = settling || remaining === 0
 
   if (failure !== null) {
     const { title, detail } = FAILURE[failure]
     return (
       <section className="mx-auto max-w-xl text-center">
-        <h2 className="text-xl font-semibold">{title}</h2>
-        <p className="mt-2 text-base text-(--color-muted)">{detail}</p>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="mt-6 rounded-lg border border-(--color-line) px-4 py-2 text-sm hover:bg-(--color-raised)"
-        >
+        {/* The detail is not tied to the heading with aria-describedby: it is
+            the next thing read after it, so describing it too read the same
+            sentence twice, one arrow apart (review of #196). */}
+        <h2 ref={heading} tabIndex={-1} className="text-2xl font-semibold">
+          {title}
+        </h2>
+        <p className={`mt-3 ${PERSON_NOTE}`}>{detail}</p>
+        <button type="button" onClick={onCancel} className={`mt-6 ${PERSON_BUTTON}`}>
           Go back
         </button>
       </section>
@@ -215,18 +241,20 @@ export default function CaptureScreen({
 
   return (
     <section className="mx-auto max-w-xl text-center">
-      <h2 className="text-xl font-semibold">Sit comfortably and look at the camera</h2>
+      <h2 ref={heading} tabIndex={-1} className="text-2xl font-semibold">
+        Sit comfortably and look at the camera
+      </h2>
 
       <div className="relative mt-6 overflow-hidden rounded-xl border border-(--color-line) bg-(--color-raised)">
         {previewFailed ? (
           // Said out loud rather than left blank. A picture that silently never
           // arrives is how the first real run looked, and it took a CSP rule to
           // explain: the advice below is what matters, and it still works.
-          <p className="px-6 py-16 text-sm text-(--color-muted)">
+          <p className={`px-6 py-16 ${PERSON_NOTE}`}>
             The picture is not available on this machine. The advice below still applies.
           </p>
         ) : frameUrl === null ? (
-          <p className="px-6 py-16 text-sm text-(--color-muted)">Starting the camera…</p>
+          <p className={`px-6 py-16 ${PERSON_NOTE}`}>Starting the camera…</p>
         ) : (
           // Mirrored, so moving left moves the picture left: a self-view that
           // reverses your own movements is harder to frame by, not easier.
@@ -244,27 +272,38 @@ export default function CaptureScreen({
 
       {/* Only real advice is announced. Keeping the reassurance line in the
           live region would read it out again every time the shot goes back to
-          being fine, which is constantly while someone is adjusting. */}
-      <p aria-live="polite" className="mt-4 min-h-6 text-base">
-        {guidance}
-      </p>
-      {guidance === null && (
-        <p className="-mt-6 min-h-6 text-base">Holding still is all that is needed.</p>
-      )}
+          being fine, which is constantly while someone is adjusting. The two
+          share one place on screen, so the line does not jump when advice
+          comes and goes. */}
+      <div className="mt-4 grid min-h-7 text-xl">
+        <p aria-live="polite" className="col-start-1 row-start-1">
+          {guidance}
+        </p>
+        {guidance === null && (
+          <p className="col-start-1 row-start-1">Holding still is all that is needed.</p>
+        )}
+      </div>
 
-      <p className="mt-2 text-sm text-(--color-muted)">
-        {settling || remaining === 0 ? 'Finishing up…' : `Up to ${remaining} seconds left`}
+      {/* Shown every second, not announced every second (KV-20) — and hidden
+          from a screen reader, which hears the region below instead. Left in,
+          reading on from the heading said "Up to 23 seconds left. This takes
+          up to 30 seconds.": two numbers that disagree (review of #196). */}
+      <p aria-hidden="true" className={`mt-2 ${PERSON_NOTE}`}>
+        {finishing ? 'Finishing up…' : `Up to ${remaining} seconds left`}
+      </p>
+      <p aria-live="polite" className="sr-only">
+        {finishing
+          ? 'Finishing up.'
+          : lengthSaid
+            ? `This takes up to ${captureSeconds} seconds.`
+            : ''}
       </p>
 
       {/* Stops the camera for real: main abandons the capture and releases the
           device. A button that said Stop and left the camera running for
           another half minute would be the wrong lie on the one screen the
           person being filmed reads. */}
-      <button
-        type="button"
-        onClick={onCancel}
-        className="mt-6 text-sm text-(--color-muted) underline hover:text-(--color-ink)"
-      >
+      <button type="button" onClick={onCancel} className={`mt-6 ${PERSON_BUTTON}`}>
         Stop
       </button>
     </section>

@@ -174,7 +174,9 @@ app/
       TrendChart.tsx     one metric over the baseline window, drawn from core/trend (KV-4)
       boxes.ts           the box a card and the chart are drawn in, shared with the
                          gap each leaves when it fails to draw
-    styles.css           Tailwind v4 theme tokens
+      person.ts          the sizes of the cared-for person's path, and where focus goes
+                         as its screens change (KV-20)
+    styles.css           Tailwind v4 theme tokens; their contrast is tested (KV-20)
 
 core/                    Plain TypeScript. No Electron, no React — unit-testable.
   session/
