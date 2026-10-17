@@ -1230,6 +1230,75 @@ those two apart.
 
 ---
 
+## More than one person on a computer (KV-18)
+
+Decided 2026-10-16 with the owner. `personId` has run through the records, the store and
+the IPC surface from the start, and the scorer and the trend already keep each person's
+history to themselves; what was missing is everything around it. The dashboard is wired to
+one person, `demo-margaret`, whose name is the demo's even where the check-ins are real.
+
+- **A household, not a round.** One check-in computer may hold several people who live
+  together — a couple, a parent and a grown child at home. Not an aide's laptop carried
+  from client to client: that would put several households' readings on a device that is
+  none of theirs, and KV-31 places every decision about sharing at the person's own
+  device. The aide with six clients is the caregiver app's case (#34, #42), where one
+  viewer follows many people, each on their own computer.
+- **People are kept in the history file, with their check-ins.** Each has an id, a name
+  and when they were added, in `sessions.json` beside the records, so a name is sealed
+  as the check-ins are (KV-175) and written in the same single write. Adding the list is a
+  new store file version (KV-13). A person added here gets a random UUID as their id
+  (KV-30), so the file names nobody; neither the id nor the name leaves the device
+  (KV-32).
+- **A name is how the screens tell people apart, so two cannot share one.** Required,
+  short, and unique on the computer regardless of case, since the buttons a person picks
+  themselves from must not read the same. Renaming changes no check-in.
+- **They say who they are before every reading.** With more than one person, *Take a
+  reading* opens "Who is taking the reading?", a large button per name, sized and focused
+  as the rest of the path is (KV-20); the camera opens after a name is pressed. Their
+  name is on the capture and question screens, so a reading taken as the wrong person is
+  visible while it can still be stopped. With one person, nothing is asked and nothing
+  changes. Never the person the dashboard happens to show: a reading filed against
+  whoever was looked at last is one in the wrong baseline, and nobody would notice.
+- **A reading stays with the person it was taken as.** One taken as the wrong person is
+  deleted (KV-21), not moved: moving it would change two baselines and every verdict
+  compared against them, without a sign on either card.
+- **Baselines never mix.** Every comparison in the product rests on it, so it is a test,
+  not a property assumed: two people's histories interleaved in one file score exactly
+  as each would alone, and a trend draws only its own person.
+- **The dashboard shows one person at a time,** chosen at the top, with the export,
+  restore and delete panel acting on that person (KV-21's controls are already per
+  person). It is the caregiver's view; who takes a reading is still asked at the button.
+- **Deleting a person deletes them.** Offered beside an export first, as deleting a whole
+  history is (KV-21); then their name and every check-in go, in one write. The tombstones
+  keep only ids, so nothing of the name remains — and a copy of their history restored
+  later is refused record by record as deleted here, which is what KV-21 promises.
+- **A restored history brings its person.** An export carries the name with the records
+  (the export container's version moves); restoring a person this computer does not have
+  adds them under that name, which can be changed, and a name already taken here is
+  asked for again rather than merged. Restoring into the wrong person stays refused.
+- **The history already here is a real person's.** Its id, `demo-margaret`, is kept —
+  rewriting it would rewrite every record (KV-30) — but "Margaret" is the demo's name,
+  not theirs: when a history holds real check-ins under it and no name has been given,
+  the app asks once whose they are.
+- **The demo becomes its own person,** marked as the demo, whose days are all invented.
+  It is for seeing the dashboard with a baseline behind it, so it is never offered at
+  *Who is taking the reading?*: a real reading compared with invented days was the
+  compromise KV-53 had to disclose, and with a person of its own there is nothing to
+  disclose. Seeded days already filed under a real person move to the demo person; they
+  are about nobody and never exported (KV-21).
+- **Many-to-many, from the device's side.** Each person has their own viewers, and one
+  viewer may follow several people — every share approved by that person, at the
+  device, on its own (KV-31, #40, #42). Nothing built here assumes one person per
+  computer or one viewer per person. **Until the sharing screen has a lock of each
+  person's own (#40; #36's T2), sharing is not offered on a computer with more than one
+  person:** KV-31 already says that whoever is at the device has its authority, and on a
+  shared computer that includes the other people in the household, acting for each
+  other.
+
+Built in two parts: the people list, naming, the existing history's name and the demo
+person; then *Who is taking the reading?*, the switcher, deleting a person, and restore
+bringing its person.
+
 ## The cared-for person's path, sized for them (KV-20)
 
 Decided 2026-10-13 with the owner; reviewed in #196. The dashboard is read by the
@@ -2430,10 +2499,11 @@ person's, and a shared family computer is exactly where this app is likely to si
 
 ## What this architecture is bad at
 
-- **One person per install.** `personId` exists throughout, but nothing manages multiple
-  cared-for people, and a home-care aide with six clients is the obvious real user. Remote
-  access makes it many-to-many — a parent with three children who each want to see — so
-  the relationship should be modelled that way from the start. (#18)
+- **One person per install, until #18 is built.** `personId` exists throughout, but
+  nothing manages more than one person yet. Decided (KV-18, above): a household may share
+  a computer, each person saying who they are before a reading; the aide with six clients
+  is the caregiver app's case; and sharing waits for a per-person lock on a shared
+  computer.
 - **No remote access yet.** The caregiver has to be at the same machine as the camera,
   which is precisely backwards for the family-member-at-a-distance case the product is
   for. Fixing it means a backend and a real authorization story, and it renegotiates the
