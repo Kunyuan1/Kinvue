@@ -1185,6 +1185,14 @@ three check-ins, and
 the one verdict built on live readings would stop being demonstrable. That is the cost the
 disclosure exists to make acceptable.
 
+**KV-18 re-takes it, and pays that cost.** With more than one person on a computer, the
+demo becomes a person of its own that never takes a reading, and seeded days are read as
+its days rather than a real person's (*More than one person on a computer*, below). So a
+real reading taken after that is never compared with invented days, and its first
+readings say "not yet enough history", as a new person's should. The disclosure stays: a
+card already stored carries its seeded count and keeps its verdict (KV-138), so it keeps
+its sentence.
+
 **No seeded day is allowed near `elevated`** (KV-101). The demo is what someone new to the
 product sees, and an amber card on invented data is exactly the wrong first impression.
 That used to hold by luck: across 2000 seeds, 18.4% of fortnights had an elevated day, and
@@ -1227,6 +1235,166 @@ Seeding still does not solve the underlying problem, which is that a genuine ins
 seeded data must never be the answer to it. A labelled verdict on a demo persona is a
 demonstration of the dashboard; it is not a reading of anyone, and the label is what keeps
 those two apart.
+
+---
+
+## More than one person on a computer (KV-18)
+
+Decided 2026-10-16 with the owner. `personId` has run through the records, the store and
+the IPC surface from the start, and the scorer and the trend already keep each person's
+history to themselves; what was missing is everything around it. The dashboard is wired to
+one person, `demo-margaret`, whose name is the demo's even where the check-ins are real.
+
+- **A household, not a round.** One check-in computer may hold several people who live
+  together — a couple, a parent and a grown child at home. Not an aide's laptop carried
+  from client to client: that would put several households' readings on a device that is
+  none of theirs, and KV-31 places every decision about sharing at the person's own
+  device. The aide with six clients is the caregiver app's case (#34, #42), where one
+  viewer follows many people, each on their own computer.
+- **People are kept in the history file, with their check-ins.** Each has an id, a name
+  and when they were added, in `sessions.json` beside the records, so a name is sealed
+  as the check-ins are (KV-175) and written in the same single write. A person added here
+  gets a random UUID as their id (KV-30), so the *id* names nobody; the name is the
+  person's own, held in the file and never sent (KV-32's table, below). (Review of #199:
+  this used to read "the file names nobody", which stopped being true the moment it held a
+  name.)
+- **The file moves to version 2, and a version-1 file is upgraded as it is read.** Today
+  `read` refuses any version but its own as unreadable — the error for which the
+  dashboard offers *Start a new history*, which sets the history aside (KV-98). So
+  version 2's reader takes a version-1 file as well: its people are made from the ids its
+  real records carry (seeded days are the demo's, below), and it is written back as
+  version 2 at once, in one write, with every record as it was — at once, because the
+  upgrade makes each person's key (below), and a key made on every read until some later
+  write would be a different key each time. Nothing is set aside and no record changes; a
+  build from before reads a version-2 file as newer and leaves it alone (KV-13). (Review
+  of #199.)
+- **A name is how the screens tell people apart, so two cannot share one.** The buttons a
+  person picks themselves from must not read the same, so the rule is about how a name
+  *reads*, not its bytes (review of #199): stored trimmed and in Unicode NFC; refused if
+  it holds a control or invisible character (a zero-width space reads as nothing); from 1
+  to 40 characters, a number as every other cap in the store is, sized for the path's
+  18px text (KV-20); and unique on the computer once compared case-folded. So "Ann" and
+  "ann " are one name, "José" is one name however its accent was typed, and "Ann" with a
+  zero-width space is refused. Renaming changes no check-in.
+- **"More than one person" means more than one who takes readings.** The demo person
+  (below) is never one of them, so an install that has only ever seeded the demo beside
+  one real person is a one-person install: nothing is asked before a reading, and sharing
+  is not withheld for it. Every rule here that counts people counts these. (Review of
+  #199: counted plainly, every install that once pressed *Seed demo* read as shared.)
+- **They say who they are before every reading.** With more than one person, *Take a
+  reading* opens "Who is taking the reading?", a large button per name, sized and focused
+  as the rest of the path is (KV-20); the camera opens after a name is pressed. Their
+  name is on the capture and question screens, so a reading taken as the wrong person is
+  visible while it can still be stopped. With one person, nothing is asked and nothing
+  changes. Never the person the dashboard happens to show: a reading filed against
+  whoever was looked at last is one in the wrong baseline, and nobody would notice.
+- **However many names, the list scrolls down, never sideways.** No cap on people: a
+  household decides its own size. The names are one column of 64px buttons, as the
+  answers are, under the heading that takes focus, so the first name is one Tab away; past
+  what fits, the page scrolls down. KV-20's measurement is repeated for this screen when
+  it is built — 200% zoom at the window's narrowest (880px), six names — and nothing may
+  run off the side (review of #199).
+- **A reading stays with the person it was taken as.** One taken as the wrong person is
+  deleted (KV-21), not moved: moving it would change two baselines and every verdict
+  compared against them, without a sign on either card.
+- **Baselines never mix.** Every comparison in the product rests on it, so it is a test,
+  not a property assumed: two people's histories interleaved in one file score exactly
+  as each would alone, and a trend draws only its own person.
+- **The dashboard shows one person at a time,** chosen at the top, with the export,
+  restore and delete panel acting on that person (KV-21's controls are already per
+  person). It is the caregiver's view; who takes a reading is still asked at the button.
+- **Each person also has a key, which tells one person from another across computers.**
+  An id is not enough for that: `demo-margaret` is the same on every install that ever
+  ran the demo (below), so household A's export, restored on B's computer, would land in
+  B's real person's history and baseline without a word (review of #199) — KV-21 already
+  treats an id that repeats across installs as dangerous, for seeded days. So each real
+  person carries a random UUID key, made when they are added — for the history already
+  here, when its file is upgraded. The demo has none: it is never exported. The key is
+  never shown and never leaves the device except in its person's export, and a restore
+  matches by it.
+- **Deleting a person deletes them, and they stay deleted.** Offered beside an export
+  first, as deleting a whole history is (KV-21); then their name and every check-in go,
+  in one write. KV-21's tombstones are per record, and there was none for a person, so a
+  restored export would have brought back the one thing deleting a person is about: their
+  name, on an empty person (review of #199). So deleting a person also leaves a **person
+  tombstone** — their key, and when — with no name. A restore whose key has one is
+  refused whole: "These check-ins were deleted on this computer on 3 October, with their
+  person, and stay deleted." KV-21's sentence, *this cannot be undone, not even by
+  restoring an export*, stays true.
+- **A restored history brings its person — matched by key, never by id.** An export
+  carries the person's key and name with the records (the export container's version
+  moves). Restoring it: **the same key here** is the same person, and KV-21's restore runs
+  as it does now; **no person with that key or that id** adds them under that name, which
+  can be changed, and a name already taken here is asked for again rather than merged; a
+  **tombstoned key** is refused, as above. **The same id under a different key** is
+  another person who happens to share an id — a `demo-margaret` from another household —
+  and is refused as someone else's, never merged into the one here. **An export from
+  before keys** can only be matched by id, which for `demo-margaret` cannot tell this
+  household from another. It is still this household's own backup in the usual case, so it
+  is not refused: before anything is written, the screen names the person it would go
+  into and asks — "This file is from before Kinvue could tell people apart. Restore it
+  into Ann's check-ins only if they are Ann's." — and nothing is written unless that is
+  confirmed.
+- **The history already here is a real person's.** Its id, `demo-margaret`, is kept —
+  rewriting it would rewrite every record (KV-30) — but "Margaret" is the demo's name,
+  not theirs: when a history holds real check-ins under it and no name has been given,
+  the app asks once whose they are.
+- **The demo becomes its own person, under an id of its own.** `DEMO_PERSON_ID` moves
+  from `demo-margaret`, which stays the real person's, to a new fixed id used only for the
+  demo; seeding, and the check that refuses to seed twice, use that id (review of #199:
+  left pointing at `demo-margaret`, the check would read the real person's history, and
+  seeding would write invented days into it). It is for seeing the dashboard with a
+  baseline behind it, and it is never offered at *Who is taking the reading?*.
+- **Seeded days are read as the demo's, and nothing is rewritten.** Days seeded before
+  this sit under `demo-margaret`. Moving them would rewrite records, which KV-30 rules
+  out — the reason the bullet above keeps the id (review of #199). Instead the store reads
+  them the way it already reads a seeded day from before KV-16 (`asAskedNow`): any record
+  with `seeded: true` is listed as the demo person's, on the way out, and never written
+  back. So a real person's baseline stops counting them from then on, with the file as it
+  was.
+- **This re-takes KV-53's decision, and accepts its cost** (review of #199). *Why the demo
+  history is seeded* weighed keeping invented days out of a real reading's baseline and
+  kept them in, so a real capture on the demo persona could be compared at all. With the
+  demo a person of its own that never takes a reading, that capture no longer happens: a
+  real person's first readings say "not yet enough history" until `MIN_BASELINE_SESSIONS`
+  of their own, which is the truth, and the one verdict built on live readings against a
+  seeded usual is no longer demonstrable. **The disclosure is not retired.** A card's
+  seeded count is stored on it and its verdict stands (KV-53, KV-138), so every card
+  already stored keeps its sentence; only readings taken after this carry none. That
+  section says so.
+- ***Start a new history* is now the household's, and says so** (KV-98, review of #199).
+  One file holds everyone, so a file that cannot be read is everyone's history that cannot
+  be read, and setting it aside sets aside every person's check-ins and their names
+  together — still nothing deleted, all of it kept in the renamed file. That cannot be
+  made per person while there is one file; what can change is the sentence. It cannot
+  name them — the names are in the file it cannot read — so it says whose instead: "This
+  sets aside everyone's check-ins on this computer, and their names, in the old file, and
+  starts an empty history for everyone." Said whether or not there was more than one
+  person, since an unreadable file cannot say how many there were.
+- **The demo is the one person who can come back.** Deleting it deletes its days, but a
+  seeded day leaves no tombstone (KV-21) and the demo has no key for a person tombstone to
+  hold, so *Seed demo* makes it again. That is deliberate: it is about nobody.
+- **Many-to-many, from the device's side.** Each person has their own viewers, and one
+  viewer may follow several people — every share approved by that person, at the
+  device, on its own (KV-31, #40, #42). Nothing built here assumes one person per
+  computer or one viewer per person.
+- **A viewer names the people they follow themselves.** The name stays on the computer,
+  so a viewer following several people needs another way to tell them apart (review of
+  #199). It is the viewer's own label, given in their app when the share is paired —
+  "Mum", "Mr Patel on Tuesdays" — and kept there, as a contact's name is on a phone. That
+  answers what KV-30 left to #42 ("how it says whose it is"), and it is the more private
+  answer: the person's name never travels, and two viewers may call them different things.
+- **Until the sharing screen has a lock of each person's own (#40; #36's T2), sharing is
+  not offered on a computer with more than one person who takes readings.** KV-31 already
+  says that whoever is at the device has its authority, and on a shared computer that
+  includes the other people in the household, acting for each other. The demo does not
+  count (above), so a one-person install with the demo seeded shares as any other.
+
+Built in two parts. First the store: version 2 and the upgrade as read, the people list
+with keys, the name rule, the existing history asked its name, the demo's own id, and
+seeded days read as the demo's. Then the screens and what crosses a file: *Who is taking
+the reading?*, the switcher, deleting a person with its tombstone, restore matched by
+key, and *Start a new history*'s sentence.
 
 ---
 
@@ -1397,6 +1565,7 @@ means another thing:
 | `assessment.baselineSessions`, `.baselineSeededSessions`, `.baselineRefusedSessions`, `.baselineSpan`, `.uncomparedMetrics`, `.withheld` | Yes | The counts and reasons the card quotes, stored so the viewer need not recompute them. |
 | `assessment.rulesVersion` | Yes | Which rules gave the verdict (KV-30): a viewer never rescores, so this is how it can tell a verdict from rules the app no longer has. |
 | `seeded`, and seeded records | **Never** | Demo data about nobody, with ids that repeat across installs. |
+| The person's `name` and `key` (KV-18's people list, beside the records) | **Never, in a share** | Not part of a record, but the first identifying data added to the device since this table, so it is classified here rather than left implied (review of #199). The name is the person's own, and a viewer labels the share themselves; the key matches a restored export to its person. Both go into that person's own export, made at the device (KV-21) — a file, not a share. A share carries neither. |
 
 `assessment` is classified field by field, like the rest: five tickets have each added a
 field to it (KV-53, KV-87, KV-100, KV-138, KV-154), and a sixth must not leave by default.
@@ -2430,10 +2599,14 @@ person's, and a shared family computer is exactly where this app is likely to si
 
 ## What this architecture is bad at
 
-- **One person per install.** `personId` exists throughout, but nothing manages multiple
-  cared-for people, and a home-care aide with six clients is the obvious real user. Remote
-  access makes it many-to-many — a parent with three children who each want to see — so
-  the relationship should be modelled that way from the start. (#18)
+- **One person per install until #18 is built, and one person sharing until #40.**
+  `personId` exists throughout, but nothing manages more than one person yet. Decided
+  (KV-18, above): a household may share a computer, each person saying who they are
+  before a reading; the aide with six clients is the caregiver app's case. Remote access
+  makes it many-to-many — a parent with three children who each want to see, an aide
+  following six clients — and that stays a limit after #18: on a computer with more than
+  one person who takes readings, sharing waits for each person's own lock on the sharing
+  screen (#40; #36's T2).
 - **No remote access yet.** The caregiver has to be at the same machine as the camera,
   which is precisely backwards for the family-member-at-a-distance case the product is
   for. Fixing it means a backend and a real authorization story, and it renegotiates the
