@@ -1,6 +1,7 @@
 import type { Assessment, SessionRecord, SleepAnswer, MoodAnswer } from '../session/types'
 import { scoreSession, totalSeverity } from '../scoring'
 import { RECORD_FORMAT } from '../session/format'
+import { DEMO_PERSON_ID } from '../session/people'
 
 /**
  * A pre-seeded history for the demo persona (KV-8).
@@ -13,14 +14,18 @@ import { RECORD_FORMAT } from '../session/format'
  * `seeded: true`, the dashboard labels them, and README.md and ARCHITECTURE.md
  * say so.
  *
- * The disclosure covers the verdict too. The dashboard records every capture
- * against DEMO_PERSON_ID, so a real capture taken after seeding is compared
- * with this invented history; `computeBaseline` counts how many of the sessions
- * behind a comparison were seeded, and the scorer says so in the summary and on
- * the card (KV-53). See ARCHITECTURE.md, "Why the demo history is seeded".
+ * The disclosure covers the verdict too. Until KV-18 the dashboard recorded every
+ * capture against the demo's id, so a real capture taken after seeding was
+ * compared with this invented history; `computeBaseline` counts how many of the
+ * sessions behind a comparison were seeded, and the scorer says so in the
+ * summary and on the card (KV-53). Since KV-18 the demo is a person of its own
+ * that never takes a reading, so no new card counts any — and the cards that
+ * did keep their sentence. See ARCHITECTURE.md, "Why the demo history is seeded".
  */
 
-export const DEMO_PERSON_ID = 'demo-margaret'
+/** The demo's id lives with the people (KV-18); re-exported for the code that seeds. */
+export { DEMO_PERSON_ID }
+/** The demo's name, shown with "demo" beside it: never a real person's. */
 export const DEMO_PERSON_NAME = 'Margaret'
 
 /** Margaret's invented normal — steady, unremarkable, a little low on HRV for her age. */

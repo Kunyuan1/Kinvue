@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
@@ -14,6 +15,15 @@ import {
   type Removal,
   type RestorePlan,
 } from './lifecycle'
+import {
+  checkName,
+  checkPerson,
+  DEMO_PERSON_ID,
+  ownerOf,
+  withPeopleFor,
+  type NameProblem,
+  type Person,
+} from './people'
 import type { SessionRecord, Tombstone } from './types'
 
 /**
@@ -26,7 +36,11 @@ import type { SessionRecord, Tombstone } from './types'
  * swap if that stops being true. See README "Known Limitations".
  */
 export interface SessionStore {
-  /** All sessions for a person, oldest first. */
+  /**
+   * All sessions for a person, oldest first. A seeded day is the demo's,
+   * whatever `personId` it was written with, and is listed under
+   * `DEMO_PERSON_ID` (KV-18) — on the way out, never written back.
+   */
   list(personId: string): Promise<SessionRecord[]>
   /**
    * Append one session. Sessions are never edited in place.
@@ -39,8 +53,16 @@ export interface SessionStore {
    * client's included (KV-34).
    */
   append(record: SessionRecord): Promise<void>
-  /** Every person with at least one session. */
-  people(): Promise<string[]>
+  /**
+   * The people who take readings here (KV-18), in the order they were added.
+   * Never the demo. Everyone with a real check-in is on it: a record arriving
+   * for someone it lacks adds them, unnamed.
+   */
+  people(): Promise<Person[]>
+  /** Adds someone under `name`, held to `checkName`, in one write (KV-18). */
+  addPerson(name: string): Promise<NameResult>
+  /** Names or renames `personId`, held to `checkName`. Changes no check-in. */
+  rename(personId: string, name: string): Promise<NameResult>
   /**
    * Sets an unreadable history aside so a new, empty one can begin (KV-98).
    * Returns where the old file now is, or null when there was nothing to set
@@ -81,6 +103,9 @@ export interface SessionStore {
 
 /** What `atRest` found on disk. */
 export type AtRest = 'sealed' | 'plain' | 'nothing'
+
+/** What naming someone did: the person as now stored, or why the name was not taken. */
+export type NameResult = { ok: true; person: Person } | { ok: false; problem: NameProblem }
 
 /**
  * How the history is encrypted at rest (KV-175): handed to the store from
@@ -146,7 +171,18 @@ const ENVELOPE_VERSION = 2
  * its own format as well (`RECORD_FORMAT`, KV-30), checked as the file is read,
  * so a record in a newer format is refused without this having to change.
  */
-const FILE_VERSION = 1
+const FILE_VERSION = 2
+
+/**
+ * The one earlier version this code reads (KV-18): the file before people were
+ * kept in it. Read as it is and upgraded at once — its people made from the
+ * ids its real records carry, each with a fresh key — and written back as
+ * `FILE_VERSION` in one write, with every record as it was. At once, because a
+ * key made on every read until some later write would be a different key each
+ * time. Refused as unreadable, it would have been offered *Start a new history*
+ * (KV-98) — the history set aside for a version move.
+ */
+const UPGRADES_FROM = 1
 
 /**
  * The file as it is on disk once both checks have passed.
@@ -176,6 +212,11 @@ interface FileShape {
    * only feeds a sentence would cost far more than it protects.
    */
   lastExported?: Record<string, unknown>
+  /**
+   * The people who take readings here (KV-18), each checked as it is read.
+   * Empty in a version-1 file as `read` returns it, until it is upgraded.
+   */
+  people: Person[]
 }
 
 /**
@@ -188,7 +229,7 @@ interface FileShape {
  * the first write and `read` returns the parsed object instead, and invisible
  * without a test, which is what KV-13 is about.
  */
-const empty = (): FileShape => ({ version: FILE_VERSION, sessions: [] })
+const empty = (): FileShape => ({ version: FILE_VERSION, sessions: [], people: [] })
 
 /**
  * A file exists and this code will not risk interpreting it.
@@ -312,20 +353,24 @@ export class UnrecognisedRecordError extends Error {
    * `why` is `checkRecord`'s reason, or `checkTombstone`'s, naming the field:
    * whoever opens the file needs it. `of` says which list the entry is in — a
    * deletion record is load-bearing too (KV-21), since it is what keeps a
-   * deleted check-in deleted. `position` is null when it is the list itself
-   * that cannot be read, which has no entry to point at (review of #185).
+   * deleted check-in deleted — and so is a person (KV-18), who says whose the
+   * check-ins are. `position` is null when it is the list itself that cannot be
+   * read, which has no entry to point at (review of #185).
    */
   constructor(
     path: string,
     position: number | null,
     total: number,
     why: string,
-    of: 'check-ins' | 'deletions',
+    of: 'check-ins' | 'deletions' | 'people',
   ) {
     const what =
       position === null
-        ? `The list of deleted check-ins in the check-in history at ${path} cannot be read ` +
-          `(${why})`
+        ? `The list of ${of === 'people' ? 'people' : 'deleted check-ins'} in the check-in ` +
+          `history at ${path} cannot be read (${why})`
+        : of === 'people'
+        ? `Person ${String(position)} of ${String(total)} in the check-in history at ${path} ` +
+          `cannot be read (${why})`
         : of === 'deletions'
         ? `Deletion record ${String(position)} of ${String(total)} in the check-in history at ` +
           `${path} cannot be read (${why})`
@@ -511,7 +556,7 @@ async function read(path: string, cipher: StoreCipher): Promise<FileShape> {
   if (typeof version === 'number' && Number.isFinite(version) && version > FILE_VERSION) {
     throw new NewerStoreError(path, version, 'file')
   }
-  if (version !== FILE_VERSION) {
+  if (version !== FILE_VERSION && version !== UPGRADES_FROM) {
     throw new UnreadableStoreError(path, describeVersion(version))
   }
   if (!isFileShape(parsed)) {
@@ -546,6 +591,24 @@ async function read(path: string, cipher: StoreCipher): Promise<FileShape> {
         throw new UnrecognisedRecordError(path, i + 1, removed.length, why, 'deletions')
       }
     }
+  }
+  // A version-1 file has no people yet: `current` makes them as it upgrades it.
+  if (version === UPGRADES_FROM) return { ...parsed, people: [] }
+  // The people the same way (KV-18): a person this build cannot read could not
+  // say whose check-ins are whose. And one id once: two people under one id
+  // would be one history wearing two names.
+  const people: unknown = (parsed as { people?: unknown }).people
+  if (!Array.isArray(people)) {
+    throw new UnrecognisedRecordError(path, null, 0, 'it is not a list', 'people')
+  }
+  const ids = new Set<string>()
+  for (const [i, person] of people.entries()) {
+    const why =
+      checkPerson(person) ?? (ids.has((person as Person).id) ? 'its id is used twice' : null)
+    if (why !== null) {
+      throw new UnrecognisedRecordError(path, i + 1, people.length, why, 'people')
+    }
+    ids.add((person as Person).id)
   }
   return parsed
 }
@@ -624,11 +687,15 @@ async function atRest(path: string): Promise<AtRest> {
   if (isEnvelope(parsed)) return 'sealed'
   // Nothing only if there is nothing else at all, decided from the whole file
   // (review of #187): a version, an empty list of check-ins, and at most an
-  // empty list of deletions. Anything more — `lastExported`, holding a person's
+  // empty list of deletions and of people (KV-18). Anything more — `lastExported`, holding a person's
   // id, or a field a later build added — is something plain on disk.
   const none = (list: unknown): boolean => Array.isArray(list) && list.length === 0
   const nothing = Object.entries(parsed).every(([key, value]) =>
-    key === 'version' ? true : key === 'sessions' || key === 'removed' ? none(value) : false,
+    key === 'version'
+      ? true
+      : key === 'sessions' || key === 'removed' || key === 'people'
+        ? none(value)
+        : false,
   )
   return nothing && none((parsed as { sessions?: unknown }).sessions) ? 'nothing' : 'plain'
 }
@@ -717,15 +784,52 @@ export function createJsonSessionStore(
     return run
   }
 
+  /**
+   * The history as it is now, a version-1 file upgraded and written first
+   * (`UPGRADES_FROM`, KV-18). Only inside `exclusive`: the upgrade is a write.
+   */
+  const current = async (): Promise<FileShape> => {
+    const data = await read(path, cipher)
+    if (data.version === FILE_VERSION) return data
+    const upgraded: FileShape = {
+      ...data,
+      version: FILE_VERSION,
+      people: withPeopleFor([], data.sessions, randomUUID, now()),
+    }
+    await write(path, upgraded, cipher)
+    return upgraded
+  }
+  /**
+   * `current` for a caller that only reads, queued like a write: the first
+   * read of a version-1 file is the one that upgrades it, and reads queued
+   * behind it see the upgraded file rather than each making new keys.
+   */
+  const reading = (): Promise<FileShape> => exclusive(current)
+
+  /** `name` checked against everyone else here, and the person it names, or why not. */
+  const named = (
+    data: FileShape,
+    name: string,
+    except: string | null,
+  ): { ok: true; name: string } | { ok: false; problem: NameProblem } =>
+    checkName(
+      name,
+      data.people.filter((p) => p.id !== except),
+    )
+
   return {
     async list(personId) {
-      const { sessions } = await read(path, cipher)
-      return sessions
-        .filter((s) => s.personId === personId)
-        .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
-        // A seeded day from before KV-16 read as the question asked now; only
-        // ever here, on the way out, never in what `append` writes back.
-        .map(asAskedNow)
+      const { sessions } = await reading()
+      return (
+        sessions
+          .filter((s) => ownerOf(s) === personId)
+          .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
+          // A seeded day as the demo's, whoever it was written under (KV-18),
+          // and one from before KV-16 as the question asked now. Both only
+          // ever here, on the way out, never in what a write puts back.
+          .map((s) => (s.seeded === true ? { ...s, personId: DEMO_PERSON_ID } : s))
+          .map(asAskedNow)
+      )
     },
     /**
      * Read-modify-write, one at a time within this process (`exclusive`).
@@ -738,7 +842,7 @@ export function createJsonSessionStore(
      */
     append(record) {
       return exclusive(async () => {
-        const data = await read(path, cipher)
+        const data = await current()
         // A tombstone wins over the record it names (KV-21): a deleted check-in
         // arriving again stays deleted, and nothing is written.
         if ((data.removed ?? []).some((t) => t.id === record.id)) return
@@ -755,16 +859,49 @@ export function createJsonSessionStore(
           )
         }
         data.sessions.push(record)
-        await write(path, data, cipher)
+        // Everyone with a real check-in is on the list (KV-18), in the same write.
+        const people = withPeopleFor(data.people, [record], randomUUID, now())
+        await write(path, { ...data, people }, cipher)
       })
     },
     async people() {
-      const { sessions } = await read(path, cipher)
-      return [...new Set(sessions.map((s) => s.personId))]
+      return (await reading()).people
+    },
+    addPerson(name) {
+      return exclusive(async () => {
+        const data = await current()
+        const checked = named(data, name, null)
+        if (!checked.ok) return checked
+        const person: Person = {
+          id: randomUUID(),
+          key: randomUUID(),
+          name: checked.name,
+          addedAt: now().toISOString(),
+        }
+        await write(path, { ...data, people: [...data.people, person] }, cipher)
+        return { ok: true, person }
+      })
+    },
+    rename(personId, name) {
+      return exclusive(async () => {
+        const data = await current()
+        const at = data.people.findIndex((p) => p.id === personId)
+        const held = data.people[at]
+        if (held === undefined) {
+          throw new Error(`There is nobody with the id ${personId} on this computer to name.`)
+        }
+        const checked = named(data, name, personId)
+        if (!checked.ok) return checked
+        if (held.name === checked.name) return { ok: true, person: held }
+        const person: Person = { ...held, name: checked.name }
+        const people = data.people.map((p, i) => (i === at ? person : p))
+        await write(path, { ...data, people }, cipher)
+        return { ok: true, person }
+      })
     },
     remove(personId, which, at) {
       return exclusive(async () => {
-        const data = await read(path, cipher)
+        const data = await current()
         const done = removeFrom(historyOf(data), personId, which, at)
         if (done.removed === 0) return 0
         await write(path, withHistory(data, done.history), cipher)
@@ -772,11 +909,11 @@ export function createJsonSessionStore(
       })
     },
     async exportFor(personId, at) {
-      return exportOf(historyOf(await read(path, cipher)), personId, at)
+      return exportOf(historyOf(await reading()), personId, at)
     },
     markExported(personId, at) {
       return exclusive(async () => {
-        const data = await read(path, cipher)
+        const data = await current()
         // Kept only if it is the map it should be: a hand-edited string spread
         // here would be written back as junk (review of #185).
         const prior = isObject(data.lastExported) ? data.lastExported : {}
@@ -785,19 +922,21 @@ export function createJsonSessionStore(
       })
     },
     async lastExported(personId) {
-      const at = (await read(path, cipher)).lastExported?.[personId]
+      const at = (await reading()).lastExported?.[personId]
       return isInstant(at) ? at : null
     },
     restore(personId, file) {
       return exclusive(async () => {
-        const data = await read(path, cipher)
+        const data = await current()
         const plan = planRestore(historyOf(data), personId, file)
         if (!plan.ok) return plan
         const newTombstones = plan.history.removed.length > historyOf(data).removed.length
         // One write, whole — or none, when nothing would change. Never a deletion:
         // a restore only adds check-ins, and tombstones that block (review of #185).
+        // The person comes with their check-ins, in the same write (KV-18).
         if (plan.outcome.restored > 0 || newTombstones) {
-          await write(path, withHistory(data, plan.history), cipher)
+          const people = withPeopleFor(data.people, plan.history.sessions, randomUUID, now())
+          await write(path, { ...withHistory(data, plan.history), people }, cipher)
         }
         return plan
       })
@@ -840,7 +979,7 @@ export function createJsonSessionStore(
         // Only a plain file: a sealed one is done, and one holding nothing yet
         // — by `atRest`'s whole-file reading — is sealed by its first write.
         if (!cipher.encrypts || (await atRest(path)) !== 'plain') return false
-        const data = await read(path, cipher)
+        const data = await current()
         await write(path, data, cipher)
         return true
       })

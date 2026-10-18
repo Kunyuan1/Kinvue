@@ -1396,6 +1396,24 @@ seeded days read as the demo's. Then the screens and what crosses a file: *Who i
 the reading?*, the switcher, deleting a person with its tombstone, restore matched by
 key, and *Start a new history*'s sentence.
 
+**Part one, built** (`core/session/people.ts`, `store.ts`; the setup screen's
+`NameField`):
+
+- **The upgrade, checked on a copy of a real version-1 history** — sealed, 17 check-ins
+  under `demo-margaret`: one person made, unnamed; every check-in theirs; named on the
+  setup screen, and the name there after a restart. Its seeded days, where it has any, are
+  the demo's from the first read, and nothing on disk moves.
+- **The name rule counts characters as drawn** — grapheme clusters, not code units or
+  code points: NFC leaves "q" and an accent as two code points, which is one character on
+  the button.
+- **Who takes readings is the first person on the list,** until part two asks before each
+  reading; main refuses a reading for anyone not on the list, the demo included.
+- **The demo is shown when chosen at the top,** or when there is nobody else; seeding
+  shows it. It is under `kinvue-demo` from now on.
+- **A people list that cannot be read asks for no name:** the dashboard says what is
+  wrong, and a reading does not start, rather than adding a second person over a list
+  nobody could read.
+
 ---
 
 ## The cared-for person's path, sized for them (KV-20)

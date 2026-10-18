@@ -1,5 +1,6 @@
 import { checkRecord, checkTombstone, isInstant } from './check'
 import { checkFormat, RECORD_FORMAT, sameRecord } from './format'
+import { ownerOf } from './people'
 import type { SessionRecord, Tombstone } from './types'
 
 /**
@@ -52,14 +53,20 @@ export function parseRemoval(input: unknown): Removal | null {
   return null
 }
 
-/** The check-ins of `personId` that `which` names, oldest first. */
+/**
+ * The check-ins of `personId` that `which` names, oldest first. Whose each is
+ * is `ownerOf`'s answer, as the store lists them (KV-18): a seeded day is the
+ * demo's, so deleting the demo takes days seeded under `demo-margaret` before
+ * KV-18, and deleting that real person's history leaves them. Chosen by it,
+ * and removed from the history as stored — never rewritten.
+ */
 export function chosenFor(
   sessions: readonly SessionRecord[],
   personId: string,
   which: Removal,
 ): SessionRecord[] {
   return sessions
-    .filter((r) => r.personId === personId)
+    .filter((r) => ownerOf(r) === personId)
     .filter((r) =>
       which.kind === 'all'
         ? true

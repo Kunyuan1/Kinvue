@@ -10,6 +10,7 @@ import {
   UnrecognisedRecordError,
 } from '@core/session/store'
 import { classifyDashboardError, classifySubmitError } from '@core/capture/failure'
+import { DEMO_PERSON_ID } from '@core/session/people'
 import type { SessionRecord } from '@core/session/types'
 import { session, sessionBeforeKV16 } from './helpers'
 
@@ -104,7 +105,7 @@ describe('createJsonSessionStore', () => {
     await store.append(session({ id: 'b' }))
     await store.append({ ...session({ id: 'c' }), personId: 'other-person' })
 
-    expect((await store.people()).sort()).toEqual(['other-person', 'test-person'])
+    expect((await store.people()).map((p) => p.id)).toEqual(['test-person', 'other-person'])
   })
 
   it('never edits a record in place', async () => {
@@ -127,10 +128,14 @@ describe('createJsonSessionStore', () => {
     const realOld = sessionBeforeKV16(false, { id: 'real', capturedAt: '2026-09-02T09:00:00.000Z' })
     await store.append(seededOld)
     await store.append(realOld)
-    // An append after the list, which rewrites the whole file.
-    const [seeded, real] = await store.list('test-person')
+    // An append after the list, which rewrites the whole file. The seeded day is
+    // the demo's, whoever it was written under (KV-18), and listed as the demo's.
+    const [seeded] = await store.list(DEMO_PERSON_ID)
+    const [real, ...more] = await store.list('test-person')
+    expect(more).toEqual([])
     await store.append(session({ id: 'new', capturedAt: '2026-09-03T09:00:00.000Z' }))
 
+    expect(seeded?.personId).toBe(DEMO_PERSON_ID)
     // Generated data, read as a fresh seed would have written it.
     expect(seeded?.answers).toEqual({ ...seededOld.answers, eatenToday: undefined, skippedMeal: true })
     expect(seeded?.answers).not.toHaveProperty('eatenToday')
@@ -230,12 +235,12 @@ describe('a file it cannot read', () => {
     // the shape check first and was reported as "it has no list of sessions" —
     // a claim about the person's data rather than the real problem.
     const { path } = await storeIn()
-    await writeFile(path, JSON.stringify({ version: 2, records: [] }), 'utf8')
+    await writeFile(path, JSON.stringify({ version: 3, records: [] }), 'utf8')
 
     const thrown = await createJsonSessionStore(path)
       .list('p')
       .catch((e: unknown) => e)
-    expect(String(thrown)).toMatch(/version 2/)
+    expect(String(thrown)).toMatch(/version 3/)
     expect(String(thrown)).not.toMatch(/no list of sessions/)
   })
 
@@ -345,7 +350,7 @@ describe('the temp-then-rename write', () => {
     await store.append(session({ id: 'two', capturedAt: '2026-09-02T09:00:00.000Z' }))
 
     const onDisk: unknown = JSON.parse(await readFile(path, 'utf8'))
-    expect(onDisk).toMatchObject({ version: 1 })
+    expect(onDisk).toMatchObject({ version: 2 })
     expect((await store.list('test-person')).map((s) => s.id)).toEqual(['one', 'two'])
   })
 
@@ -461,13 +466,13 @@ describe('what starting a new history will not do (KV-98 review)', () => {
     // A whole history, not a broken one. Setting it aside would strand it: the
     // newer version, installed again, would find no file and start from nothing.
     const { path } = await storeIn()
-    const newer = JSON.stringify({ version: 2, sessions: [] })
+    const newer = JSON.stringify({ version: 3, sessions: [] })
     await writeFile(path, newer, 'utf8')
     const store = createJsonSessionStore(path, () => ON)
 
     const listed = await store.list('test-person').catch((e: unknown) => e)
     expect(listed).toBeInstanceOf(NewerStoreError)
-    expect(String(listed)).toMatch(/written by a newer version of Kinvue \(file version 2/)
+    expect(String(listed)).toMatch(/written by a newer version of Kinvue \(file version 3/)
     expect(classifyDashboardError(listed)).toBe('store-newer')
     expect(classifySubmitError(listed)).toBe('store-unreadable')
 
@@ -673,7 +678,10 @@ describe('exporting, restoring and deleting (KV-21)', () => {
     await store.append(session({ id: 'b', capturedAt: day(1) }))
     await store.append(session({ id: 'seed-x', capturedAt: day(2), seeded: true }))
 
-    expect(await store.remove('test-person', { kind: 'all' }, AT)).toBe(3)
+    // The seeded day is the demo's (KV-18): the person's deletion leaves it,
+    // and the demo's takes it, with no tombstone.
+    expect(await store.remove('test-person', { kind: 'all' }, AT)).toBe(2)
+    expect(await store.remove(DEMO_PERSON_ID, { kind: 'all' }, AT)).toBe(1)
     expect(await onDisk(path)).toMatchObject({
       sessions: [],
       removed: [
@@ -699,8 +707,9 @@ describe('exporting, restoring and deleting (KV-21)', () => {
     const { path } = await storeIn()
     const store = createJsonSessionStore(path)
     await store.append(session({ id: 'seed-x', seeded: true }))
-    expect(await store.remove('test-person', { kind: 'all' }, AT)).toBe(1)
-    expect(await onDisk(path)).toEqual({ version: 1, sessions: [] })
+    expect(await store.remove(DEMO_PERSON_ID, { kind: 'all' }, AT)).toBe(1)
+    // Nobody on the list, either: a seeded day adds no person (KV-18).
+    expect(await onDisk(path)).toEqual({ version: 2, sessions: [], people: [] })
   })
 
   it('keeps a deleted check-in deleted when it arrives again, and writes nothing', async () => {

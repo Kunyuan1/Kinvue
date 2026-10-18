@@ -5,6 +5,7 @@ import type { Protection } from '../shared/protection'
 import type { CameraAccess } from '../shared/camera-access'
 import type { KeyStatus, SetKeyResult } from '../shared/api-key'
 import { fromCaptureReply } from '../shared/capture-reply'
+import type { NamedResult, PeopleNow } from '../shared/people'
 
 /**
  * The entire surface the renderer gets. Everything is a named call — no generic
@@ -42,6 +43,16 @@ const api = {
     ipcRenderer.invoke('checkin:submit', personId, captureId, answers),
 
   seedDemo: (): Promise<number> => ipcRenderer.invoke('demo:seed'),
+
+  /** Who takes readings here, and whether the demo has days to show (KV-18). Never a key. */
+  listPeople: (): Promise<PeopleNow> => ipcRenderer.invoke('people:list'),
+
+  /** Adds someone under `name`; main holds it to the name rule against everyone else. */
+  addPerson: (name: string): Promise<NamedResult> => ipcRenderer.invoke('people:add', name),
+
+  /** Names or renames someone. Changes no check-in. */
+  renamePerson: (personId: string, name: string): Promise<NamedResult> =>
+    ipcRenderer.invoke('people:rename', personId, name),
 
   /**
    * Sets an unreadable history aside and starts an empty one (KV-98). Resolves

@@ -196,8 +196,8 @@ export const RECORD_POLICY = {
   format: 'shared',
   // Not replaced like `personId` (review of #180): a real record's id is a
   // random UUID (#25), so it names nothing and correlates nothing across
-  // installs. The ids that do — `seed-demo-margaret-3` — are on seeded records,
-  // which never leave. And updates and removals travel by it (#45).
+  // installs. The ids that do — `seed-kinvue-demo-3`, or `seed-demo-margaret-3`
+  // from before KV-18 — are on seeded records, which never leave. And updates and removals travel by it (#45).
   id: 'shared',
   personId: 'replaced',
   capturedAt: 'shared',

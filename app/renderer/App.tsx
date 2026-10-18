@@ -28,6 +28,7 @@ import {
 } from './components/person'
 import type { CameraAccess } from '../shared/camera-access'
 import type { KeyStatus } from '../shared/api-key'
+import type { PeopleNow, PersonShown } from '../shared/people'
 import SessionCard from './components/SessionCard'
 import TrendChart from './components/TrendChart'
 import { dashboardErrorText } from './dashboardError'
@@ -166,16 +167,24 @@ export default function App(): React.JSX.Element {
  * line about the baseline that cannot be worked out must not cost the page
  * (review of #164). Null lines draw nothing — no check-ins, or nothing to say.
  */
-function BaselineStatus({ sessions }: { sessions: SessionRecord[] }): React.JSX.Element {
+function BaselineStatus({
+  sessions,
+  personId,
+  name,
+}: {
+  sessions: SessionRecord[]
+  personId: string
+  name: string
+}): React.JSX.Element {
   const learning = useMemo(
-    () => learningStatus(sessions, DEMO_PERSON_ID, DEMO_PERSON_NAME),
-    [sessions],
+    () => learningStatus(sessions, personId, name),
+    [sessions, personId, name],
   )
   // Measured to when the check-ins last changed, which is when this page last
   // had anything new.
   const reach = useMemo(
-    () => usualReachStatus(sessions, DEMO_PERSON_ID, DEMO_PERSON_NAME, new Date()),
-    [sessions],
+    () => usualReachStatus(sessions, personId, name, new Date()),
+    [sessions, personId, name],
   )
   return (
     <>
@@ -184,6 +193,20 @@ function BaselineStatus({ sessions }: { sessions: SessionRecord[] }): React.JSX.
     </>
   )
 }
+
+/**
+ * Whose check-ins the dashboard shows (KV-18): the person who takes readings,
+ * or the demo when it is asked for — or when there is nobody else, so a
+ * computer that has only seeded the demo shows it. Null when there is neither.
+ */
+function viewedOf(now: PeopleNow, wantDemo: boolean): string | null {
+  const reader = now.people[0]
+  if (now.demo && (wantDemo || reader === undefined)) return DEMO_PERSON_ID
+  return reader?.id ?? null
+}
+
+/** What a person is called on the dashboard before anyone has said: the sentences still read. */
+const UNNAMED = 'This person'
 
 function Dashboard(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null)
@@ -223,6 +246,23 @@ function Dashboard(): React.JSX.Element {
   // section at the foot of the page says the key may be the cause.
   const [keySuspect, setKeySuspect] = useState(false)
   const [pastSetup, setPastSetup] = useState(false)
+  // Who takes readings here, and whether the demo has days to show (KV-18):
+  // undefined until known, null when it could not be asked — the dashboard's
+  // error says why, and no name is asked for over a list nobody could read.
+  const [people, setPeople] = useState<PeopleNow | null | undefined>(undefined)
+  // The demo's days shown instead of the person's, chosen at the top.
+  const [showingDemo, setShowingDemo] = useState(false)
+  // The one person who takes readings: the first on the list. Asking who before
+  // each reading, once there can be more than one, is #18's second part.
+  const reader: PersonShown | undefined = people?.people[0]
+  // Nobody to take a reading, or nobody told whose the check-ins are: the setup
+  // screen asks (KV-18).
+  const nameNeeded = people != null && (reader === undefined || reader.name === null)
+  const viewedId = people == null ? null : viewedOf(people, showingDemo)
+  const viewedName =
+    viewedId === DEMO_PERSON_ID ? DEMO_PERSON_NAME : (reader?.name ?? UNNAMED)
+  // Who the reading running now is for, so its answers are stored as theirs.
+  const readingFor = useRef<string | null>(null)
   // Back on the dashboard from the camera, the questions or the setup screen,
   // focus goes to its heading (KV-20): the button pressed to leave — Stop, Go
   // back, Finish, Go to the check-ins — is gone, and focus left on nothing
@@ -233,7 +273,10 @@ function Dashboard(): React.JSX.Element {
   // camera is off or the key is missing (review of #196); it is also where a
   // first run starts.
   const showingSetup =
-    camera !== undefined && keyStatus !== undefined && setupNeeded(camera, keyStatus) && !pastSetup
+    camera !== undefined &&
+    keyStatus !== undefined &&
+    setupNeeded(camera, keyStatus, nameNeeded) &&
+    !pastSetup
   const away = capturing || answering !== null || showingSetup
   const wasAway = useRef(away)
   const dashboardHeading = useRef<HTMLHeadingElement>(null)
@@ -245,7 +288,18 @@ function Dashboard(): React.JSX.Element {
   const [protection, setProtection] = useState<Protection | undefined>(undefined)
 
   const refresh = useCallback(async (): Promise<void> => {
-    setSessions(await window.kinvue.listSessions(DEMO_PERSON_ID))
+    let now: PeopleNow
+    try {
+      now = await window.kinvue.listPeople()
+    } catch (e) {
+      // Known not to be known, so the screen is drawn with the error, rather
+      // than waiting on a list that is not coming.
+      setPeople((was) => was ?? null)
+      throw e
+    }
+    setPeople(now)
+    const id = viewedOf(now, showingDemo)
+    setSessions(id === null ? [] : await window.kinvue.listSessions(id))
     // The file just read may not be the one the protection line described — a
     // new history started, a restore written (review of #187) — so it is asked
     // again here. Not worth a screen: the line is all it feeds.
@@ -259,7 +313,7 @@ function Dashboard(): React.JSX.Element {
     // moment, and a later reload is a later moment (KV-98 review).
     setError(null)
     setNotice(null)
-  }, [])
+  }, [showingDemo])
 
   // An unreadable history says so in its own words; anything else gets a plain
   // sentence here and the original in the console (KV-95).
@@ -284,8 +338,8 @@ function Dashboard(): React.JSX.Element {
   }, [])
 
   const loadLastExported = useCallback(async (): Promise<void> => {
-    setLastExported(await window.kinvue.lastExported(DEMO_PERSON_ID))
-  }, [])
+    setLastExported(viewedId === null ? null : await window.kinvue.lastExported(viewedId))
+  }, [viewedId])
 
   useEffect(() => {
     // Not worth a screen: the line beside the export control is all it feeds.
@@ -327,8 +381,9 @@ function Dashboard(): React.JSX.Element {
    * it has already said.
    */
   const exportHistory = useCallback(async (passphrase?: string): Promise<string | null> => {
+    if (viewedId === null) return null
     try {
-      const made = await window.kinvue.exportHistory(DEMO_PERSON_ID, passphrase)
+      const made = await window.kinvue.exportHistory(viewedId, passphrase)
       if (made === null) return null
       await loadLastExported().catch((e: unknown) => {
         console.error('Could not read when the history was last exported.', e)
@@ -415,6 +470,8 @@ function Dashboard(): React.JSX.Element {
       showFailure(e, 'The demo history could not be added.')
       return
     }
+    // The demo is a person of its own (KV-18): seeded, it is what is shown.
+    setShowingDemo(true)
     await refresh().catch((e: unknown) =>
       showFailure(e, 'The demo history was added, but the list could not be reloaded.'),
     )
@@ -477,7 +534,8 @@ function Dashboard(): React.JSX.Element {
   // Starts a capture with no checks at all. Only `takeReading`, below, calls
   // it: every button that starts a reading goes through that, so Windows is
   // asked about the camera first (review of #193).
-  const startCaptureUnchecked = useCallback((): void => {
+  const startCaptureUnchecked = useCallback((personId: string): void => {
+    readingFor.current = personId
     setReading(null)
     setCaptureFailure(null)
     setCapturing(true)
@@ -489,7 +547,7 @@ function Dashboard(): React.JSX.Element {
     const started = ++captureGeneration.current
 
     window.kinvue
-      .capture(DEMO_PERSON_ID)
+      .capture(personId)
       .then((result) => {
         if (started !== captureGeneration.current) return
         setCapturing(false)
@@ -538,12 +596,13 @@ function Dashboard(): React.JSX.Element {
   /** Submits the answers against the reading main is holding. */
   const submit = useCallback(
     (answers: CheckInAnswers): void => {
-      if (answering === null) return
+      const personId = readingFor.current
+      if (answering === null || personId === null) return
       setSubmitting(true)
       setSubmitFailure(null)
 
       window.kinvue
-        .submit(DEMO_PERSON_ID, answering.captureId, answers)
+        .submit(personId, answering.captureId, answers)
         .then(async () => {
           // The check-in is stored by the time this runs, so a refresh that
           // fails now is a stale list, not a lost check-in — and it has to be
@@ -646,7 +705,7 @@ function Dashboard(): React.JSX.Element {
   // the dashboard is never drawn only to be replaced by the setup screen
   // (review of #193). The first state that picks a whole screen, unlike the
   // others above, which feed a line of text.
-  if (camera === undefined || keyStatus === undefined) {
+  if (camera === undefined || keyStatus === undefined || people === undefined) {
     return <main className="mx-auto max-w-3xl px-6 py-10" />
   }
 
@@ -658,8 +717,15 @@ function Dashboard(): React.JSX.Element {
       <SetupScreen
         camera={camera}
         keyStatus={keyStatus}
+        nameNeeded={nameNeeded}
+        unnamed={reader?.name === null ? reader : null}
         onCheckAgain={askCamera}
         onKeyKept={setKeyStatus}
+        onNamed={() => {
+          void refresh().catch((e: unknown) =>
+            showFailure(e, 'The name was saved, but the check-ins could not be shown.'),
+          )
+        }}
         onContinue={() => setPastSetup(true)}
       />
     )
@@ -669,33 +735,82 @@ function Dashboard(): React.JSX.Element {
   // off since, or a key that is not there, is said on the setup screen, not by
   // a capture that cannot run.
   const takeReading = (): void => {
+    // Nobody to take it, or nobody told whose the check-ins are: the setup
+    // screen asks first (KV-18). Never the demo, whose days are invented.
+    if (people === null) {
+      setNotice(
+        'Kinvue could not tell whose check-ins these are, so a reading cannot start. ' +
+          'Nothing has been changed.',
+      )
+      return
+    }
+    if (reader === undefined || reader.name === null) {
+      setPastSetup(false)
+      return
+    }
+    const personId = reader.id
+    setShowingDemo(false)
     void askCamera().then(
       (now) => {
-        if (setupNeeded(now, keyStatus)) setPastSetup(false)
-        else startCaptureUnchecked()
+        if (setupNeeded(now, keyStatus, false)) setPastSetup(false)
+        else startCaptureUnchecked(personId)
       },
       // Not asked: the capture is tried, and says what is wrong if it fails.
-      () => startCaptureUnchecked(),
+      () => startCaptureUnchecked(personId),
     )
   }
+  const demoShown = viewedId === DEMO_PERSON_ID
 
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
+      {/* Whose check-ins are shown (KV-18): the person's, or the demo's, which
+          is a person of its own. Only when there is a demo to show. */}
+      {people !== null && people.demo && reader !== undefined && (
+        <nav aria-label="Whose check-ins are shown" className="mb-6 flex flex-wrap gap-2">
+          <button
+            type="button"
+            aria-pressed={!demoShown}
+            onClick={() => setShowingDemo(false)}
+            className={`rounded-lg border px-3 py-1 text-sm ${
+              demoShown ? 'border-(--color-line)' : 'border-(--color-ink) font-medium'
+            }`}
+          >
+            {reader.name ?? UNNAMED}
+          </button>
+          <button
+            type="button"
+            aria-pressed={demoShown}
+            onClick={() => setShowingDemo(true)}
+            className={`rounded-lg border px-3 py-1 text-sm ${
+              demoShown ? 'border-(--color-ink) font-medium' : 'border-(--color-line)'
+            }`}
+          >
+            The demo
+          </button>
+        </nav>
+      )}
+
       <header className="mb-8">
         <h1 ref={dashboardHeading} tabIndex={-1} className="text-2xl font-semibold">
-          {DEMO_PERSON_NAME}&rsquo;s check-ins
+          {/* One string, so it is read as one name: "Margaret’s check-ins (demo)". */}
+          {viewedId === null || viewedName === UNNAMED
+            ? 'Check-ins'
+            : `${viewedName}’s check-ins${demoShown ? ' (demo)' : ''}`}
         </h1>
         <p className="mt-1 text-sm text-(--color-muted)">
-          A daily look at whether today is different from {DEMO_PERSON_NAME}&rsquo;s own
-          usual. Not a diagnosis, and not an emergency alert.
+          {demoShown
+            ? `Invented days, for seeing the dashboard with a usual behind it. ${DEMO_PERSON_NAME} ` +
+              'is nobody, and no reading is ever taken under that name.'
+            : 'A daily look at whether today is different from their own usual. Not a ' +
+              'diagnosis, and not an emergency alert.'}
         </p>
-        {sessions !== null && (
+        {sessions !== null && viewedId !== null && (
           <SectionBoundary
             fallback="Where their usual stands could not be shown."
             className="mt-3"
             resetKey={sessions}
           >
-            <BaselineStatus sessions={sessions} />
+            <BaselineStatus sessions={sessions} personId={viewedId} name={viewedName} />
           </SectionBoundary>
         )}
       </header>
@@ -768,8 +883,9 @@ function Dashboard(): React.JSX.Element {
       {sessions !== null && sessions.length === 0 && (
         <div className="rounded-xl border border-dashed border-(--color-line) p-8 text-center">
           <p className="text-sm text-(--color-muted)">
-            No check-ins yet. Seed the demo persona&rsquo;s history to see the dashboard
-            with a baseline behind it.
+            No check-ins yet. Take a reading to start, or seed the demo&rsquo;s history to
+            see the dashboard with a baseline behind it. The demo is a person of its own:
+            its days never count towards anyone&rsquo;s usual.
           </p>
           <button
             type="button"
@@ -784,7 +900,7 @@ function Dashboard(): React.JSX.Element {
 
       {/* Each section contained on its own (KV-163): one that cannot be drawn
           leaves a sentence in its place, not an empty window. */}
-      {sessions !== null && sessions.length > 0 && (
+      {sessions !== null && sessions.length > 0 && viewedId !== null && (
         <SectionBoundary
           fallback={
             'The trend could not be drawn. ' +
@@ -793,12 +909,12 @@ function Dashboard(): React.JSX.Element {
           className={CHART_BOX}
           resetKey={sessions}
         >
-          <TrendChart records={sessions} personId={DEMO_PERSON_ID} />
+          <TrendChart records={sessions} personId={viewedId} />
         </SectionBoundary>
       )}
 
       <div className="space-y-4">
-        {newest.map((session) => (
+        {viewedId !== null && newest.map((session) => (
           <SectionBoundary
             key={session.id}
             fallback="This check-in could not be shown. It is still saved, unchanged."
@@ -812,7 +928,7 @@ function Dashboard(): React.JSX.Element {
             {deleting === session.id ? (
               <ConfirmRemoval
                 sessions={sessions ?? []}
-                personId={DEMO_PERSON_ID}
+                personId={viewedId}
                 which={{ kind: 'one', id: session.id }}
                 onExport={exportHistory}
                 onCancel={() => setDeleting(null)}
@@ -840,7 +956,7 @@ function Dashboard(): React.JSX.Element {
         ))}
       </div>
 
-      {sessions !== null && (
+      {sessions !== null && viewedId !== null && (
         // Contained like every other section (KV-163, review of #185).
         <SectionBoundary
           fallback={
@@ -851,7 +967,7 @@ function Dashboard(): React.JSX.Element {
           resetKey={sessions}
         >
           <HistoryPanel
-            personId={DEMO_PERSON_ID}
+            personId={viewedId}
             sessions={sessions}
             lastExported={lastExported}
             protection={protection}

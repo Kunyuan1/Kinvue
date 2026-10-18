@@ -17,6 +17,7 @@ import { scoreSession } from "@core/scoring";
 import { createJsonSessionStore, type SessionStore } from "@core/session/store";
 import { createCheckIn } from "@core/session/checkin";
 import type { SessionRecord } from "@core/session/types";
+import { DEMO_PERSON_ID } from "@core/session/people";
 import { parseCheckInAnswers, parsePersonId } from "@core/session/validate";
 import { parseRemoval, type RestoreResult, type RestoreStep } from "@core/session/lifecycle";
 import {
@@ -25,7 +26,7 @@ import {
   passphraseLength,
   protect,
 } from "@core/session/protect";
-import { DEMO_PERSON_ID, seedDemoHistory } from "@core/seed/persona";
+import { seedDemoHistory } from "@core/seed/persona";
 import { createGuidanceGate } from "@core/capture/guidance";
 import { deviceTimeZone } from "./device";
 import { createFrameThrottle, toPreview } from "./frames";
@@ -50,6 +51,7 @@ import { ERR_ABORTED, loadFailureMessage, showWhenReady } from "./window-show";
 import { isAppUrl, isTrustedSender, resolveAppPage } from "./security";
 import { toCaptureReply, type CaptureReply } from "../shared/capture-reply";
 import type { Protection } from "../shared/protection";
+import { namedResult, shown, type NamedResult, type PeopleNow } from "../shared/people";
 
 /**
  * In development, `.env` holds the SmartSpectra key, and this loads it into
@@ -263,6 +265,11 @@ function registerIpc(
     async (event, personId: unknown): Promise<CaptureReply> => {
       const id = parsePersonId(personId);
       if (id === null) throw new Error("checkin:capture needs a person id.");
+      // Only for someone on this computer's list (KV-18): never the demo, whose
+      // days are invented, and never an id the screens made up.
+      if (!(await store.people()).some((p) => p.id === id)) {
+        throw new Error("checkin:capture is only for someone on this computer's list.");
+      }
       // One gate per capture, so nothing carries over from the last one.
       const guidance = createGuidanceGate();
       const sendFrame = createFrameThrottle();
@@ -563,6 +570,33 @@ function registerIpc(
       if (removal === null) throw new Error("history:remove received a malformed request.");
       return await store.remove(id, removal, new Date());
     },
+  );
+
+  // KV-18. The people who take readings here, and whether the demo has days to
+  // show. Never a key: it tells a person from another across computers, and
+  // the screens have no use for it.
+  handle("people:list", async (): Promise<PeopleNow> => {
+    const people = await store.people();
+    const demo = (await store.list(DEMO_PERSON_ID)).length > 0;
+    return { people: people.map(shown), demo };
+  });
+  // A name is checked in the store (`checkName`), which is the one place that
+  // knows everyone else's; here only that it is text at all.
+  const nameFor = (channel: string, typed: unknown): string => {
+    if (typeof typed !== "string") throw new Error(`${channel} needs a name.`);
+    return typed;
+  };
+  handle(
+    "people:add",
+    async (_e, typed: unknown): Promise<NamedResult> =>
+      namedResult(await store.addPerson(nameFor("people:add", typed))),
+  );
+  handle(
+    "people:rename",
+    async (_e, personId: unknown, typed: unknown): Promise<NamedResult> =>
+      namedResult(
+        await store.rename(personFor("people:rename", personId), nameFor("people:rename", typed)),
+      ),
   );
 
   // KV-8. Opt-in, and every record it writes is marked `seeded: true`.

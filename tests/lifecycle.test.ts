@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DEMO_PERSON_ID } from '@core/session/people'
 import {
   chosenFor,
   describeLastExport,
@@ -93,10 +94,18 @@ describe('remove: deleting check-ins, and what is kept of them (KV-21)', () => {
 
   it('keeps no tombstone for a seeded day, whose id repeats across installs', () => {
     const seeded = on(4, { id: 'seed-test-person-1', seeded: true })
-    const { history, removed } = remove(historyOf([...days, seeded]), PERSON, { kind: 'all' }, NOW)
-    expect(removed).toBe(5)
-    expect(history.sessions).toEqual([])
-    expect(history.removed.map((t) => t.id)).toEqual(['d-0', 'd-1', 'd-2', 'd-3'])
+    // A seeded day is the demo's, whoever it was written under (KV-18): deleting
+    // the person leaves it, and deleting the demo takes it, with no tombstone.
+    const theirs = remove(historyOf([...days, seeded]), PERSON, { kind: 'all' }, NOW)
+    expect(theirs.removed).toBe(4)
+    expect(theirs.history.sessions.map((r) => r.id)).toEqual(['seed-test-person-1'])
+    // Chosen as the demo's, kept as stored: the record itself is not rewritten.
+    expect(theirs.history.sessions[0]?.personId).toBe(PERSON)
+
+    const demo = remove(theirs.history, DEMO_PERSON_ID, { kind: 'all' }, NOW)
+    expect(demo.removed).toBe(1)
+    expect(demo.history.sessions).toEqual([])
+    expect(demo.history.removed.map((t) => t.id)).toEqual(['d-0', 'd-1', 'd-2', 'd-3'])
   })
 
   it('changes nothing when nothing is named', () => {

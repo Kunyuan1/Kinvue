@@ -15,7 +15,16 @@ import type { SessionRecord } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
 import { history, session } from './helpers'
 import { expectPersonSized } from './person-sized'
-import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
+import type { PeopleNow } from '../app/shared/people'
+import { DEMO_PERSON_ID as THE_DEMO } from '@core/session/people'
+
+/**
+ * The person these tests show: a history from before KV-18, under the id it
+ * always had, named. The demo is a person of its own now, under another id
+ * (KV-18), so the person the dashboard reads is no longer the demo's constant.
+ */
+const DEMO_PERSON_ID = 'demo-margaret'
+const DEMO_PERSON_NAME = 'Margaret'
 import { failureTag } from '@core/capture/failure'
 import type { CameraAccess } from '../app/shared/camera-access'
 import type { KeyStatus, SetKeyResult } from '../app/shared/api-key'
@@ -123,7 +132,7 @@ const PATH = String.raw`C:\Users\someone\AppData\Roaming\kinvue\sessions\session
 const fromMain = (err: Error, channel: string): Error =>
   new Error(`Error invoking remote method '${channel}': ${String(err)}`)
 
-let listSessions: ReturnType<typeof vi.fn<() => Promise<SessionRecord[]>>>
+let listSessions: ReturnType<typeof vi.fn<(personId: string) => Promise<SessionRecord[]>>>
 let seedDemo: ReturnType<typeof vi.fn<() => Promise<number>>>
 let startNewHistory: ReturnType<typeof vi.fn<() => Promise<string | null>>>
 let lastExported: ReturnType<typeof vi.fn<() => Promise<string | null>>>
@@ -143,9 +152,10 @@ let apiKeyStatus: ReturnType<typeof vi.fn<() => Promise<KeyStatus>>>
 let setApiKey: ReturnType<typeof vi.fn<(key: string) => Promise<SetKeyResult>>>
 let openKeyRegistration: ReturnType<typeof vi.fn<() => Promise<void>>>
 let forgetApiKey: ReturnType<typeof vi.fn<() => Promise<KeyStatus>>>
+let listPeople: ReturnType<typeof vi.fn<() => Promise<PeopleNow>>>
 
 beforeEach(() => {
-  listSessions = vi.fn<() => Promise<SessionRecord[]>>()
+  listSessions = vi.fn<(personId: string) => Promise<SessionRecord[]>>()
   seedDemo = vi.fn<() => Promise<number>>()
   startNewHistory = vi.fn<() => Promise<string | null>>()
   lastExported = vi.fn<() => Promise<string | null>>(() => Promise.resolve(null))
@@ -165,6 +175,9 @@ beforeEach(() => {
   )
   openKeyRegistration = vi.fn<() => Promise<void>>(() => Promise.resolve())
   forgetApiKey = vi.fn<() => Promise<KeyStatus>>(() => Promise.resolve('none'))
+  listPeople = vi.fn<() => Promise<PeopleNow>>(() =>
+    Promise.resolve({ people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }], demo: false }),
+  )
   Object.defineProperty(window, 'kinvue', {
     configurable: true,
     value: {
@@ -184,6 +197,7 @@ beforeEach(() => {
       setApiKey,
       openKeyRegistration,
       forgetApiKey,
+      listPeople,
       captureSeconds: vi.fn(() => Promise.resolve(90)),
       cancelCapture: vi.fn(() => Promise.resolve()),
     },
@@ -1308,8 +1322,21 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
   })
 
   it('promises no note of demo days, which leave none (review of #185)', async () => {
-    listSessions.mockResolvedValue(days().map((r) => ({ ...r, seeded: true as const })))
+    // The demo's days, as the store lists them: under the demo's own id, which
+    // is a person of its own (KV-18), shown when chosen at the top.
+    listPeople.mockResolvedValue({
+      people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+      demo: true,
+    })
+    listSessions.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === THE_DEMO
+          ? days().map((r) => ({ ...r, seeded: true as const, personId: THE_DEMO }))
+          : [],
+      ),
+    )
     render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'The demo' }))
     fireEvent.click(await screen.findByText(/Delete the whole history/))
     expect(screen.queryByText(/stays on this computer/)).toBeNull()
     expect(screen.getByText('These are demo days, so nothing is kept of them.')).toBeTruthy()
@@ -1850,3 +1877,129 @@ describe('the key, after review of #195', () => {
   })
 })
 
+
+describe('whose check-ins: the person, named, and the demo apart (KV-18)', () => {
+  const days = (): SessionRecord[] =>
+    history(3).map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+  const named = (id: string, name: string) => ({ ok: true as const, person: { id, name } })
+
+  it('asks once whose a history from before KV-18 is, and names that person', async () => {
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listSessions.mockResolvedValue(days())
+    const renamePerson = vi.fn(() => Promise.resolve(named(DEMO_PERSON_ID, 'Ann')))
+    Object.assign(window.kinvue, { renamePerson, addPerson: vi.fn() })
+    render(<App />)
+
+    expect(await screen.findByText(/taken before Kinvue asked whose they are/)).toBeTruthy()
+    // Named, the list says so: the dashboard is theirs.
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: 'Ann' }], demo: false })
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ann' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Ann’s check-ins' }),
+    ).toBeTruthy()
+    expect(renamePerson).toHaveBeenCalledWith(DEMO_PERSON_ID, 'Ann')
+    expect(window.kinvue.addPerson).not.toHaveBeenCalled()
+  })
+
+  it('adds the first person on a computer with nobody yet', async () => {
+    listPeople.mockResolvedValue({ people: [], demo: false })
+    listSessions.mockResolvedValue([])
+    const addPerson = vi.fn(() => Promise.resolve(named('p-1', 'Ann')))
+    Object.assign(window.kinvue, { addPerson, renamePerson: vi.fn() })
+    render(<App />)
+
+    expect(await screen.findByText(/The name of the person who will take the readings/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ann' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
+    await vi.waitFor(() => expect(addPerson).toHaveBeenCalledWith('Ann'))
+  })
+
+  it('says why a name was not taken, and keeps what was typed', async () => {
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listSessions.mockResolvedValue(days())
+    Object.assign(window.kinvue, {
+      renamePerson: vi.fn(() => Promise.resolve({ ok: false, problem: 'invisible' })),
+    })
+    render(<App />)
+    const field = await screen.findByLabelText('Name')
+    fireEvent.change(field, { target: { value: 'An\u200Bn' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
+    expect(await screen.findByText(/a character in it that does not show/)).toBeTruthy()
+    expect((field as HTMLInputElement).value).toBe('An\u200Bn')
+  })
+
+  it('asks for the name again, not the camera, when Take a reading is pressed unnamed', async () => {
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listSessions.mockResolvedValue(days())
+    const capture = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(window.kinvue, { capture, renamePerson: vi.fn() })
+    render(<App />)
+    fireEvent.click(await screen.findByText('Go to the check-ins'))
+    // Past it, the dashboard reads the check-ins under no name.
+    expect(await screen.findByRole('heading', { level: 1, name: 'Check-ins' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+    expect(await screen.findByText(/taken before Kinvue asked whose they are/)).toBeTruthy()
+    expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('takes a reading as the person, never the demo, even with the demo on screen', async () => {
+    listPeople.mockResolvedValue({
+      people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+      demo: true,
+    })
+    listSessions.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === THE_DEMO
+          ? days().map((r) => ({ ...r, seeded: true as const, personId: THE_DEMO }))
+          : days(),
+      ),
+    )
+    const capture = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'The demo' }))
+    expect(
+      await screen.findByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins (demo)` }),
+    ).toBeTruthy()
+    expect(listSessions).toHaveBeenLastCalledWith(THE_DEMO)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledWith(DEMO_PERSON_ID))
+    expect(capture).not.toHaveBeenCalledWith(THE_DEMO)
+  })
+
+  it('offers the switch only when there is a demo to show', async () => {
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    await screen.findByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })
+    expect(screen.queryByRole('navigation', { name: 'Whose check-ins are shown' })).toBeNull()
+  })
+
+  it('shows the seeded demo once it is added, as a person of its own', async () => {
+    listSessions.mockResolvedValue([])
+    seedDemo.mockImplementation(() => {
+      listPeople.mockResolvedValue({
+        people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+        demo: true,
+      })
+      return Promise.resolve(14)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Seed demo history' }))
+    expect(
+      await screen.findByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins (demo)` }),
+    ).toBeTruthy()
+    expect(listSessions).toHaveBeenLastCalledWith(THE_DEMO)
+  })
+
+  it('draws the dashboard and its error when the people cannot be read, and asks no name', async () => {
+    listPeople.mockRejectedValue(new Error('disk on fire'))
+    listSessions.mockResolvedValue([])
+    render(<App />)
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.queryByText(/Whose check-ins/)).toBeNull()
+  })
+})
