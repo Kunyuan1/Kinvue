@@ -58,6 +58,15 @@ describe('a name, held to how it reads (KV-18)', () => {
     expect(checkName(typed, [])).toEqual({ ok: false, problem: 'invisible' })
   })
 
+  it('allows the joiners some names are spelled with (review of #200)', () => {
+    // Persian "Alireza": its two parts kept apart by a zero-width non-joiner.
+    const alireza = String.fromCodePoint(0x0639, 0x0644, 0x06cc, 0x200c, 0x0631, 0x0636, 0x0627)
+    expect(checkName(alireza, [])).toEqual({ ok: true, name: alireza })
+    // Devanagari, with a zero-width joiner asking for a half form inside a letter.
+    const half = String.fromCodePoint(0x0915, 0x094d, 0x200d, 0x0937)
+    expect(checkName(half, [])).toEqual({ ok: true, name: half })
+  })
+
   it(`allows ${String(MAX_NAME_LENGTH)} characters as a person counts them, not one more`, () => {
     expect(checkName('a'.repeat(MAX_NAME_LENGTH), []).ok).toBe(true)
     expect(checkName('a'.repeat(MAX_NAME_LENGTH + 1), [])).toEqual({
@@ -79,6 +88,11 @@ describe('a name, held to how it reads (KV-18)', () => {
     expect(checkName('ANN', others)).toEqual({ ok: false, problem: 'taken' })
     expect(checkName('jose\u0301', others)).toEqual({ ok: false, problem: 'taken' })
     expect(checkName('Anne', others)).toEqual({ ok: true, name: 'Anne' })
+    // Folded, not only lowered: an eszett reads as the "SS" it upper-cases to
+    // (review of #200).
+    const strasse = [person({ id: 'p-3', name: 'Straße' })]
+    expect(checkName('STRASSE', strasse)).toEqual({ ok: false, problem: 'taken' })
+    expect(checkName('strasse', strasse)).toEqual({ ok: false, problem: 'taken' })
   })
 
   it('compares against named people only: one waiting for a name takes none', () => {
@@ -99,6 +113,14 @@ describe('a person, checked as it is read', () => {
     ['an empty name', person({ name: '' }), 'its name is not one'],
     ['a name not stored trimmed', person({ name: 'Ann ' }), 'its name is not one'],
     ['a time that is not one', person({ addedAt: 'yesterday' }), 'when it was added is not a time'],
+    // Held to what writing one would allow (review of #200).
+    [
+      'the demo',
+      person({ id: DEMO_PERSON_ID }),
+      'it is the demo, which is never a person on the list',
+    ],
+    ['a name too long to be typed in', person({ name: 'a'.repeat(5000) }), 'its name is not one'],
+    ['a name holding a zero-width space', person({ name: 'An\u200Bn' }), 'its name is not one'],
   ])('refuses %s', (_, value, why) => {
     expect(checkPerson(value)).toBe(why)
   })
@@ -234,6 +256,10 @@ describe('the people list in the history file (KV-18)', () => {
       [undefined, /list of people .* cannot be read \(it is not a list\)/],
       [[person(), { ...person(), key: 'k' }], /Person 2 of 2 .* \(its key is not one\)/],
       [[person(), person({ name: 'Bill' })], /Person 2 of 2 .* \(its id is used twice\)/],
+      [
+        [person(), person({ id: 'p-2', name: 'ANN' })],
+        /Person 2 of 2 .* \(its name is used twice\)/,
+      ],
     ] as const) {
       await writeFile(path, JSON.stringify({ version: 2, sessions: [], people }), 'utf8')
       const thrown = await store.people().catch((e: unknown) => e)
@@ -279,6 +305,19 @@ describe('the people list in the history file (KV-18)', () => {
     expect(await store.rename('test-person', '\u200B')).toEqual({ ok: false, problem: 'invisible' })
     expect((await onDisk(path)).sessions).toEqual(sessionsBefore)
     await expect(store.rename('nobody', 'Bill')).rejects.toThrow(/nobody with the id nobody/)
+  })
+
+  it('answers who is here and whether the demo has days in one read', async () => {
+    const path = await pathIn()
+    const store = createJsonSessionStore(path, () => NOW)
+    expect(await store.roster()).toEqual({ people: [], demo: false })
+    await store.append(session({ id: 'one' }))
+    expect((await store.roster()).demo).toBe(false)
+    // A day seeded under a real person's id before KV-18 is still the demo's.
+    await store.append({ ...session({ id: 'seed-1', seeded: true }), personId: 'test-person' })
+    const roster = await store.roster()
+    expect(roster.demo).toBe(true)
+    expect(roster.people.map((p) => p.id)).toEqual(['test-person'])
   })
 
   it('adds a person when a real check-in arrives for someone it lacks, and nobody for a seeded one', async () => {

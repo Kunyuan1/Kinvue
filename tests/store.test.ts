@@ -821,3 +821,26 @@ describe('exporting, restoring and deleting (KV-21)', () => {
     expect(await store.list('test-person')).toHaveLength(1)
   })
 })
+
+describe('a version-1 history whose upgrade cannot be written (KV-18, review of #200)', () => {
+  it('is still read, with the same keys every time, and the upgrade saved by the next write that can be', async () => {
+    const { path } = await storeIn()
+    const v1 = { version: 1, sessions: [session({ id: 'one' })] }
+    await writeFile(path, JSON.stringify(v1), 'utf8')
+    const store = createJsonSessionStore(path)
+
+    // The upgrade's write fails — a backup agent holding the file, say.
+    renameControl.failNext = true
+    const first = await store.people()
+    expect(first.map((p) => [p.id, p.name])).toEqual([['test-person', null]])
+    // Nothing saved: the file is the version-1 history it was.
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(v1)
+
+    // The next read writes it, with the keys the first one answered with, and
+    // the history reads as it always did.
+    expect((await store.list('test-person')).map((s) => s.id)).toEqual(['one'])
+    const again = await store.people()
+    expect(again).toEqual(first)
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ ...v1, version: 2, people: first })
+  })
+})

@@ -25,6 +25,13 @@ import { DEMO_PERSON_ID as THE_DEMO } from '@core/session/people'
  */
 const DEMO_PERSON_ID = 'demo-margaret'
 const DEMO_PERSON_NAME = 'Margaret'
+
+/**
+ * The setup screen's heading, first or next as it says which (review of #200).
+ * Most tests here are about what the screen asks, not that word; the one test
+ * that is pins it.
+ */
+const SETUP_HEADING = /^Before the (first|next) reading$/
 import { failureTag } from '@core/capture/failure'
 import type { CameraAccess } from '../app/shared/camera-access'
 import type { KeyStatus, SetKeyResult } from '../app/shared/api-key'
@@ -1116,8 +1123,10 @@ describe('the cared-for person’s path through the dashboard (KV-20)', () => {
     take.focus()
     fireEvent.click(take)
 
-    const setup = await screen.findByRole('heading', { name: 'Before the first reading' })
-    expect(document.activeElement).toBe(setup)
+    const setup = await screen.findByRole('heading', { name: SETUP_HEADING })
+    // Waited for: the heading is drawn a moment before its focus effect runs,
+    // and asked at once, alone, the test read focus in between (review of #200).
+    await vi.waitFor(() => expect(document.activeElement).toBe(setup))
 
     fireEvent.click(screen.getByRole('button', { name: 'Go to the check-ins' }))
     await vi.waitFor(() => expect(document.activeElement).toBe(heading()))
@@ -1573,7 +1582,7 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
       cameraAccess.mockResolvedValue(access)
       render(<App />)
       expect(await screen.findByText('Take a reading')).toBeTruthy()
-      expect(screen.queryByText('Before the first reading')).toBeNull()
+      expect(screen.queryByText(SETUP_HEADING)).toBeNull()
       cleanup()
     }
   })
@@ -1589,7 +1598,7 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
     for (const [access, sentence] of says) {
       cameraAccess.mockResolvedValue(access)
       render(<App />)
-      expect(await screen.findByText('Before the first reading')).toBeTruthy()
+      expect(await screen.findByText(SETUP_HEADING)).toBeTruthy()
       expect(screen.getByText(sentence)).toBeTruthy()
       expect(screen.queryByText('Take a reading')).toBeNull()
       cleanup()
@@ -1620,7 +1629,7 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
     fireEvent.click(await screen.findByText('Go to the check-ins'))
     fireEvent.click(await screen.findByText('Take a reading'))
     // Asked again, still off: back to the setup screen, and no capture.
-    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(await screen.findByText(SETUP_HEADING)).toBeTruthy()
     expect(capture).not.toHaveBeenCalled()
   })
 
@@ -1635,7 +1644,7 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
     // The switch goes off between the first reading and the retake.
     cameraAccess.mockResolvedValue('off-for-desktop-apps')
     fireEvent.click(screen.getByText('Try the camera again'))
-    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(await screen.findByText(SETUP_HEADING)).toBeTruthy()
     expect(capture).toHaveBeenCalledTimes(1)
   })
 
@@ -1647,7 +1656,7 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
     await vi.waitFor(() => expect(listSessions).toHaveBeenCalled())
     expect(screen.queryByText('Take a reading')).toBeNull()
     answer('off-for-desktop-apps')
-    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(await screen.findByText(SETUP_HEADING)).toBeTruthy()
   })
 
   it('draws the dashboard when Windows cannot be asked at all', async () => {
@@ -1750,7 +1759,7 @@ describe('the household key, on the setup screen and the dashboard (KV-19)', () 
     render(<App />)
     fireEvent.click(await screen.findByText('Go to the check-ins'))
     fireEvent.click(await screen.findByText('Take a reading'))
-    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(await screen.findByText(SETUP_HEADING)).toBeTruthy()
     expect(capture).not.toHaveBeenCalled()
   })
 
@@ -1879,6 +1888,9 @@ describe('the key, after review of #195', () => {
 
 
 describe('whose check-ins: the person, named, and the demo apart (KV-18)', () => {
+  // Says it is the demo first, so a real Margaret's heading cannot read the same
+  // but for a word in brackets (review of #200).
+  const DEMO_HEADING = 'The demo: Margaret’s invented check-ins'
   const days = (): SessionRecord[] =>
     history(3).map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
   const named = (id: string, name: string) => ({ ok: true as const, person: { id, name } })
@@ -1901,6 +1913,20 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
     ).toBeTruthy()
     expect(renamePerson).toHaveBeenCalledWith(DEMO_PERSON_ID, 'Ann')
     expect(window.kinvue.addPerson).not.toHaveBeenCalled()
+  })
+
+  it('heads the screen the next reading for a history, and the first only for nobody yet (review of #200)', async () => {
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listSessions.mockResolvedValue(days())
+    Object.assign(window.kinvue, { renamePerson: vi.fn(), addPerson: vi.fn() })
+    const { unmount } = render(<App />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Before the next reading' })).toBeTruthy()
+    unmount()
+
+    listPeople.mockResolvedValue({ people: [], demo: false })
+    listSessions.mockResolvedValue([])
+    render(<App />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Before the first reading' })).toBeTruthy()
   })
 
   it('adds the first person on a computer with nobody yet', async () => {
@@ -1962,13 +1988,68 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
 
     fireEvent.click(await screen.findByRole('button', { name: 'The demo' }))
     expect(
-      await screen.findByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins (demo)` }),
+      await screen.findByRole('heading', { level: 1, name: DEMO_HEADING }),
     ).toBeTruthy()
     expect(listSessions).toHaveBeenLastCalledWith(THE_DEMO)
 
     fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
     await vi.waitFor(() => expect(capture).toHaveBeenCalledWith(DEMO_PERSON_ID))
     expect(capture).not.toHaveBeenCalledWith(THE_DEMO)
+  })
+
+  it('shows the latest choice, whichever reload answers last (review of #200)', async () => {
+    listPeople.mockResolvedValue({
+      people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+      demo: true,
+    })
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    await screen.findByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })
+
+    // The demo's check-ins answer slowly; the person's at once.
+    let demoAnswers: (records: SessionRecord[]) => void = () => undefined
+    const demoDays = days().map((r) => ({ ...r, seeded: true as const, personId: THE_DEMO }))
+    listSessions.mockImplementation((id: string) =>
+      id === THE_DEMO
+        ? new Promise((resolve) => (demoAnswers = resolve))
+        : Promise.resolve(days()),
+    )
+    // Switched to the demo, and back before it answered.
+    fireEvent.click(screen.getByRole('button', { name: 'The demo' }))
+    fireEvent.click(screen.getByRole('button', { name: DEMO_PERSON_NAME }))
+    await vi.waitFor(() => expect(listSessions).toHaveBeenLastCalledWith(DEMO_PERSON_ID))
+    await act(async () => demoAnswers(demoDays))
+
+    // The person's, as last chosen: never their heading over the demo's days,
+    // nor the demo's heading over theirs.
+    expect(screen.getByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })).toBeTruthy()
+    expect(screen.queryByRole('heading', { level: 1, name: DEMO_HEADING })).toBeNull()
+    expect(screen.queryByText(/demo day/i)).toBeNull()
+  })
+
+  it('offers no restore into the demo, and says where one goes (review of #200)', async () => {
+    listPeople.mockResolvedValue({
+      people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+      demo: true,
+    })
+    listSessions.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === THE_DEMO
+          ? days().map((r) => ({ ...r, seeded: true as const, personId: THE_DEMO }))
+          : days(),
+      ),
+    )
+    render(<App />)
+    const restore = await screen.findByRole('button', { name: 'Restore from an export…' })
+    expect((restore as HTMLButtonElement).disabled).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'The demo' }))
+    await screen.findByRole('heading', { level: 1, name: DEMO_HEADING })
+    expect(
+      (screen.getByRole('button', { name: 'Restore from an export…' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true)
+    expect(screen.getByText(/restored into a person’s history, not the demo’s/)).toBeTruthy()
   })
 
   it('offers the switch only when there is a demo to show', async () => {
@@ -1990,7 +2071,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'Seed demo history' }))
     expect(
-      await screen.findByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins (demo)` }),
+      await screen.findByRole('heading', { level: 1, name: DEMO_HEADING }),
     ).toBeTruthy()
     expect(listSessions).toHaveBeenLastCalledWith(THE_DEMO)
   })

@@ -18,6 +18,7 @@ import {
 import {
   checkName,
   checkPerson,
+  comparable,
   DEMO_PERSON_ID,
   ownerOf,
   withPeopleFor,
@@ -59,6 +60,12 @@ export interface SessionStore {
    * for someone it lacks adds them, unnamed.
    */
   people(): Promise<Person[]>
+  /**
+   * The people, and whether the demo has days to show, from one read (review
+   * of #200): what the dashboard asks every time it loads, on a history that
+   * may be sealed, so one pass rather than one for each.
+   */
+  roster(): Promise<{ people: Person[]; demo: boolean }>
   /** Adds someone under `name`, held to `checkName`, in one write (KV-18). */
   addPerson(name: string): Promise<NameResult>
   /** Names or renames `personId`, held to `checkName`. Changes no check-in. */
@@ -602,13 +609,20 @@ async function read(path: string, cipher: StoreCipher): Promise<FileShape> {
     throw new UnrecognisedRecordError(path, null, 0, 'it is not a list', 'people')
   }
   const ids = new Set<string>()
+  // And one name once, as it is written (review of #200): two people the
+  // screens cannot tell apart are the failure the name rule exists to prevent.
+  const names = new Set<string>()
   for (const [i, person] of people.entries()) {
+    const read = person as Person
     const why =
-      checkPerson(person) ?? (ids.has((person as Person).id) ? 'its id is used twice' : null)
+      checkPerson(person) ??
+      (ids.has(read.id) ? 'its id is used twice' : null) ??
+      (read.name !== null && names.has(comparable(read.name)) ? 'its name is used twice' : null)
     if (why !== null) {
       throw new UnrecognisedRecordError(path, i + 1, people.length, why, 'people')
     }
-    ids.add((person as Person).id)
+    ids.add(read.id)
+    if (read.name !== null) names.add(comparable(read.name))
   }
   return parsed
 }
@@ -785,18 +799,43 @@ export function createJsonSessionStore(
   }
 
   /**
+   * People an upgrade made and could not yet write, kept for this process
+   * (review of #200): every read until a write lands answers with the same
+   * keys, and the first write that does land saves those.
+   */
+  const madeByUpgrade = new Map<string, Person>()
+
+  /**
    * The history as it is now, a version-1 file upgraded and written first
    * (`UPGRADES_FROM`, KV-18). Only inside `exclusive`: the upgrade is a write.
+   *
+   * **A write that fails does not fail the read** (review of #200). The file is
+   * whole and readable; only saving its upgrade could not be done — a full
+   * disk, a read-only volume, a backup agent holding the file. Throwing would
+   * have hidden an intact history behind an error no button answers, since
+   * *Start a new history* rightly declines a file it can read. So the upgrade
+   * is served from memory, with this process's keys, and saved by the next
+   * write that can be — `append`, a name, a deletion, the seal at start, which
+   * all build on this. A write the person asked for fails as it always has.
    */
   const current = async (): Promise<FileShape> => {
     const data = await read(path, cipher)
-    if (data.version === FILE_VERSION) return data
-    const upgraded: FileShape = {
-      ...data,
-      version: FILE_VERSION,
-      people: withPeopleFor([], data.sessions, randomUUID, now()),
+    if (data.version === FILE_VERSION) {
+      madeByUpgrade.clear()
+      return data
     }
-    await write(path, upgraded, cipher)
+    const people = withPeopleFor([], data.sessions, randomUUID, now()).map((made) => {
+      const kept = madeByUpgrade.get(made.id) ?? made
+      madeByUpgrade.set(made.id, kept)
+      return kept
+    })
+    const upgraded: FileShape = { ...data, version: FILE_VERSION, people }
+    try {
+      await write(path, upgraded, cipher)
+    } catch {
+      // Served from memory instead; see above. Nothing is lost: the file on
+      // disk is the version-1 history it was, and reads as one next time.
+    }
     return upgraded
   }
   /**
@@ -866,6 +905,10 @@ export function createJsonSessionStore(
     },
     async people() {
       return (await reading()).people
+    },
+    async roster() {
+      const { people, sessions } = await reading()
+      return { people, demo: sessions.some((s) => ownerOf(s) === DEMO_PERSON_ID) }
     },
     addPerson(name) {
       return exclusive(async () => {

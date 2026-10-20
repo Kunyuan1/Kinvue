@@ -59,21 +59,63 @@ export const MAX_NAME_LENGTH = 40
 export type NameProblem = 'empty' | 'too-long' | 'invisible' | 'taken'
 
 /**
- * Control characters and the ones that draw nothing — zero-width spaces and
- * joiners, the byte-order mark, bidirectional marks, soft hyphen — any of which
- * would make two names that read the same compare as different (KV-18).
+ * Control characters, and the ones that draw nothing — a zero-width space, the
+ * byte-order mark, the bidirectional marks and controls, a soft hyphen — any of
+ * which would make two names that read the same compare as different (KV-18).
+ *
+ * Listed by code point, not as every format character (`\p{Cf}`): that took in
+ * the zero-width non-joiner and joiner, which are how some names are *spelled* —
+ * Persian "Alireza" has a non-joiner between its parts, and several Indic
+ * scripts carry the joiner inside a letter — so a caregiver typing the name
+ * correctly could not name the person at all (review of #200). Those two do
+ * change how a name draws, so names that differ by one do not read the same.
+ * Numbers, not escapes, so no tool can write them back as the characters.
  */
-const INVISIBLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/u
+const CONTROLS = /[\p{Cc}\p{Zl}\p{Zp}]/u
+const DRAW_NOTHING = new Set([
+  0x00ad, // soft hyphen
+  0x061c, // Arabic letter mark
+  0x180e, // Mongolian vowel separator
+  0x200b, // zero-width space
+  0x200e, // left-to-right mark
+  0x200f, // right-to-left mark
+  0x202a, // bidirectional embeddings, overrides and their end
+  0x202b,
+  0x202c,
+  0x202d,
+  0x202e,
+  0x2060, // word joiner, and the invisible operators
+  0x2061,
+  0x2062,
+  0x2063,
+  0x2064,
+  0x2066, // bidirectional isolates and their end
+  0x2067,
+  0x2068,
+  0x2069,
+  0xfeff, // byte-order mark, which draws nothing inside a name
+])
+const holdsInvisible = (name: string): boolean =>
+  CONTROLS.test(name) || [...name].some((c) => DRAW_NOTHING.has(c.codePointAt(0) ?? 0))
 
 /** A name as it is stored: trimmed, in Unicode NFC, so "José" is one name however it was typed. */
 export const normalName = (typed: string): string => typed.normalize('NFC').trim()
 
-/** How many characters `text` draws as: grapheme clusters, as a reader counts them. */
-const charactersIn = (text: string): number =>
-  [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text)].length
+/** Made once: building one resolves a locale, and it holds no state (review of #200). */
+const GRAPHEMES = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
 
-/** The form two names are compared in: the stored form, case-folded. */
-const comparable = (name: string): string => normalName(name).toLocaleLowerCase('und')
+/** How many characters `text` draws as: grapheme clusters, as a reader counts them. */
+const charactersIn = (text: string): number => [...GRAPHEMES.segment(text)].length
+
+/**
+ * The form two names are compared in: the stored form, case-folded. Upper then
+ * lower, because lowering alone is not folding: "Straße" lowers to itself and
+ * "STRASSE" to "strasse", two names that read the same (review of #200), while
+ * upper-casing first makes the ß "SS". Still not every rule of Unicode's full
+ * folding — a few scripts' special cases differ — and those are the limit.
+ */
+export const comparable = (name: string): string =>
+  normalName(name).toLocaleUpperCase('und').toLocaleLowerCase('und')
 
 /**
  * Whether `typed` may name a person beside `others`, and if so the name to
@@ -86,7 +128,7 @@ export function checkName(
 ): { ok: true; name: string } | { ok: false; problem: NameProblem } {
   const name = normalName(typed)
   if (name === '') return { ok: false, problem: 'empty' }
-  if (INVISIBLE.test(name)) return { ok: false, problem: 'invisible' }
+  if (holdsInvisible(name)) return { ok: false, problem: 'invisible' }
   // Counted as a person reads them — characters as drawn, not UTF-16 units or
   // code points: a letter with an accent that has no single code point (NFC
   // leaves "q" and its accent as two) is one character on the button.
@@ -98,7 +140,11 @@ export function checkName(
   return { ok: true, name }
 }
 
-/** What each problem says, beside the name field. */
+/**
+ * What each problem says, beside the name field. `empty` is for the bridge:
+ * the field cannot be sent blank (`NameField`), so it is what main says to a
+ * caller that sends one anyway.
+ */
 export const NAME_PROBLEM: Record<NameProblem, string> = {
   empty: 'A name is needed, so the check-ins say whose they are.',
   'too-long': `A name can be up to ${String(MAX_NAME_LENGTH)} characters.`,
@@ -116,9 +162,16 @@ export function checkPerson(value: unknown): string | null {
   }
   const { id, key, name, addedAt } = value as Record<string, unknown>
   if (typeof id !== 'string' || id === '' || id.trim() !== id) return 'its id is not one'
+  // The demo is never on the list (review of #200): there, main would allow a
+  // reading as it, and a real check-in would be stored among invented days.
+  if (id === DEMO_PERSON_ID) return 'it is the demo, which is never a person on the list'
   if (typeof key !== 'string' || !UUID.test(key)) return 'its key is not one'
-  if (name !== null && (typeof name !== 'string' || normalName(name) !== name || name === '')) {
-    return 'its name is not one'
+  // Held to the rule a name is written under, read back as it is: a name that
+  // could not be typed in could not be shown either (review of #200).
+  if (name !== null) {
+    if (typeof name !== 'string') return 'its name is not one'
+    const held = checkName(name, [])
+    if (!held.ok || held.name !== name) return 'its name is not one'
   }
   if (typeof addedAt !== 'string' || Number.isNaN(Date.parse(addedAt))) {
     return 'when it was added is not a time'

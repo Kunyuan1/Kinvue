@@ -576,8 +576,7 @@ function registerIpc(
   // show. Never a key: it tells a person from another across computers, and
   // the screens have no use for it.
   handle("people:list", async (): Promise<PeopleNow> => {
-    const people = await store.people();
-    const demo = (await store.list(DEMO_PERSON_ID)).length > 0;
+    const { people, demo } = await store.roster();
     return { people: people.map(shown), demo };
   });
   // A name is checked in the store (`checkName`), which is the one place that
@@ -586,11 +585,19 @@ function registerIpc(
     if (typeof typed !== "string") throw new Error(`${channel} needs a name.`);
     return typed;
   };
-  handle(
-    "people:add",
-    async (_e, typed: unknown): Promise<NamedResult> =>
-      namedResult(await store.addPerson(nameFor("people:add", typed))),
-  );
+  handle("people:add", async (_e, typed: unknown): Promise<NamedResult> => {
+    const name = nameFor("people:add", typed);
+    // One person until #18's second part, which asks who takes each reading:
+    // the screens show the first on the list, so a second would be added and
+    // never seen. Refused out loud instead (review of #200). Remove with part two.
+    if ((await store.people()).length > 0) {
+      throw new Error(
+        "people:add: this version shows one person, so a second would not be seen. " +
+          "Naming the person already here is people:rename.",
+      );
+    }
+    return namedResult(await store.addPerson(name));
+  });
   handle(
     "people:rename",
     async (_e, personId: unknown, typed: unknown): Promise<NamedResult> =>

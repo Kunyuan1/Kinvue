@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { MAX_NAME_LENGTH, NAME_PROBLEM } from '@core/session/people'
+import { MAX_NAME_LENGTH, NAME_PROBLEM, normalName } from '@core/session/people'
 import type { NamedResult, PersonShown } from '../../shared/people'
 
 const BUTTON =
@@ -32,6 +32,9 @@ export default function NameField({
   const [typed, setTyped] = useState('')
   const [busy, setBusy] = useState(false)
   const [said, setSaid] = useState<string | null>(null)
+  // Empty as the store means it (review of #200): `normalName`, not `trim`
+  // alone, so the field and the store cannot disagree about a blank name.
+  const blank = normalName(typed) === ''
 
   const keep = async (): Promise<void> => {
     setBusy(true)
@@ -58,7 +61,7 @@ export default function NameField({
         className="flex flex-wrap items-center gap-2"
         onSubmit={(e) => {
           e.preventDefault()
-          if (!busy && typed.trim() !== '') void keep()
+          if (!busy && !blank) void keep()
         }}
       >
         <label htmlFor={`${id}-name`}>{label}</label>
@@ -74,7 +77,7 @@ export default function NameField({
           aria-describedby={`${id}-said`}
           className="min-w-64 rounded-lg border border-(--color-line) bg-transparent px-2 py-1"
         />
-        <button type="submit" disabled={busy || typed.trim() === ''} className={BUTTON}>
+        <button type="submit" disabled={busy || blank} className={BUTTON}>
           Save the name
         </button>
       </form>

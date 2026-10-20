@@ -1267,7 +1267,11 @@ one person, `demo-margaret`, whose name is the demo's even where the check-ins a
   upgrade makes each person's key (below), and a key made on every read until some later
   write would be a different key each time. Nothing is set aside and no record changes; a
   build from before reads a version-2 file as newer and leaves it alone (KV-13). (Review
-  of #199.)
+  of #199.) **When that write cannot be made** — a full disk, a read-only volume, a
+  backup agent holding the file — the read still answers, from the upgrade in memory, with
+  keys kept for that run; the next write that can be made saves them. Failing the read
+  instead hid a whole, readable history behind an error no button answers (review of
+  #200).
 - **A name is how the screens tell people apart, so two cannot share one.** The buttons a
   person picks themselves from must not read the same, so the rule is about how a name
   *reads*, not its bytes (review of #199): stored trimmed and in Unicode NFC; refused if
@@ -1275,7 +1279,13 @@ one person, `demo-margaret`, whose name is the demo's even where the check-ins a
   to 40 characters, a number as every other cap in the store is, sized for the path's
   18px text (KV-20); and unique on the computer once compared case-folded. So "Ann" and
   "ann " are one name, "José" is one name however its accent was typed, and "Ann" with a
-  zero-width space is refused. Renaming changes no check-in.
+  zero-width space is refused. Renaming changes no check-in. **The joiners are not
+  invisible here** (review of #200): Persian names are spelled with a zero-width
+  non-joiner and several Indic scripts carry a joiner inside a letter, so refusing every
+  format character refused those names outright. **Folded, not only lowered:** upper-case
+  first, so "Straße" and "STRASSE" are one name; a few scripts' special cases in full
+  Unicode folding are the limit. A person read from the file is held to the same rule,
+  and the demo's id is never one (review of #200).
 - **"More than one person" means more than one who takes readings.** The demo person
   (below) is never one of them, so an install that has only ever seeded the demo beside
   one real person is a one-person install: nothing is asked before a reading, and sharing
@@ -1413,6 +1423,21 @@ key, and *Start a new history*'s sentence.
 - **A people list that cannot be read asks for no name:** the dashboard says what is
   wrong, and a reading does not start, rather than adding a second person over a list
   nobody could read.
+
+**After review of #200:**
+
+- **One reload is shown: the latest.** Which person is shown is chosen in one place,
+  read when a reload runs, and set with the check-ins it loaded. Two reloads answering out
+  of order once put a real person's check-ins under the demo's heading.
+- **The demo's heading says it is the demo first:** "The demo: Margaret's invented
+  check-ins". A real person may be called Margaret too, and the two must not differ by a
+  word in brackets; the demo's line no longer claims no reading is taken under that name.
+- **Restore is not offered into the demo:** every export would be refused there as
+  someone else's, read just after seeding, when the demo is what is shown.
+- **The setup screen says *before the next reading* to a history,** and *the first* only
+  where nothing has been taken. It is shown until someone is named, not once.
+- **A second person is refused until part two:** the screens show the first on the list,
+  so one added after would never be seen.
 
 ---
 
