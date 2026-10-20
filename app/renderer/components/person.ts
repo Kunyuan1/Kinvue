@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useLayoutEffect, useRef } from 'react'
 
 /**
  * The cared-for person's path: Take a reading, the capture, the card that says
@@ -45,10 +45,15 @@ export const PERSON_NOTE = 'text-lg text-(--color-muted)'
  * Only for a screen changing, never for something arriving on one: the
  * countdown and the framing advice are announced, not focused, so nothing
  * moves the person's place while they are being filmed.
+ *
+ * A layout effect, so focus moves in the commit that draws the screen. A
+ * passive one ran a moment later, and in between focus was wherever the screen
+ * left it — on the setup screen, its first button, which took `autoFocus` in
+ * that commit and was read before the heading (review of #196).
  */
 export function useFocusWhenShown<T extends HTMLElement>(key?: unknown): React.RefObject<T | null> {
   const ref = useRef<T>(null)
-  useEffect(() => {
+  useLayoutEffect(() => {
     ref.current?.focus()
   }, [key])
   return ref

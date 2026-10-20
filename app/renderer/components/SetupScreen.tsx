@@ -94,7 +94,10 @@ export default function SetupScreen({
   const askCamera = cameraIsOff(camera)
   const askKey = keyMissing(keyStatus)
   // Focused as it opens (KV-20): Take a reading can lead here, and the button
-  // pressed is gone with the dashboard (review of #196).
+  // pressed is gone with the dashboard (review of #196). The heading, not the
+  // first control: a screen reader reads what is missing before the button
+  // that fixes it, and the first control is one Tab away. So nothing here takes
+  // `autoFocus`, which would race the heading for it.
   const heading = useFocusWhenShown<HTMLHeadingElement>()
 
   const checkAgain = async (): Promise<void> => {
@@ -137,7 +140,6 @@ export default function SetupScreen({
           <div className="mt-4 flex flex-wrap gap-3">
             <button
               type="button"
-              autoFocus
               disabled={busy}
               onClick={() =>
                 openLink(
@@ -182,7 +184,7 @@ export default function SetupScreen({
               >
                 Get a free key
               </button>
-              <KeyField label="Key" autoFocus={!askCamera} onKept={onKeyKept} />
+              <KeyField label="Key" onKept={onKeyKept} />
             </>
           )}
         </section>

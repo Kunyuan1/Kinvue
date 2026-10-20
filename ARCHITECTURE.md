@@ -1444,7 +1444,12 @@ contrast, focus and what is read aloud decide whether the check-in happens at al
   the setup screen's heading when *Take a reading* leads there instead of to the camera;
   and the dashboard's heading on the way back from any of them (review of #196) — each
   time because the button pressed to get there is gone, and focus left on nothing starts
-  a screen reader from the top. Nothing moves focus while the camera runs.
+  a screen reader from the top. Nothing moves focus while the camera runs. The heading,
+  not the screen's first control: the setup screen's camera button and key field took
+  `autoFocus` (KV-19) and raced its heading for focus, which one won depending on timing.
+  They no longer do, so what is missing is read before the button that fixes it, one Tab
+  away. A screen's heading is focused in a layout effect, in the commit that draws it,
+  not a moment after, when focus was briefly on whatever was left.
 - **Where focus is, seen.** A control's ring is solid, in `--color-focus`, on
   `:focus-visible` only. A heading that takes focus is a place to read from, not a
   control, so its marker is dashed and set further out — but it has one: drawing none

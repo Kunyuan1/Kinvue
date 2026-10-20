@@ -1109,6 +1109,25 @@ describe('the cared-for person’s path through the dashboard (KV-20)', () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(heading()))
   })
 
+  it('opens the setup screen at its heading, not its first control, whatever it asks for', async () => {
+    listSessions.mockResolvedValue(sessions())
+    // The camera button and the key field each took autoFocus, and raced the
+    // heading for it: which won depended on when the test looked.
+    const asks: [CameraAccess, KeyStatus][] = [
+      ['off-for-apps', 'saved'],
+      ['allowed', 'none'],
+      ['off-for-apps', 'none'],
+    ]
+    for (const [access, key] of asks) {
+      cameraAccess.mockResolvedValue(access)
+      apiKeyStatus.mockResolvedValue(key)
+      render(<App />)
+      const setup = await screen.findByRole('heading', { name: 'Before the first reading' })
+      expect(document.activeElement).toBe(setup)
+      cleanup()
+    }
+  })
+
   it('says aloud the notice it returns them to, from a region there before it (review of #196)', async () => {
     drawControl.captureThrows = true
     Object.assign(window.kinvue, { capture: vi.fn(() => new Promise(() => undefined)) })
