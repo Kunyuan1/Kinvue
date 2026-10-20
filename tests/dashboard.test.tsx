@@ -1129,7 +1129,42 @@ describe('the cared-for person’s path through the dashboard (KV-20)', () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(setup))
 
     fireEvent.click(screen.getByRole('button', { name: 'Go to the check-ins' }))
-    await vi.waitFor(() => expect(document.activeElement).toBe(heading()))
+    expect(document.activeElement).toBe(heading())
+  })
+
+  it('puts the key field one Tab from the heading when only a key is missing (review of #202)', async () => {
+    listSessions.mockResolvedValue(sessions())
+    apiKeyStatus.mockResolvedValue('none')
+    render(<App />)
+    await screen.findByRole('heading', { name: 'Before the first reading' })
+    // Tab order is document order here: nothing on the screen sets tabIndex above 0.
+    const first = document.querySelector('main')?.querySelector('input, button, a[href]')
+    expect(first).toBe(screen.getByLabelText('Key'))
+  })
+
+  // The camera button and the key field each took autoFocus, and raced the
+  // heading for it: which won depended on when the test looked. Each case its
+  // own test, so one's calls still in flight settle before the next renders
+  // (review of #202), and every key status that opens the screen, `locked`
+  // drawing another control from `none` and `lost`.
+  it.each<[CameraAccess, KeyStatus]>([
+    ['off-for-apps', 'saved'],
+    ['allowed', 'none'],
+    ['allowed', 'lost'],
+    ['allowed', 'locked'],
+    ['off-for-apps', 'none'],
+  ])('opens the setup screen at its heading and nothing before it: camera %s, key %s', async (access, key) => {
+    listSessions.mockResolvedValue(sessions())
+    cameraAccess.mockResolvedValue(access)
+    apiKeyStatus.mockResolvedValue(key)
+    // Every focus, not only where it ends: the heading's layout effect runs
+    // after a control's autoFocus and wins either way, so where focus ends
+    // could not tell that a control was focused first (review of #202).
+    const focused = vi.spyOn(HTMLElement.prototype, 'focus')
+    render(<App />)
+    const setup = await screen.findByRole('heading', { name: 'Before the first reading' })
+    expect(document.activeElement).toBe(setup)
+    expect(focused.mock.contexts).toEqual([setup])
   })
 
   it('says aloud the notice it returns them to, from a region there before it (review of #196)', async () => {

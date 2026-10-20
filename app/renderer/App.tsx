@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
 import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
 import { hasScorableVitals, learningStatus, presentAll, usualReachStatus } from '@core/scoring'
@@ -290,7 +290,9 @@ function Dashboard(): React.JSX.Element {
   // focus goes to its heading (KV-20): the button pressed to leave — Stop, Go
   // back, Finish, Go to the check-ins — is gone, and focus left on nothing
   // starts a screen reader from the top. Not when a reading is waiting: its
-  // card takes focus itself.
+  // card takes focus itself. A layout effect, as `useFocusWhenShown` is, so
+  // focus moves in the commit that draws the dashboard rather than resting on
+  // the page a moment first (review of #202).
   //
   // The setup screen counts because Take a reading can open it, when the
   // camera is off or the key is missing (review of #196); it is also where a
@@ -303,7 +305,7 @@ function Dashboard(): React.JSX.Element {
   const away = capturing || answering !== null || showingSetup
   const wasAway = useRef(away)
   const dashboardHeading = useRef<HTMLHeadingElement>(null)
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (wasAway.current && !away && reading === null) dashboardHeading.current?.focus()
     wasAway.current = away
   }, [away, reading])
