@@ -241,7 +241,6 @@ export default function SetupScreen({
           </p>
           <NameField
             label="Name"
-            autoFocus={!askCamera && !askKey}
             save={(name) =>
               unnamed !== null
                 ? window.kinvue.renamePerson(unnamed.id, name)

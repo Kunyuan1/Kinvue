@@ -1124,9 +1124,7 @@ describe('the cared-for person’s path through the dashboard (KV-20)', () => {
     fireEvent.click(take)
 
     const setup = await screen.findByRole('heading', { name: SETUP_HEADING })
-    // Waited for: the heading is drawn a moment before its focus effect runs,
-    // and asked at once, alone, the test read focus in between (review of #200).
-    await vi.waitFor(() => expect(document.activeElement).toBe(setup))
+    expect(document.activeElement).toBe(setup)
 
     fireEvent.click(screen.getByRole('button', { name: 'Go to the check-ins' }))
     expect(document.activeElement).toBe(heading())
@@ -1136,7 +1134,7 @@ describe('the cared-for person’s path through the dashboard (KV-20)', () => {
     listSessions.mockResolvedValue(sessions())
     apiKeyStatus.mockResolvedValue('none')
     render(<App />)
-    await screen.findByRole('heading', { name: 'Before the first reading' })
+    await screen.findByRole('heading', { name: SETUP_HEADING })
     // Tab order is document order here: nothing on the screen sets tabIndex above 0.
     const first = document.querySelector('main')?.querySelector('input, button, a[href]')
     expect(first).toBe(screen.getByLabelText('Key'))
@@ -1162,7 +1160,19 @@ describe('the cared-for person’s path through the dashboard (KV-20)', () => {
     // could not tell that a control was focused first (review of #202).
     const focused = vi.spyOn(HTMLElement.prototype, 'focus')
     render(<App />)
-    const setup = await screen.findByRole('heading', { name: 'Before the first reading' })
+    const setup = await screen.findByRole('heading', { name: SETUP_HEADING })
+    expect(document.activeElement).toBe(setup)
+    expect(focused.mock.contexts).toEqual([setup])
+  })
+
+  it('opens the setup screen at its heading and nothing before it when only a name is needed (KV-18)', async () => {
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listSessions.mockResolvedValue(sessions())
+    // The name field took autoFocus where it was all the screen asked for.
+    const focused = vi.spyOn(HTMLElement.prototype, 'focus')
+    render(<App />)
+    const setup = await screen.findByRole('heading', { name: SETUP_HEADING })
+    expect(screen.getByLabelText('Name')).toBeTruthy()
     expect(document.activeElement).toBe(setup)
     expect(focused.mock.contexts).toEqual([setup])
   })

@@ -19,14 +19,12 @@ export default function NameField({
   label,
   save,
   onNamed,
-  autoFocus = false,
 }: {
   label: string
   /** Asks main to keep the name: adding someone, or naming someone already here. */
   save: (name: string) => Promise<NamedResult>
   /** Once a name is kept: the person as now named. */
   onNamed: (person: PersonShown) => void
-  autoFocus?: boolean
 }) {
   const id = useId()
   const [typed, setTyped] = useState('')
@@ -71,7 +69,6 @@ export default function NameField({
           id={`${id}-name`}
           type="text"
           autoComplete="off"
-          autoFocus={autoFocus}
           value={typed}
           onChange={(e) => setTyped(e.target.value)}
           aria-describedby={`${id}-said`}
