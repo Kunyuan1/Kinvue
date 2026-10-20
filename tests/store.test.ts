@@ -823,16 +823,23 @@ describe('exporting, restoring and deleting (KV-21)', () => {
 })
 
 describe('a version-1 history whose upgrade cannot be written (KV-18, review of #200)', () => {
-  it('is still read, with the same keys every time, and the upgrade saved by the next write that can be', async () => {
+  it('is still read, with the same keys every time, and the upgrade saved by the next read that can', async () => {
     const { path } = await storeIn()
     const v1 = { version: 1, sessions: [session({ id: 'one' })] }
     await writeFile(path, JSON.stringify(v1), 'utf8')
     const store = createJsonSessionStore(path)
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined)
 
-    // The upgrade's write fails — a backup agent holding the file, say.
+    // The upgrade's write fails — a backup agent holding the file, say — and
+    // fails again on the next read: said once, not on every read (second
+    // review of #200).
     renameControl.failNext = true
     const first = await store.people()
     expect(first.map((p) => [p.id, p.name])).toEqual([['test-person', null]])
+    renameControl.failNext = true
+    expect(await store.people()).toEqual(first)
+    expect(logged).toHaveBeenCalledTimes(1)
+    logged.mockRestore()
     // Nothing saved: the file is the version-1 history it was.
     expect(JSON.parse(await readFile(path, 'utf8'))).toEqual(v1)
 

@@ -259,9 +259,18 @@ function Dashboard(): React.JSX.Element {
   // closure was what let a reload started before a switch land after it
   // (review of #200).
   const wantDemo = useRef(false)
+  // The choice the screen shows now: what `wantDemo` goes back to when the
+  // reload asked for by a switch fails, so the switch pressed next is not
+  // honoured by some later reload, a deletion's say (second review of #200).
+  const wantShown = useRef(false)
   // Whose check-ins `sessions` are: set with them, by the same reload, so the
   // heading, the usual and the trend are always about the records shown.
   const [viewedId, setViewedId] = useState<string | null>(null)
+  // Whether the one who takes readings has taken any, as last seen: undefined
+  // until a reload has listed theirs. Kept apart from `sessions`, which may be
+  // the demo's, or not yet loaded, while the setup screen is up (second review
+  // of #200).
+  const [readerHasCheckIns, setReaderHasCheckIns] = useState<boolean | undefined>(undefined)
   // The one person who takes readings: the first on the list. Asking who before
   // each reading, once there can be more than one, is #18's second part.
   const reader: PersonShown | undefined = people?.people[0]
@@ -303,28 +312,42 @@ function Dashboard(): React.JSX.Element {
 
   const refresh = useCallback(async (): Promise<void> => {
     const mine = ++loads.current
+    const latest = (): boolean => mine === loads.current
+    const wanted = wantDemo.current
     let now: PeopleNow
+    let id: string | null
+    let listed: SessionRecord[]
     try {
       now = await window.kinvue.listPeople()
+      // Set at once, before the check-ins are asked for: a list that then fails
+      // to load still leaves the screen knowing who is here, so it is drawn with
+      // the error rather than waiting. Who is here is the same answer whichever
+      // reload fetched it.
+      if (latest()) setPeople(now)
+      id = viewedOf(now, wanted)
+      listed = id === null ? [] : await window.kinvue.listSessions(id)
     } catch (e) {
+      // Only the latest reload says what went wrong: a failure of one a later
+      // reload has answered since would stand over the screen it drew, and
+      // could offer *Start a new history* for a file that reads (second review
+      // of #200).
+      if (!latest()) return
       // Known not to be known, so the screen is drawn with the error, rather
       // than waiting on a list that is not coming.
-      if (mine === loads.current) setPeople((was) => was ?? null)
+      setPeople((was) => was ?? null)
+      wantDemo.current = wantShown.current
       throw e
     }
-    // Set at once, before the check-ins are asked for: a list that then fails
-    // to load still leaves the screen knowing who is here, so it is drawn with
-    // the error rather than waiting. Who is here is the same answer whichever
-    // reload fetched it.
-    if (mine === loads.current) setPeople(now)
-    const id = viewedOf(now, wantDemo.current)
-    const listed = id === null ? [] : await window.kinvue.listSessions(id)
     // A later reload began while this one waited — a switch pressed, a seed —
     // and its answer is the one to show. Landing after it, this one put a real
     // person's check-ins under the demo's heading (review of #200).
-    if (mine !== loads.current) return
+    if (!latest()) return
+    wantShown.current = wanted
     setViewedId(id)
     setSessions(listed)
+    const first = now.people[0]
+    if (first === undefined) setReaderHasCheckIns(false)
+    else if (id === first.id) setReaderHasCheckIns(listed.length > 0)
     // The file just read may not be the one the protection line described — a
     // new history started, a restore written (review of #187) — so it is asked
     // again here. Not worth a screen: the line is all it feeds.
@@ -754,11 +777,9 @@ function Dashboard(): React.JSX.Element {
         keyStatus={keyStatus}
         nameNeeded={nameNeeded}
         unnamed={reader?.name === null ? reader : null}
-        // Nobody here yet, or the one person here with nothing taken.
-        firstReading={
-          reader === undefined ||
-          (viewedId === reader.id && sessions !== null && sessions.length === 0)
-        }
+        // Nobody here yet, or the one person here with nothing taken. Not known
+        // yet is "next": "first" is never said over a history.
+        firstReading={reader === undefined || readerHasCheckIns === false}
         onCheckAgain={askCamera}
         onKeyKept={setKeyStatus}
         onNamed={() => {

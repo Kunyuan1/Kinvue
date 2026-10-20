@@ -404,6 +404,13 @@ function registerIpc(
     if (id === null) throw new Error(`${channel} needs a person id.`);
     return id;
   };
+  // A restore is into a real person's history, never the demo's (second review
+  // of #200): the screens do not offer it, and main does not take their word.
+  const restoreFor = (channel: string, personId: unknown): string => {
+    const id = personFor(channel, personId);
+    if (id === DEMO_PERSON_ID) throw new Error(`${channel}: nothing is restored into the demo.`);
+    return id;
+  };
   // A passphrase is checked here as well as on screen: it is the whole defence
   // of a protected export (KV-175), so main does not take the renderer's word.
   const passphraseFor = (channel: string, passphrase: unknown): string => {
@@ -512,7 +519,7 @@ function registerIpc(
   handle(
     "history:restore",
     async (event, personId: unknown): Promise<RestoreStep | null> => {
-      const id = personFor("history:restore", personId);
+      const id = restoreFor("history:restore", personId);
       const options = {
         title: "Restore check-in history",
         properties: ["openFile" as const],
@@ -545,7 +552,7 @@ function registerIpc(
   handle(
     "history:restoreProtected",
     (_e, personId: unknown, passphrase: unknown): Promise<RestoreResult> => {
-      const id = personFor("history:restoreProtected", personId);
+      const id = restoreFor("history:restoreProtected", personId);
       if (typeof passphrase !== "string") {
         throw new Error("history:restoreProtected needs a passphrase.");
       }
@@ -589,14 +596,9 @@ function registerIpc(
     const name = nameFor("people:add", typed);
     // One person until #18's second part, which asks who takes each reading:
     // the screens show the first on the list, so a second would be added and
-    // never seen. Refused out loud instead (review of #200). Remove with part two.
-    if ((await store.people()).length > 0) {
-      throw new Error(
-        "people:add: this version shows one person, so a second would not be seen. " +
-          "Naming the person already here is people:rename.",
-      );
-    }
-    return namedResult(await store.addPerson(name));
+    // never seen. Refused out loud instead (review of #200), by the store, in
+    // the same turn as the write (second review of #200). Remove with part two.
+    return namedResult(await store.addPerson(name, { onlyIfNobody: true }));
   });
   handle(
     "people:rename",

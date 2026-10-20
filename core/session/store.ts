@@ -20,6 +20,7 @@ import {
   checkPerson,
   comparable,
   DEMO_PERSON_ID,
+  holdsAsName,
   ownerOf,
   withPeopleFor,
   type NameProblem,
@@ -66,8 +67,12 @@ export interface SessionStore {
    * may be sealed, so one pass rather than one for each.
    */
   roster(): Promise<{ people: Person[]; demo: boolean }>
-  /** Adds someone under `name`, held to `checkName`, in one write (KV-18). */
-  addPerson(name: string): Promise<NameResult>
+  /**
+   * Adds someone under `name`, held to `checkName`, in one write (KV-18). With
+   * `onlyIfNobody`, throws instead when someone is on the list already, checked
+   * in the same turn as the write: one person until #18's second part.
+   */
+  addPerson(name: string, options?: { onlyIfNobody?: boolean }): Promise<NameResult>
   /** Names or renames `personId`, held to `checkName`. Changes no check-in. */
   rename(personId: string, name: string): Promise<NameResult>
   /**
@@ -609,20 +614,23 @@ async function read(path: string, cipher: StoreCipher): Promise<FileShape> {
     throw new UnrecognisedRecordError(path, null, 0, 'it is not a list', 'people')
   }
   const ids = new Set<string>()
-  // And one name once, as it is written (review of #200): two people the
-  // screens cannot tell apart are the failure the name rule exists to prevent.
+  // And one name once (review of #200): two people the screens cannot tell
+  // apart are the failure the name rule exists to prevent. A name that does not
+  // hold, or that an earlier person has, is read as none and asked for again —
+  // never the whole file refused for it (second review of #200). The next write
+  // keeps it as none: the name was already one this build could not show.
   const names = new Set<string>()
   for (const [i, person] of people.entries()) {
-    const read = person as Person
-    const why =
-      checkPerson(person) ??
-      (ids.has(read.id) ? 'its id is used twice' : null) ??
-      (read.name !== null && names.has(comparable(read.name)) ? 'its name is used twice' : null)
+    const why = checkPerson(person) ?? (ids.has((person as Person).id) ? 'its id is used twice' : null)
     if (why !== null) {
       throw new UnrecognisedRecordError(path, i + 1, people.length, why, 'people')
     }
+    const read = person as Person
     ids.add(read.id)
-    if (read.name !== null) names.add(comparable(read.name))
+    if (read.name === null) continue
+    const folded = comparable(read.name)
+    if (holdsAsName(read.name) && !names.has(folded)) names.add(folded)
+    else read.name = null
   }
   return parsed
 }
@@ -804,6 +812,7 @@ export function createJsonSessionStore(
    * keys, and the first write that does land saves those.
    */
   const madeByUpgrade = new Map<string, Person>()
+  let upgradeFailureLogged = false
 
   /**
    * The history as it is now, a version-1 file upgraded and written first
@@ -815,8 +824,10 @@ export function createJsonSessionStore(
    * have hidden an intact history behind an error no button answers, since
    * *Start a new history* rightly declines a file it can read. So the upgrade
    * is served from memory, with this process's keys, and saved by the next
-   * write that can be — `append`, a name, a deletion, the seal at start, which
-   * all build on this. A write the person asked for fails as it always has.
+   * read or write that can be: every read tries the upgrade's write again, and
+   * every write — `append`, a name, a deletion, the seal at start — builds on
+   * this. A write the person asked for fails as it always has. The failure is
+   * logged once, so one that persists is still seen (second review of #200).
    */
   const current = async (): Promise<FileShape> => {
     const data = await read(path, cipher)
@@ -832,9 +843,13 @@ export function createJsonSessionStore(
     const upgraded: FileShape = { ...data, version: FILE_VERSION, people }
     try {
       await write(path, upgraded, cipher)
-    } catch {
+    } catch (err) {
       // Served from memory instead; see above. Nothing is lost: the file on
       // disk is the version-1 history it was, and reads as one next time.
+      if (!upgradeFailureLogged) {
+        upgradeFailureLogged = true
+        console.error(`The upgrade of ${path} could not be written; it is kept in memory.`, err)
+      }
     }
     return upgraded
   }
@@ -910,9 +925,15 @@ export function createJsonSessionStore(
       const { people, sessions } = await reading()
       return { people, demo: sessions.some((s) => ownerOf(s) === DEMO_PERSON_ID) }
     },
-    addPerson(name) {
+    addPerson(name, { onlyIfNobody = false } = {}) {
       return exclusive(async () => {
         const data = await current()
+        if (onlyIfNobody && data.people.length > 0) {
+          throw new Error(
+            'This version shows one person, so a second would not be seen. The person ' +
+              'already here is named by renaming them.',
+          )
+        }
         const checked = named(data, name, null)
         if (!checked.ok) return checked
         const person: Person = {

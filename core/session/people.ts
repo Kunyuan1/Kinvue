@@ -63,40 +63,34 @@ export type NameProblem = 'empty' | 'too-long' | 'invisible' | 'taken'
  * byte-order mark, the bidirectional marks and controls, a soft hyphen — any of
  * which would make two names that read the same compare as different (KV-18).
  *
- * Listed by code point, not as every format character (`\p{Cf}`): that took in
- * the zero-width non-joiner and joiner, which are how some names are *spelled* —
- * Persian "Alireza" has a non-joiner between its parts, and several Indic
- * scripts carry the joiner inside a letter — so a caregiver typing the name
- * correctly could not name the person at all (review of #200). Those two do
- * change how a name draws, so names that differ by one do not read the same.
- * Numbers, not escapes, so no tool can write them back as the characters.
+ * Every format character (`\p{Cf}`) but two: the zero-width non-joiner and
+ * joiner, which are how some names are *spelled* — Persian "Alireza" has a
+ * non-joiner between its parts, and several Indic scripts carry the joiner
+ * inside a letter — so a caregiver typing the name correctly could not name
+ * the person at all (review of #200). Not a list of the others by code point:
+ * one missed the tag characters, which draw nothing and were refused before
+ * (second review of #200). Between letters that do not join, a joiner draws
+ * nothing either, so `comparable` leaves them out, and one at either end of a
+ * name joins nothing and is refused. Numbers, not escapes, so no tool can write
+ * them back as the characters.
  */
 const CONTROLS = /[\p{Cc}\p{Zl}\p{Zp}]/u
-const DRAW_NOTHING = new Set([
-  0x00ad, // soft hyphen
-  0x061c, // Arabic letter mark
-  0x180e, // Mongolian vowel separator
-  0x200b, // zero-width space
-  0x200e, // left-to-right mark
-  0x200f, // right-to-left mark
-  0x202a, // bidirectional embeddings, overrides and their end
-  0x202b,
-  0x202c,
-  0x202d,
-  0x202e,
-  0x2060, // word joiner, and the invisible operators
-  0x2061,
-  0x2062,
-  0x2063,
-  0x2064,
-  0x2066, // bidirectional isolates and their end
-  0x2067,
-  0x2068,
-  0x2069,
-  0xfeff, // byte-order mark, which draws nothing inside a name
+const FORMAT = /\p{Cf}/u
+const JOINERS = new Set([
+  0x200c, // zero-width non-joiner
+  0x200d, // zero-width joiner
 ])
-const holdsInvisible = (name: string): boolean =>
-  CONTROLS.test(name) || [...name].some((c) => DRAW_NOTHING.has(c.codePointAt(0) ?? 0))
+const isJoiner = (c: string | undefined): boolean =>
+  c !== undefined && JOINERS.has(c.codePointAt(0) ?? 0)
+const holdsInvisible = (name: string): boolean => {
+  const chars = [...name]
+  return (
+    CONTROLS.test(name) ||
+    chars.some((c) => FORMAT.test(c) && !isJoiner(c)) ||
+    isJoiner(chars[0]) ||
+    isJoiner(chars.at(-1))
+  )
+}
 
 /** A name as it is stored: trimmed, in Unicode NFC, so "José" is one name however it was typed. */
 export const normalName = (typed: string): string => typed.normalize('NFC').trim()
@@ -113,9 +107,15 @@ const charactersIn = (text: string): number => [...GRAPHEMES.segment(text)].leng
  * "STRASSE" to "strasse", two names that read the same (review of #200), while
  * upper-casing first makes the ß "SS". Still not every rule of Unicode's full
  * folding — a few scripts' special cases differ — and those are the limit.
+ *
+ * Without the joiners: "Ann" with one between the n's draws as "Ann", so the
+ * two are one name (second review of #200). In a script that joins, two names
+ * apart only by a joiner are one name spelled two ways.
  */
 export const comparable = (name: string): string =>
-  normalName(name).toLocaleUpperCase('und').toLocaleLowerCase('und')
+  [...normalName(name).toLocaleUpperCase('und').toLocaleLowerCase('und')]
+    .filter((c) => !isJoiner(c))
+    .join('')
 
 /**
  * Whether `typed` may name a person beside `others`, and if so the name to
@@ -166,17 +166,27 @@ export function checkPerson(value: unknown): string | null {
   // reading as it, and a real check-in would be stored among invented days.
   if (id === DEMO_PERSON_ID) return 'it is the demo, which is never a person on the list'
   if (typeof key !== 'string' || !UUID.test(key)) return 'its key is not one'
-  // Held to the rule a name is written under, read back as it is: a name that
-  // could not be typed in could not be shown either (review of #200).
-  if (name !== null) {
-    if (typeof name !== 'string') return 'its name is not one'
-    const held = checkName(name, [])
-    if (!held.ok || held.name !== name) return 'its name is not one'
-  }
+  // Only that it is text, or null. Whether it holds as a name is `holdsAsName`,
+  // and a name that does not is asked for again, not a reason to refuse the
+  // history: the id says whose the check-ins are, never the name.
+  if (name !== null && typeof name !== 'string') return 'its name is not one'
   if (typeof addedAt !== 'string' || Number.isNaN(Date.parse(addedAt))) {
     return 'when it was added is not a time'
   }
   return null
+}
+
+/**
+ * Whether `name`, read from the file, holds under the rule a name is written
+ * under, as it is stored (review of #200). One that does not — a hand edit, or
+ * a rule that moved between builds: a script's grapheme counting, a case
+ * mapping, a character newly refused — is read as no name, so the setup screen
+ * asks for one (second review of #200). Refusing the whole file for it stranded
+ * every check-in behind an error no button answers.
+ */
+export function holdsAsName(name: string): boolean {
+  const held = checkName(name, [])
+  return held.ok && held.name === name
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i

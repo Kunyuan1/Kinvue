@@ -2027,6 +2027,55 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
     expect(screen.queryByText(/demo day/i)).toBeNull()
   })
 
+  it('says nothing of a failed reload a later one has answered since (second review of #200)', async () => {
+    listPeople.mockResolvedValue({
+      people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+      demo: true,
+    })
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    await screen.findByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })
+
+    // The demo's check-ins fail, but only once the person's are shown again.
+    let demoFails: (e: Error) => void = () => undefined
+    listSessions.mockImplementation((id: string) =>
+      id === THE_DEMO
+        ? new Promise((_, reject) => (demoFails = reject))
+        : Promise.resolve(days()),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'The demo' }))
+    fireEvent.click(screen.getByRole('button', { name: DEMO_PERSON_NAME }))
+    await vi.waitFor(() => expect(listSessions).toHaveBeenLastCalledWith(DEMO_PERSON_ID))
+    await act(async () =>
+      demoFails(fromMain(new UnreadableStoreError(PATH, 'it is not JSON'), 'sessions:list')),
+    )
+
+    // No error over the screen the later reload drew, and no way out offered
+    // for a file that reads.
+    expect(screen.getByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Start a new history' })).toBeNull()
+  })
+
+  it('keeps saying the first reading while the person just named is loading (second review of #200)', async () => {
+    listPeople.mockResolvedValue({ people: [], demo: false })
+    listSessions.mockResolvedValue([])
+    cameraAccess.mockResolvedValue('off-for-apps')
+    const addPerson = vi.fn(() => Promise.resolve(named('p-1', 'Ann')))
+    Object.assign(window.kinvue, { addPerson, renamePerson: vi.fn() })
+    render(<App />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Before the first reading' })).toBeTruthy()
+
+    // Named, the list has them at once; their check-ins have not answered yet.
+    listPeople.mockResolvedValue({ people: [{ id: 'p-1', name: 'Ann' }], demo: false })
+    listSessions.mockImplementation(() => new Promise<never>(() => undefined))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ann' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
+    await vi.waitFor(() => expect(listSessions).toHaveBeenLastCalledWith('p-1'))
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Before the first reading' })).toBeTruthy()
+  })
+
   it('offers no restore into the demo, and says where one goes (review of #200)', async () => {
     listPeople.mockResolvedValue({
       people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],

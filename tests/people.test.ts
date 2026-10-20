@@ -6,6 +6,7 @@ import {
   checkName,
   checkPerson,
   DEMO_PERSON_ID,
+  holdsAsName,
   MAX_NAME_LENGTH,
   ownerOf,
   withPeopleFor,
@@ -53,6 +54,18 @@ describe('a name, held to how it reads (KV-18)', () => {
     ['a byte-order mark inside it', 'An\uFEFFn'],
     ['a right-to-left mark', 'Ann\u200F'],
     ['a control character', 'An\u0007n'],
+    ...(
+      [
+        ['a tag character', 0xe0041],
+        ['a cancel tag', 0xe007f],
+        ['a right-to-left override', 0x202e],
+        ['a left-to-right isolate', 0x2066],
+        ['a soft hyphen', 0x00ad],
+        ['a paragraph separator', 0x2029],
+        ['an inhibit-swapping control', 0x206a],
+        ['an interlinear annotation anchor', 0xfff9],
+      ] as const
+    ).map(([what, cp]) => [what, `An${String.fromCodePoint(cp)}n`]),
     ['a line separator', 'Ann\u2028Bill'],
   ])('refuses %s, which reads as nothing', (_, typed) => {
     expect(checkName(typed, [])).toEqual({ ok: false, problem: 'invisible' })
@@ -65,6 +78,17 @@ describe('a name, held to how it reads (KV-18)', () => {
     // Devanagari, with a zero-width joiner asking for a half form inside a letter.
     const half = String.fromCodePoint(0x0915, 0x094d, 0x200d, 0x0937)
     expect(checkName(half, [])).toEqual({ ok: true, name: half })
+  })
+
+  it('takes a joiner that draws nothing as no difference, and refuses one at an end (second review of #200)', () => {
+    const zwj = String.fromCodePoint(0x200d)
+    const zwnj = String.fromCodePoint(0x200c)
+    // Between Latin letters a joiner draws nothing: "Ann" twice on two buttons.
+    expect(checkName(`An${zwj}n`, [person()])).toEqual({ ok: false, problem: 'taken' })
+    expect(checkName(`An${zwnj}n`, [person()])).toEqual({ ok: false, problem: 'taken' })
+    // At either end it joins nothing.
+    expect(checkName(`Ann${zwnj}`, [])).toEqual({ ok: false, problem: 'invisible' })
+    expect(checkName(`${zwj}Ann`, [])).toEqual({ ok: false, problem: 'invisible' })
   })
 
   it(`allows ${String(MAX_NAME_LENGTH)} characters as a person counts them, not one more`, () => {
@@ -109,9 +133,9 @@ describe('a person, checked as it is read', () => {
   it.each([
     ['not an object', 'Ann', 'it is not a person'],
     ['an id with space around it', person({ id: ' p-1' }), 'its id is not one'],
+    // Only that a name is text: whether it holds is `holdsAsName` (second review of #200).
+    ['a name that is not text', { ...person(), name: 5 }, 'its name is not one'],
     ['a key that is not a UUID', person({ key: 'k' }), 'its key is not one'],
-    ['an empty name', person({ name: '' }), 'its name is not one'],
-    ['a name not stored trimmed', person({ name: 'Ann ' }), 'its name is not one'],
     ['a time that is not one', person({ addedAt: 'yesterday' }), 'when it was added is not a time'],
     // Held to what writing one would allow (review of #200).
     [
@@ -119,10 +143,24 @@ describe('a person, checked as it is read', () => {
       person({ id: DEMO_PERSON_ID }),
       'it is the demo, which is never a person on the list',
     ],
-    ['a name too long to be typed in', person({ name: 'a'.repeat(5000) }), 'its name is not one'],
-    ['a name holding a zero-width space', person({ name: 'An\u200Bn' }), 'its name is not one'],
   ])('refuses %s', (_, value, why) => {
     expect(checkPerson(value)).toBe(why)
+  })
+})
+
+describe('a name, read back from the file (second review of #200)', () => {
+  it('holds when the rule would write it as it is stored', () => {
+    expect(holdsAsName('Ann')).toBe(true)
+  })
+
+  it.each([
+    ['empty', ''],
+    ['not stored trimmed', 'Ann '],
+    ['too long to be typed in', 'a'.repeat(MAX_NAME_LENGTH + 1)],
+    ['holding a zero-width space', `An${String.fromCodePoint(0x200b)}n`],
+    ['not in NFC', `Jose${String.fromCodePoint(0x0301)}`],
+  ])('does not hold %s', (_, name) => {
+    expect(holdsAsName(name)).toBe(false)
   })
 })
 
@@ -256,16 +294,50 @@ describe('the people list in the history file (KV-18)', () => {
       [undefined, /list of people .* cannot be read \(it is not a list\)/],
       [[person(), { ...person(), key: 'k' }], /Person 2 of 2 .* \(its key is not one\)/],
       [[person(), person({ name: 'Bill' })], /Person 2 of 2 .* \(its id is used twice\)/],
-      [
-        [person(), person({ id: 'p-2', name: 'ANN' })],
-        /Person 2 of 2 .* \(its name is used twice\)/,
-      ],
     ] as const) {
       await writeFile(path, JSON.stringify({ version: 2, sessions: [], people }), 'utf8')
       const thrown = await store.people().catch((e: unknown) => e)
       expect(thrown).toBeInstanceOf(UnrecognisedRecordError)
       expect(String(thrown)).toMatch(pattern)
     }
+  })
+
+  it('reads a name that does not hold, or is taken already, as none, refusing nothing (second review of #200)', async () => {
+    const path = await pathIn()
+    const people = [
+      person(),
+      person({ id: 'p-2', name: 'ANN' }),
+      person({ id: 'p-3', name: 'a'.repeat(MAX_NAME_LENGTH + 1) }),
+      person({ id: 'p-4', name: `An${String.fromCodePoint(0x200b)}n` }),
+      person({ id: 'p-5', name: '' }),
+      person({ id: 'p-6', name: 'Bill' }),
+    ]
+    const file = { version: 2, sessions: [{ ...session({ id: 'one' }), personId: 'p-1' }], people }
+    await writeFile(path, JSON.stringify(file), 'utf8')
+    const store = createJsonSessionStore(path, () => NOW)
+    expect((await store.people()).map((p) => [p.id, p.name])).toEqual([
+      ['p-1', 'Ann'],
+      ['p-2', null],
+      ['p-3', null],
+      ['p-4', null],
+      ['p-5', null],
+      ['p-6', 'Bill'],
+    ])
+    // The check-ins read as ever, and a read writes nothing.
+    expect((await store.list('p-1')).map((s) => s.id)).toEqual(['one'])
+    expect(await onDisk(path)).toEqual(file)
+  })
+
+  it('adds nobody beside someone when asked to add only the first', async () => {
+    const path = await pathIn()
+    const store = createJsonSessionStore(path, () => NOW)
+    const added = await store.addPerson('Ann', { onlyIfNobody: true })
+    expect(added.ok).toBe(true)
+    await expect(store.addPerson('Bill', { onlyIfNobody: true })).rejects.toThrow(/one person/)
+    expect((await store.people()).map((p) => p.name)).toEqual(['Ann'])
+    // Renaming the one here is still allowed.
+    if (!added.ok) throw new Error('not added')
+    expect((await store.rename(added.person.id, 'Bill')).ok).toBe(true)
   })
 
   it('adds someone under a name held to the rule, with ids and keys of their own', async () => {

@@ -1269,9 +1269,9 @@ one person, `demo-margaret`, whose name is the demo's even where the check-ins a
   build from before reads a version-2 file as newer and leaves it alone (KV-13). (Review
   of #199.) **When that write cannot be made** — a full disk, a read-only volume, a
   backup agent holding the file — the read still answers, from the upgrade in memory, with
-  keys kept for that run; the next write that can be made saves them. Failing the read
-  instead hid a whole, readable history behind an error no button answers (review of
-  #200).
+  keys kept for that run; every read tries the write again, and the first that lands
+  saves them. Failing the read instead hid a whole, readable history behind an error no
+  button answers (review of #200). The failure is logged once a run, not on every read.
 - **A name is how the screens tell people apart, so two cannot share one.** The buttons a
   person picks themselves from must not read the same, so the rule is about how a name
   *reads*, not its bytes (review of #199): stored trimmed and in Unicode NFC; refused if
@@ -1282,10 +1282,21 @@ one person, `demo-margaret`, whose name is the demo's even where the check-ins a
   zero-width space is refused. Renaming changes no check-in. **The joiners are not
   invisible here** (review of #200): Persian names are spelled with a zero-width
   non-joiner and several Indic scripts carry a joiner inside a letter, so refusing every
-  format character refused those names outright. **Folded, not only lowered:** upper-case
-  first, so "Straße" and "STRASSE" are one name; a few scripts' special cases in full
-  Unicode folding are the limit. A person read from the file is held to the same rule,
-  and the demo's id is never one (review of #200).
+  format character refused those names outright. Every other format character still is,
+  the tag characters among them; a joiner at either end of a name joins nothing and is
+  refused; and names are compared without their joiners, since between Latin letters a
+  joiner draws nothing (second review of #200). **Folded, not only lowered:** upper-case
+  first, so "Straße" and "STRASSE" are one name, and Turkish "Aydın" and "Aydin" are one
+  too, which on a button they nearly are; a few scripts' special cases in full Unicode
+  folding are the limit. The demo's id is never a person on the list (review of #200).
+- **A name read from the file that does not hold is read as none,** not a reason to
+  refuse the file (second review of #200). The rule can move between builds without
+  anyone touching the file — a newer ICU counting an emoji's characters differently, a
+  case mapping, a character newly refused — and refusing the whole history for it left
+  the caregiver with no readings, no export and no button. The id says whose check-ins
+  are whose, never the name, so a name that does not hold, or that an earlier person on
+  the list has, is read as null and the setup screen asks for it again. A malformed id,
+  key or time is still refused whole.
 - **"More than one person" means more than one who takes readings.** The demo person
   (below) is never one of them, so an install that has only ever seeded the demo beside
   one real person is a one-person install: nothing is asked before a reading, and sharing
@@ -1437,7 +1448,15 @@ key, and *Start a new history*'s sentence.
 - **The setup screen says *before the next reading* to a history,** and *the first* only
   where nothing has been taken. It is shown until someone is named, not once.
 - **A second person is refused until part two:** the screens show the first on the list,
-  so one added after would never be seen.
+  so one added after would never be seen. Refused by the store, in the same turn of its
+  queue as the write, so two at once cannot both find the list empty.
+- **Only the latest reload says it failed** (second review of #200): one a later reload
+  has answered since stays quiet, rather than standing an error, and perhaps *Start a new
+  history*, over the screen the later one drew. A switch whose reload fails falls back to
+  what is shown, so no later reload carries it out unasked.
+- **"The first reading" is said from the person's own check-ins as last seen,** never
+  from the demo's or from a list still loading; not yet known reads "the next".
+- **Main refuses a restore into the demo,** whatever the screens offer.
 
 ---
 
