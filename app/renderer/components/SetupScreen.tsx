@@ -95,9 +95,12 @@ export default function SetupScreen({
   const askKey = keyMissing(keyStatus)
   // Focused as it opens (KV-20): Take a reading can lead here, and the button
   // pressed is gone with the dashboard (review of #196). The heading, not the
-  // first control: a screen reader reads what is missing before the button
-  // that fixes it, and the first control is one Tab away. So nothing here takes
-  // `autoFocus`, which would race the heading for it.
+  // first control: a screen reader reads what is missing before the control
+  // that fixes it, one Tab away. So nothing here takes `autoFocus`. It no
+  // longer races the heading — the hook's layout effect runs after it and
+  // wins — but it would focus a control first, inside the same commit, and a
+  // screen reader can announce that before the heading (review of #202). A
+  // test watches every focus as the screen opens.
   const heading = useFocusWhenShown<HTMLHeadingElement>()
 
   const checkAgain = async (): Promise<void> => {
@@ -172,6 +175,10 @@ export default function SetupScreen({
           {keyStatus === 'locked' && <ForgetKey onForgot={onKeyKept} />}
           {keyStatus !== 'locked' && (
             <>
+              {/* The field first, then the way to a key: one Tab from the
+                  heading is where a copied key is pasted, not a button that
+                  leaves for the browser (review of #202). */}
+              <KeyField label="Key" onKept={onKeyKept} />
               <button
                 type="button"
                 onClick={() =>
@@ -184,7 +191,6 @@ export default function SetupScreen({
               >
                 Get a free key
               </button>
-              <KeyField label="Key" onKept={onKeyKept} />
             </>
           )}
         </section>
