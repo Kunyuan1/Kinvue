@@ -1458,6 +1458,33 @@ key, and *Start a new history*'s sentence.
   from the demo's or from a list still loading; not yet known reads "the next".
 - **Main refuses a restore into the demo,** whatever the screens offer.
 
+**Part two, built in three PRs.** First, more than one person (`WhoIsReading.tsx`,
+`App.tsx`):
+
+- **A second person can be added,** from the dashboard's *Add a person*, under the same
+  name rule. The refusal above is gone with the reason for it: the screens now show
+  whoever is chosen, and ask who takes each reading.
+- **Who is taking the reading?** opens from *Take a reading* when more than one person
+  takes readings, and never otherwise. One full-width 64px row per name, the size of an
+  answer (`PERSON_CHOICE`, shared with the questions so the two cannot drift); the
+  heading takes focus and nothing is focused before it; the demo is never on it. The
+  reading is filed under the name pressed, not the person the dashboard was showing,
+  and the dashboard moves to them so the card lands among their check-ins. *Try the
+  camera again* retakes as the same person, without asking again.
+- **Their name is on the capture and the questions** where more than one person takes
+  readings: "Reading for Ann" after the capture's heading, and ", for Ann" in each
+  question's place in the four, which the heading is described by, so it is read with
+  every question. With one person, neither screen changes.
+- **The switcher lists everyone, then the demo,** when there is more than one to choose
+  from. The choice is a person's id (or the demo's), read when a reload runs, so #200's
+  rule holds between two people as it did between a person and the demo: the latest
+  reload is shown, and a failed switch falls back to what is shown.
+- **The person shown can be renamed from the dashboard;** the demo never can.
+- **"The first reading"** on the setup screen is said when nobody here has taken one, as
+  far as has been seen; someone just added is known to have none at once.
+- **Not yet measured:** KV-20's 200% zoom check on the names screen (880px, six names).
+  The tests hold it to one column of full-width rows; the measurement itself is by hand.
+
 ---
 
 ## The cared-for person's path, sized for them (KV-20)

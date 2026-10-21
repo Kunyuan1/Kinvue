@@ -8,7 +8,13 @@ import {
 import type { SubmitFailure } from '@core/capture/failure'
 import type { CheckInAnswers } from '@core/session/types'
 import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
-import { PERSON_BUTTON, PERSON_NOTE, PERSON_PRIMARY, useFocusWhenShown } from './person'
+import {
+  PERSON_BUTTON,
+  PERSON_CHOICE,
+  PERSON_NOTE,
+  PERSON_PRIMARY,
+  useFocusWhenShown,
+} from './person'
 
 /**
  * The four questions, asked one at a time.
@@ -88,11 +94,18 @@ export default function QuestionFlow({
   onCancel,
   submitting,
   failure,
+  name = null,
 }: {
   onDone: (answers: CheckInAnswers) => void
   onCancel: () => void
   submitting: boolean
   failure: SubmitFailure | null
+  /**
+   * Whose answers these are, where more than one person takes readings
+   * (KV-18): said with each question, so a reading taken as the wrong person
+   * is seen while it can still be left. Null with one person: nothing changes.
+   */
+  name?: string | null
 }): React.JSX.Element {
   const [draft, setDraft] = useState<AnswerDraft>({})
   const [step, setStep] = useState(0)
@@ -113,7 +126,9 @@ export default function QuestionFlow({
   }
 
   const done = answeredCount(draft)
-  const position = `Question ${Math.min(step + 1, TOTAL)} of ${TOTAL}`
+  const counted = `Question ${Math.min(step + 1, TOTAL)} of ${TOTAL}`
+  // Read with each question's heading, which it describes.
+  const position = name === null ? counted : `${counted}, for ${name}`
 
   return (
     <section className="mx-auto max-w-xl">
@@ -335,7 +350,7 @@ function Choice({
       type="button"
       onClick={onClick}
       aria-pressed={chosen}
-      className={`flex min-h-16 w-full items-center justify-between rounded-xl border-2 bg-(--color-raised) px-5 py-3 text-left text-xl ${
+      className={`${PERSON_CHOICE} justify-between ${
         chosen
           ? 'border-(--color-ink) font-semibold'
           : 'border-(--color-control) hover:border-(--color-muted)'

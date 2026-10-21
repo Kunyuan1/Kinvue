@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import type { CaptureFailure } from '@core/capture/failure'
 import CaptureScreen, { COUNTDOWN_ANNOUNCE_DELAY_MS } from '@renderer/components/CaptureScreen'
 import QuestionFlow from '@renderer/components/QuestionFlow'
+import WhoIsReading from '@renderer/components/WhoIsReading'
 import { PERSON_PRIMARY } from '@renderer/components/person'
 import { expectPersonSized } from './person-sized'
 
@@ -359,5 +360,41 @@ describe('the capture, read without being moved (KV-20)', () => {
     cleanup()
     const failed = renderCapture('service-refused')
     expectPersonSized(failed.container)
+  })
+})
+
+describe('who is taking the reading, picked without a steady hand (KV-18)', () => {
+  afterEach(cleanup)
+
+  const people = [
+    { id: 'p-1', name: 'Ann' },
+    { id: 'p-2', name: 'Bill' },
+  ]
+
+  it('draws every name and line at the path’s sizes', () => {
+    const { container } = render(
+      <WhoIsReading people={people} onChoose={() => undefined} onCancel={() => undefined} />,
+    )
+    expectPersonSized(container)
+  })
+
+  it('puts focus on its heading, with the first name one Tab after it', () => {
+    render(<WhoIsReading people={people} onChoose={() => undefined} onCancel={() => undefined} />)
+    const heading = screen.getByRole('heading', { name: 'Who is taking the reading?' })
+    expect(document.activeElement).toBe(heading)
+    expect(document.querySelector('button')).toBe(screen.getByRole('button', { name: 'Ann' }))
+  })
+
+  it('stays one column however many names, so it grows down and never sideways', () => {
+    const six = ['Ann', 'Bill', 'Cora', 'Dev', 'Esi', 'Farid'].map((name, i) => ({
+      id: `p-${String(i)}`,
+      name,
+    }))
+    render(<WhoIsReading people={six} onChoose={() => undefined} onCancel={() => undefined} />)
+    const list = screen.getByRole('list')
+    expect(list.className).not.toMatch(/\b(flex|grid)\b/)
+    for (const name of six.map((p) => p.name)) {
+      expect(screen.getByRole('button', { name }).className).toMatch(/\bw-full\b/)
+    }
   })
 })

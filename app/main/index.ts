@@ -593,12 +593,9 @@ function registerIpc(
     return typed;
   };
   handle("people:add", async (_e, typed: unknown): Promise<NamedResult> => {
-    const name = nameFor("people:add", typed);
-    // One person until #18's second part, which asks who takes each reading:
-    // the screens show the first on the list, so a second would be added and
-    // never seen. Refused out loud instead (review of #200), by the store, in
-    // the same turn as the write (second review of #200). Remove with part two.
-    return namedResult(await store.addPerson(name, { onlyIfNobody: true }));
+    // As many as the household is (KV-18): who takes each reading is asked at
+    // the button, and the dashboard shows whoever is chosen at the top.
+    return namedResult(await store.addPerson(nameFor("people:add", typed)));
   });
   handle(
     "people:rename",

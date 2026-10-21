@@ -315,3 +315,38 @@ describe('end to end, from the thrown error to the sentence', () => {
     expect(document.body.textContent).not.toMatch(/SMARTSPECTRA_API_KEY/)
   })
 })
+
+describe('whose reading it is, on the capture and the questions (KV-18)', () => {
+  it('says who the capture is for, after its heading', () => {
+    render(<CaptureScreen failure={null} onCancel={noop} captureSeconds={30} name="Ann" />)
+    const said = screen.getByText('Reading for Ann')
+    const heading = screen.getByRole('heading', { name: 'Sit comfortably and look at the camera' })
+    // After it in reading order, so it is read next when the heading takes focus.
+    expect(heading.compareDocumentPosition(said) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('says it with each question, read with the question itself', () => {
+    render(
+      <QuestionFlow failure={null} onDone={noop} onCancel={noop} submitting={false} name="Ann" />,
+    )
+    expect(
+      screen.getByRole('heading', {
+        name: 'How are you feeling today?',
+        description: 'Question 1 of 4, for Ann',
+      }),
+    ).toBeTruthy()
+  })
+
+  it('names nobody where one person takes readings', () => {
+    render(<CaptureScreen failure={null} onCancel={noop} captureSeconds={30} />)
+    expect(screen.queryByText(/^Reading for/)).toBeNull()
+    cleanup()
+    render(<QuestionFlow failure={null} onDone={noop} onCancel={noop} submitting={false} />)
+    expect(
+      screen.getByRole('heading', {
+        name: 'How are you feeling today?',
+        description: 'Question 1 of 4',
+      }),
+    ).toBeTruthy()
+  })
+})
