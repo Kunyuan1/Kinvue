@@ -8,6 +8,7 @@ import {
   type Removal,
 } from '@core/session/lifecycle'
 import type { Protection } from '../../shared/protection'
+import { DEMO_PERSON_ID } from '@core/session/people'
 import ConfirmRemoval from './ConfirmRemoval'
 import ExportChoice from './ExportChoice'
 
@@ -76,6 +77,8 @@ export default function HistoryPanel({
   const [said, setSaid] = useState<string | null>(null)
   const [before, setBefore] = useState('')
   const [removing, setRemoving] = useState<Removal | null>(null)
+  // The demo's days are shown (KV-18): nothing of a real person's goes into them.
+  const demo = personId === DEMO_PERSON_ID
   const [busy, setBusy] = useState(false)
   const [choosing, setChoosing] = useState(false)
   // A protected export waiting in main for its passphrase (KV-175).
@@ -205,15 +208,25 @@ export default function HistoryPanel({
 
       <div className="mt-4">
         {/* Not while a protected export waits for its passphrase: a second
-            restore would drop the file main is holding (review of #187). */}
+            restore would drop the file main is holding (review of #187). Nor
+            into the demo (KV-18): an export is a real person's, and every one
+            would be refused as someone else's — about the person's own file,
+            read just after seeding, when the demo is what is shown (review of
+            #200). */}
         <button
           type="button"
-          disabled={busy || unlocking}
+          disabled={busy || unlocking || demo}
           onClick={() => void restore()}
           className={BUTTON}
         >
           Restore from an export&hellip;
         </button>
+        {demo && (
+          <p className="mt-2 text-(--color-muted)">
+            An export is restored into a person&rsquo;s history, not the demo&rsquo;s. Choose
+            them at the top first.
+          </p>
+        )}
         {unlocking && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <label htmlFor="restore-passphrase">Passphrase</label>

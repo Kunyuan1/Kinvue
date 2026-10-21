@@ -15,7 +15,23 @@ import type { SessionRecord } from '@core/session/types'
 import { scoreSession } from '@core/scoring'
 import { history, session } from './helpers'
 import { expectPersonSized } from './person-sized'
-import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
+import type { PeopleNow } from '../app/shared/people'
+import { DEMO_PERSON_ID as THE_DEMO } from '@core/session/people'
+
+/**
+ * The person these tests show: a history from before KV-18, under the id it
+ * always had, named. The demo is a person of its own now, under another id
+ * (KV-18), so the person the dashboard reads is no longer the demo's constant.
+ */
+const DEMO_PERSON_ID = 'demo-margaret'
+const DEMO_PERSON_NAME = 'Margaret'
+
+/**
+ * The setup screen's heading, first or next as it says which (review of #200).
+ * Most tests here are about what the screen asks, not that word; the one test
+ * that is pins it.
+ */
+const SETUP_HEADING = /^Before the (first|next) reading$/
 import { failureTag } from '@core/capture/failure'
 import type { CameraAccess } from '../app/shared/camera-access'
 import type { KeyStatus, SetKeyResult } from '../app/shared/api-key'
@@ -123,7 +139,7 @@ const PATH = String.raw`C:\Users\someone\AppData\Roaming\kinvue\sessions\session
 const fromMain = (err: Error, channel: string): Error =>
   new Error(`Error invoking remote method '${channel}': ${String(err)}`)
 
-let listSessions: ReturnType<typeof vi.fn<() => Promise<SessionRecord[]>>>
+let listSessions: ReturnType<typeof vi.fn<(personId: string) => Promise<SessionRecord[]>>>
 let seedDemo: ReturnType<typeof vi.fn<() => Promise<number>>>
 let startNewHistory: ReturnType<typeof vi.fn<() => Promise<string | null>>>
 let lastExported: ReturnType<typeof vi.fn<() => Promise<string | null>>>
@@ -143,9 +159,10 @@ let apiKeyStatus: ReturnType<typeof vi.fn<() => Promise<KeyStatus>>>
 let setApiKey: ReturnType<typeof vi.fn<(key: string) => Promise<SetKeyResult>>>
 let openKeyRegistration: ReturnType<typeof vi.fn<() => Promise<void>>>
 let forgetApiKey: ReturnType<typeof vi.fn<() => Promise<KeyStatus>>>
+let listPeople: ReturnType<typeof vi.fn<() => Promise<PeopleNow>>>
 
 beforeEach(() => {
-  listSessions = vi.fn<() => Promise<SessionRecord[]>>()
+  listSessions = vi.fn<(personId: string) => Promise<SessionRecord[]>>()
   seedDemo = vi.fn<() => Promise<number>>()
   startNewHistory = vi.fn<() => Promise<string | null>>()
   lastExported = vi.fn<() => Promise<string | null>>(() => Promise.resolve(null))
@@ -165,6 +182,9 @@ beforeEach(() => {
   )
   openKeyRegistration = vi.fn<() => Promise<void>>(() => Promise.resolve())
   forgetApiKey = vi.fn<() => Promise<KeyStatus>>(() => Promise.resolve('none'))
+  listPeople = vi.fn<() => Promise<PeopleNow>>(() =>
+    Promise.resolve({ people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }], demo: false }),
+  )
   Object.defineProperty(window, 'kinvue', {
     configurable: true,
     value: {
@@ -184,6 +204,7 @@ beforeEach(() => {
       setApiKey,
       openKeyRegistration,
       forgetApiKey,
+      listPeople,
       captureSeconds: vi.fn(() => Promise.resolve(90)),
       cancelCapture: vi.fn(() => Promise.resolve()),
     },
@@ -1102,7 +1123,7 @@ describe('the cared-for person’s path through the dashboard (KV-20)', () => {
     take.focus()
     fireEvent.click(take)
 
-    const setup = await screen.findByRole('heading', { name: 'Before the first reading' })
+    const setup = await screen.findByRole('heading', { name: SETUP_HEADING })
     expect(document.activeElement).toBe(setup)
 
     fireEvent.click(screen.getByRole('button', { name: 'Go to the check-ins' }))
@@ -1113,7 +1134,7 @@ describe('the cared-for person’s path through the dashboard (KV-20)', () => {
     listSessions.mockResolvedValue(sessions())
     apiKeyStatus.mockResolvedValue('none')
     render(<App />)
-    await screen.findByRole('heading', { name: 'Before the first reading' })
+    await screen.findByRole('heading', { name: SETUP_HEADING })
     // Tab order is document order here: nothing on the screen sets tabIndex above 0.
     const first = document.querySelector('main')?.querySelector('input, button, a[href]')
     expect(first).toBe(screen.getByLabelText('Key'))
@@ -1139,7 +1160,19 @@ describe('the cared-for person’s path through the dashboard (KV-20)', () => {
     // could not tell that a control was focused first (review of #202).
     const focused = vi.spyOn(HTMLElement.prototype, 'focus')
     render(<App />)
-    const setup = await screen.findByRole('heading', { name: 'Before the first reading' })
+    const setup = await screen.findByRole('heading', { name: SETUP_HEADING })
+    expect(document.activeElement).toBe(setup)
+    expect(focused.mock.contexts).toEqual([setup])
+  })
+
+  it('opens the setup screen at its heading and nothing before it when only a name is needed (KV-18)', async () => {
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listSessions.mockResolvedValue(sessions())
+    // The name field took autoFocus where it was all the screen asked for.
+    const focused = vi.spyOn(HTMLElement.prototype, 'focus')
+    render(<App />)
+    const setup = await screen.findByRole('heading', { name: SETUP_HEADING })
+    expect(screen.getByLabelText('Name')).toBeTruthy()
     expect(document.activeElement).toBe(setup)
     expect(focused.mock.contexts).toEqual([setup])
   })
@@ -1343,8 +1376,21 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
   })
 
   it('promises no note of demo days, which leave none (review of #185)', async () => {
-    listSessions.mockResolvedValue(days().map((r) => ({ ...r, seeded: true as const })))
+    // The demo's days, as the store lists them: under the demo's own id, which
+    // is a person of its own (KV-18), shown when chosen at the top.
+    listPeople.mockResolvedValue({
+      people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+      demo: true,
+    })
+    listSessions.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === THE_DEMO
+          ? days().map((r) => ({ ...r, seeded: true as const, personId: THE_DEMO }))
+          : [],
+      ),
+    )
     render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'The demo' }))
     fireEvent.click(await screen.findByText(/Delete the whole history/))
     expect(screen.queryByText(/stays on this computer/)).toBeNull()
     expect(screen.getByText('These are demo days, so nothing is kept of them.')).toBeTruthy()
@@ -1581,7 +1627,7 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
       cameraAccess.mockResolvedValue(access)
       render(<App />)
       expect(await screen.findByText('Take a reading')).toBeTruthy()
-      expect(screen.queryByText('Before the first reading')).toBeNull()
+      expect(screen.queryByText(SETUP_HEADING)).toBeNull()
       cleanup()
     }
   })
@@ -1597,7 +1643,7 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
     for (const [access, sentence] of says) {
       cameraAccess.mockResolvedValue(access)
       render(<App />)
-      expect(await screen.findByText('Before the first reading')).toBeTruthy()
+      expect(await screen.findByText(SETUP_HEADING)).toBeTruthy()
       expect(screen.getByText(sentence)).toBeTruthy()
       expect(screen.queryByText('Take a reading')).toBeNull()
       cleanup()
@@ -1628,7 +1674,7 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
     fireEvent.click(await screen.findByText('Go to the check-ins'))
     fireEvent.click(await screen.findByText('Take a reading'))
     // Asked again, still off: back to the setup screen, and no capture.
-    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(await screen.findByText(SETUP_HEADING)).toBeTruthy()
     expect(capture).not.toHaveBeenCalled()
   })
 
@@ -1643,7 +1689,7 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
     // The switch goes off between the first reading and the retake.
     cameraAccess.mockResolvedValue('off-for-desktop-apps')
     fireEvent.click(screen.getByText('Try the camera again'))
-    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(await screen.findByText(SETUP_HEADING)).toBeTruthy()
     expect(capture).toHaveBeenCalledTimes(1)
   })
 
@@ -1655,7 +1701,7 @@ describe('the setup screen: the camera, before the first reading (KV-19)', () =>
     await vi.waitFor(() => expect(listSessions).toHaveBeenCalled())
     expect(screen.queryByText('Take a reading')).toBeNull()
     answer('off-for-desktop-apps')
-    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(await screen.findByText(SETUP_HEADING)).toBeTruthy()
   })
 
   it('draws the dashboard when Windows cannot be asked at all', async () => {
@@ -1758,7 +1804,7 @@ describe('the household key, on the setup screen and the dashboard (KV-19)', () 
     render(<App />)
     fireEvent.click(await screen.findByText('Go to the check-ins'))
     fireEvent.click(await screen.findByText('Take a reading'))
-    expect(await screen.findByText('Before the first reading')).toBeTruthy()
+    expect(await screen.findByText(SETUP_HEADING)).toBeTruthy()
     expect(capture).not.toHaveBeenCalled()
   })
 
@@ -1885,3 +1931,250 @@ describe('the key, after review of #195', () => {
   })
 })
 
+
+describe('whose check-ins: the person, named, and the demo apart (KV-18)', () => {
+  // Says it is the demo first, so a real Margaret's heading cannot read the same
+  // but for a word in brackets (review of #200).
+  const DEMO_HEADING = 'The demo: Margaret’s invented check-ins'
+  const days = (): SessionRecord[] =>
+    history(3).map((r) => ({ ...r, personId: DEMO_PERSON_ID }))
+  const named = (id: string, name: string) => ({ ok: true as const, person: { id, name } })
+
+  it('asks once whose a history from before KV-18 is, and names that person', async () => {
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listSessions.mockResolvedValue(days())
+    const renamePerson = vi.fn(() => Promise.resolve(named(DEMO_PERSON_ID, 'Ann')))
+    Object.assign(window.kinvue, { renamePerson, addPerson: vi.fn() })
+    render(<App />)
+
+    expect(await screen.findByText(/taken before Kinvue asked whose they are/)).toBeTruthy()
+    // Named, the list says so: the dashboard is theirs.
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: 'Ann' }], demo: false })
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ann' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
+
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Ann’s check-ins' }),
+    ).toBeTruthy()
+    expect(renamePerson).toHaveBeenCalledWith(DEMO_PERSON_ID, 'Ann')
+    expect(window.kinvue.addPerson).not.toHaveBeenCalled()
+  })
+
+  it('heads the screen the next reading for a history, and the first only for nobody yet (review of #200)', async () => {
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listSessions.mockResolvedValue(days())
+    Object.assign(window.kinvue, { renamePerson: vi.fn(), addPerson: vi.fn() })
+    const { unmount } = render(<App />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Before the next reading' })).toBeTruthy()
+    unmount()
+
+    listPeople.mockResolvedValue({ people: [], demo: false })
+    listSessions.mockResolvedValue([])
+    render(<App />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Before the first reading' })).toBeTruthy()
+  })
+
+  it('adds the first person on a computer with nobody yet', async () => {
+    listPeople.mockResolvedValue({ people: [], demo: false })
+    listSessions.mockResolvedValue([])
+    const addPerson = vi.fn(() => Promise.resolve(named('p-1', 'Ann')))
+    Object.assign(window.kinvue, { addPerson, renamePerson: vi.fn() })
+    render(<App />)
+
+    expect(await screen.findByText(/The name of the person who will take the readings/)).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ann' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
+    await vi.waitFor(() => expect(addPerson).toHaveBeenCalledWith('Ann'))
+  })
+
+  it('says why a name was not taken, and keeps what was typed', async () => {
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listSessions.mockResolvedValue(days())
+    Object.assign(window.kinvue, {
+      renamePerson: vi.fn(() => Promise.resolve({ ok: false, problem: 'invisible' })),
+    })
+    render(<App />)
+    const field = await screen.findByLabelText('Name')
+    fireEvent.change(field, { target: { value: 'An\u200Bn' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
+    expect(await screen.findByText(/a character in it that does not show/)).toBeTruthy()
+    expect((field as HTMLInputElement).value).toBe('An\u200Bn')
+  })
+
+  it('asks for the name again, not the camera, when Take a reading is pressed unnamed', async () => {
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listSessions.mockResolvedValue(days())
+    const capture = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(window.kinvue, { capture, renamePerson: vi.fn() })
+    render(<App />)
+    fireEvent.click(await screen.findByText('Go to the check-ins'))
+    // Past it, the dashboard reads the check-ins under no name.
+    expect(await screen.findByRole('heading', { level: 1, name: 'Check-ins' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+    expect(await screen.findByText(/taken before Kinvue asked whose they are/)).toBeTruthy()
+    expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('takes a reading as the person, never the demo, even with the demo on screen', async () => {
+    listPeople.mockResolvedValue({
+      people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+      demo: true,
+    })
+    listSessions.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === THE_DEMO
+          ? days().map((r) => ({ ...r, seeded: true as const, personId: THE_DEMO }))
+          : days(),
+      ),
+    )
+    const capture = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'The demo' }))
+    expect(
+      await screen.findByRole('heading', { level: 1, name: DEMO_HEADING }),
+    ).toBeTruthy()
+    expect(listSessions).toHaveBeenLastCalledWith(THE_DEMO)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledWith(DEMO_PERSON_ID))
+    expect(capture).not.toHaveBeenCalledWith(THE_DEMO)
+  })
+
+  it('shows the latest choice, whichever reload answers last (review of #200)', async () => {
+    listPeople.mockResolvedValue({
+      people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+      demo: true,
+    })
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    await screen.findByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })
+
+    // The demo's check-ins answer slowly; the person's at once.
+    let demoAnswers: (records: SessionRecord[]) => void = () => undefined
+    const demoDays = days().map((r) => ({ ...r, seeded: true as const, personId: THE_DEMO }))
+    listSessions.mockImplementation((id: string) =>
+      id === THE_DEMO
+        ? new Promise((resolve) => (demoAnswers = resolve))
+        : Promise.resolve(days()),
+    )
+    // Switched to the demo, and back before it answered.
+    fireEvent.click(screen.getByRole('button', { name: 'The demo' }))
+    fireEvent.click(screen.getByRole('button', { name: DEMO_PERSON_NAME }))
+    await vi.waitFor(() => expect(listSessions).toHaveBeenLastCalledWith(DEMO_PERSON_ID))
+    await act(async () => demoAnswers(demoDays))
+
+    // The person's, as last chosen: never their heading over the demo's days,
+    // nor the demo's heading over theirs.
+    expect(screen.getByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })).toBeTruthy()
+    expect(screen.queryByRole('heading', { level: 1, name: DEMO_HEADING })).toBeNull()
+    expect(screen.queryByText(/demo day/i)).toBeNull()
+  })
+
+  it('says nothing of a failed reload a later one has answered since (second review of #200)', async () => {
+    listPeople.mockResolvedValue({
+      people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+      demo: true,
+    })
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    await screen.findByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })
+
+    // The demo's check-ins fail, but only once the person's are shown again.
+    let demoFails: (e: Error) => void = () => undefined
+    listSessions.mockImplementation((id: string) =>
+      id === THE_DEMO
+        ? new Promise((_, reject) => (demoFails = reject))
+        : Promise.resolve(days()),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'The demo' }))
+    fireEvent.click(screen.getByRole('button', { name: DEMO_PERSON_NAME }))
+    await vi.waitFor(() => expect(listSessions).toHaveBeenLastCalledWith(DEMO_PERSON_ID))
+    await act(async () =>
+      demoFails(fromMain(new UnreadableStoreError(PATH, 'it is not JSON'), 'sessions:list')),
+    )
+
+    // No error over the screen the later reload drew, and no way out offered
+    // for a file that reads.
+    expect(screen.getByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Start a new history' })).toBeNull()
+  })
+
+  it('keeps saying the first reading while the person just named is loading (second review of #200)', async () => {
+    listPeople.mockResolvedValue({ people: [], demo: false })
+    listSessions.mockResolvedValue([])
+    cameraAccess.mockResolvedValue('off-for-apps')
+    const addPerson = vi.fn(() => Promise.resolve(named('p-1', 'Ann')))
+    Object.assign(window.kinvue, { addPerson, renamePerson: vi.fn() })
+    render(<App />)
+    expect(await screen.findByRole('heading', { level: 1, name: 'Before the first reading' })).toBeTruthy()
+
+    // Named, the list has them at once; their check-ins have not answered yet.
+    listPeople.mockResolvedValue({ people: [{ id: 'p-1', name: 'Ann' }], demo: false })
+    listSessions.mockImplementation(() => new Promise<never>(() => undefined))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ann' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
+    await vi.waitFor(() => expect(listSessions).toHaveBeenLastCalledWith('p-1'))
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Before the first reading' })).toBeTruthy()
+  })
+
+  it('offers no restore into the demo, and says where one goes (review of #200)', async () => {
+    listPeople.mockResolvedValue({
+      people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+      demo: true,
+    })
+    listSessions.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === THE_DEMO
+          ? days().map((r) => ({ ...r, seeded: true as const, personId: THE_DEMO }))
+          : days(),
+      ),
+    )
+    render(<App />)
+    const restore = await screen.findByRole('button', { name: 'Restore from an export…' })
+    expect((restore as HTMLButtonElement).disabled).toBe(false)
+
+    fireEvent.click(screen.getByRole('button', { name: 'The demo' }))
+    await screen.findByRole('heading', { level: 1, name: DEMO_HEADING })
+    expect(
+      (screen.getByRole('button', { name: 'Restore from an export…' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true)
+    expect(screen.getByText(/restored into a person’s history, not the demo’s/)).toBeTruthy()
+  })
+
+  it('offers the switch only when there is a demo to show', async () => {
+    listSessions.mockResolvedValue(days())
+    render(<App />)
+    await screen.findByRole('heading', { level: 1, name: `${DEMO_PERSON_NAME}’s check-ins` })
+    expect(screen.queryByRole('navigation', { name: 'Whose check-ins are shown' })).toBeNull()
+  })
+
+  it('shows the seeded demo once it is added, as a person of its own', async () => {
+    listSessions.mockResolvedValue([])
+    seedDemo.mockImplementation(() => {
+      listPeople.mockResolvedValue({
+        people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
+        demo: true,
+      })
+      return Promise.resolve(14)
+    })
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'Seed demo history' }))
+    expect(
+      await screen.findByRole('heading', { level: 1, name: DEMO_HEADING }),
+    ).toBeTruthy()
+    expect(listSessions).toHaveBeenLastCalledWith(THE_DEMO)
+  })
+
+  it('draws the dashboard and its error when the people cannot be read, and asks no name', async () => {
+    listPeople.mockRejectedValue(new Error('disk on fire'))
+    listSessions.mockResolvedValue([])
+    render(<App />)
+    expect(await screen.findByRole('alert')).toBeTruthy()
+    expect(screen.queryByText(/Whose check-ins/)).toBeNull()
+  })
+})

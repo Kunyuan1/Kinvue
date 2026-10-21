@@ -3,6 +3,8 @@ import type { CameraAccess } from '../../shared/camera-access'
 import { keyMissing, type KeyStatus } from '../../shared/api-key'
 import ForgetKey from './ForgetKey'
 import KeyField from './KeyField'
+import NameField from './NameField'
+import type { PersonShown } from '../../shared/people'
 import { useFocusWhenShown } from './person'
 
 const BUTTON =
@@ -16,9 +18,26 @@ export type CameraOff = Exclude<CameraAccess, 'allowed' | 'unknown'>
 export const cameraIsOff = (access: CameraAccess | undefined): access is CameraOff =>
   access !== undefined && access !== 'allowed' && access !== 'unknown'
 
-/** Whether the setup screen has anything to ask for. */
-export const setupNeeded = (camera: CameraAccess, key: KeyStatus): boolean =>
-  cameraIsOff(camera) || keyMissing(key)
+/**
+ * Whether the setup screen has anything to ask for: the camera, the key, or
+ * whose the check-ins are (KV-18).
+ */
+export const setupNeeded = (camera: CameraAccess, key: KeyStatus, nameNeeded: boolean): boolean =>
+  cameraIsOff(camera) || keyMissing(key) || nameNeeded
+
+/**
+ * Why a name is asked for (KV-18). A history from before KV-18 is someone's
+ * already, under the demo's old name; a new computer has nobody yet.
+ */
+const NAME_SAYS = {
+  before:
+    'The check-ins already on this computer were taken before Kinvue asked whose they are. ' +
+    'Give the name of the person they belong to. It is shown on their check-ins, and kept ' +
+    'on this computer only.',
+  first:
+    'The name of the person who will take the readings. It is shown on their check-ins, and ' +
+    'kept on this computer only.',
+}
 
 /** Which switch, and where it is: Windows's own words for it, so it can be found. */
 const SAYS: Record<CameraOff, string> = {
@@ -76,12 +95,28 @@ const KEY_SAYS: Record<KeyStatus, string | null> = {
 export default function SetupScreen({
   camera,
   keyStatus,
+  nameNeeded,
+  unnamed,
+  firstReading,
   onCheckAgain,
   onKeyKept,
+  onNamed,
   onContinue,
 }: {
   camera: CameraAccess
   keyStatus: KeyStatus
+  /** Nobody is named yet: whose the check-ins are is asked for. */
+  nameNeeded: boolean
+  /** The person to name, when their check-ins are here already; null to add the first. */
+  unnamed: PersonShown | null
+  /**
+   * No reading has been taken here yet. Otherwise the heading says the next
+   * one: a history with months in it, told *before the first reading*, read as
+   * though it were gone (review of #200).
+   */
+  firstReading: boolean
+  /** A name was kept. */
+  onNamed: (person: PersonShown) => void
   /** Asks Windows again; resolves to what it says now. */
   onCheckAgain: () => Promise<CameraAccess>
   /** A key was kept: where it stands now. */
@@ -127,7 +162,7 @@ export default function SetupScreen({
   return (
     <main className="mx-auto max-w-2xl px-6 py-10">
       <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold">
-        Before the first reading
+        {firstReading ? 'Before the first reading' : 'Before the next reading'}
       </h1>
 
       {askCamera && (
@@ -193,6 +228,26 @@ export default function SetupScreen({
               </button>
             </>
           )}
+        </section>
+      )}
+
+      {nameNeeded && (
+        <section aria-labelledby="setup-name" className="mt-8">
+          <h2 id="setup-name" className="text-lg font-medium">
+            Whose check-ins
+          </h2>
+          <p className="mt-2 text-base leading-relaxed">
+            {unnamed !== null ? NAME_SAYS.before : NAME_SAYS.first}
+          </p>
+          <NameField
+            label="Name"
+            save={(name) =>
+              unnamed !== null
+                ? window.kinvue.renamePerson(unnamed.id, name)
+                : window.kinvue.addPerson(name)
+            }
+            onNamed={onNamed}
+          />
         </section>
       )}
 

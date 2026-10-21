@@ -153,6 +153,7 @@ app/
     protection.ts        where the history's encryption stands, as the dashboard says it
     camera-access.ts     the camera switches' answers, as the setup screen says them
     api-key.ts           where the key stands, as the screens say it — never the key
+    people.ts            who takes readings here, as the screens see them — never a key
   renderer/
     index.html           CSP: default-src 'self' — the UI loads nothing off the
                          network. img-src also allows blob:, for the self-view.
@@ -171,6 +172,7 @@ app/
       SetupScreen.tsx    before the first reading: a camera Windows keeps Kinvue from,
                          where to turn it on, and the household's key (KV-19)
       KeyField.tsx       the key, typed in; KeySettings.tsx replaces it from the dashboard
+      NameField.tsx      whose the check-ins are, typed in on the setup screen (KV-18)
       TrendChart.tsx     one metric over the baseline window, drawn from core/trend (KV-4)
       boxes.ts           the box a card and the chart are drawn in, shared with the
                          gap each leaves when it fails to draw
@@ -184,6 +186,8 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
     store.ts             JSON session store (MAIN PROCESS ONLY — imports node:fs)
     validate.ts          runtime checks on everything the renderer sends to main
     answers.ts           the four questions: complete, or not a check-in at all
+    people.ts            the people on this computer (KV-18): the name rule, and the demo
+                         as a person of its own, whose seeded days are read as its days
     format.ts            what a record says about itself: its format, and when two
                          arriving are one record (KV-30)
     check.ts             every field of a record read, checked against its type (KV-181)
@@ -421,6 +425,10 @@ them checkable:
   household's own registration, so it can tie when check-ins happen to that account.
 - **Session data is local**, under Electron's `userData`, and `.gitignore` covers
   `sessions/` and video files so a check-in cannot be committed by accident.
+- **Names are kept with the check-ins, and nowhere else** (KV-18). Whose the check-ins
+  are is asked once, on the setup screen, and kept in the same file, encrypted with it. A
+  name never leaves this computer, and neither does the random key that tells one person
+  from another.
 - **The history is encrypted with this computer's key, where it has one** (KV-175):
   Windows's DPAPI, the macOS Keychain, or a Linux desktop keyring, through Electron's
   `safeStorage`. A copied file, a backup or a sync client's copy opened under another
@@ -611,7 +619,10 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   `seededBaselineDisclosure` turns that count into the sentence the card shows wherever a
   verdict — or a fired rule quoting "their usual" — rests on them (KV-53). This is disclosed
   on purpose — in the UI and here. It does not help a real install, which still starts with
-  no baseline (KV-17).
+  no baseline (KV-17). **Since KV-18 the demo is a person of its own**, shown when
+  chosen at the top of the dashboard and never offered a reading, so a real reading is
+  never compared with invented days again; cards compared with them before keep their
+  sentence.
 - **Severity weights are judgement, not evidence.** The numbers in `rules.ts` were chosen
   so that the combination the product exists to catch clears the threshold and a single
   soft signal does not. Answers can clear it on their own — six combinations do, all with

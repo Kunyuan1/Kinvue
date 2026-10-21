@@ -66,7 +66,7 @@ describe('a history encrypted at rest (KV-175)', () => {
     const path = await storePath()
     const store = createJsonSessionStore(path, ON, cipherFor('mine', { encrypts: false }))
     await store.append(noted)
-    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ version: 1 })
+    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ version: 2 })
   })
 
   it('seals a plain history once, at start, and leaves a sealed or missing one alone', async () => {
@@ -156,9 +156,9 @@ describe('the envelope itself', () => {
   })
 
   it('tells a plain file of a later format from a sealed one: newer, not "encrypted"', async () => {
-    const listed = await listing(await fileOf({ version: 2, sessions: [] }))
+    const listed = await listing(await fileOf({ version: 3, sessions: [] }))
     expect(listed).toBeInstanceOf(NewerStoreError)
-    expect(String(listed)).toMatch(/file version 2/)
+    expect(String(listed)).toMatch(/file version 3/)
   })
 
   it('refuses an envelope it cannot make sense of, as an unreadable file', async () => {
