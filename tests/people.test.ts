@@ -233,7 +233,7 @@ describe('the people list in the history file (KV-18)', () => {
       lastExported: { 'demo-margaret': NOW.toISOString() },
     }
 
-    it('is upgraded as it is read, and written as version 2 at once, every record as it was', async () => {
+    it('is upgraded as it is read, and written as the current version at once, every record as it was', async () => {
       const path = await pathIn()
       await writeFile(path, JSON.stringify(v1), 'utf8')
       const store = createJsonSessionStore(path, () => NOW)
@@ -249,7 +249,7 @@ describe('the people list in the history file (KV-18)', () => {
       ])
       // Written by that read — not left for some later write to do.
       const written = await onDisk(path)
-      expect(written).toEqual({ ...v1, version: 2, people })
+      expect(written).toEqual({ ...v1, version: 3, people })
     })
 
     it('keeps one key however many reads come first, queued or at once', async () => {
@@ -376,6 +376,94 @@ describe('the people list in the history file (KV-18)', () => {
     expect(await store.rename('test-person', '\u200B')).toEqual({ ok: false, problem: 'invisible' })
     expect((await onDisk(path)).sessions).toEqual(sessionsBefore)
     await expect(store.rename('nobody', 'Bill')).rejects.toThrow(/nobody with the id nobody/)
+  })
+
+  describe('deleting a person (KV-18)', () => {
+    const AT = new Date('2026-10-20T09:00:00.000Z')
+    const ANN_KEY = '11111111-1111-4111-8111-111111111111'
+    const BILL_KEY = '22222222-2222-4222-8222-222222222222'
+    const theirs = (personId: string, id: string): SessionRecord => ({
+      ...session({ id }),
+      personId,
+    })
+    const household = {
+      version: 2,
+      sessions: [
+        theirs('p-ann', 'a-1'),
+        theirs('p-bill', 'b-1'),
+        theirs('p-ann', 'a-2'),
+        // Seeded under Ann's id before KV-18: the demo's, so it stays.
+        { ...theirs('p-ann', 'seed-1'), seeded: true as const },
+      ],
+      people: [
+        person({ id: 'p-ann', key: ANN_KEY, name: 'Ann' }),
+        person({ id: 'p-bill', key: BILL_KEY, name: 'Bill' }),
+      ],
+      lastExported: { 'p-ann': NOW.toISOString(), 'p-bill': NOW.toISOString() },
+    }
+
+    it('removes them, their check-ins and their export time, and keeps their key, in one write', async () => {
+      const path = await pathIn()
+      await writeFile(path, JSON.stringify(household), 'utf8')
+      const store = createJsonSessionStore(path, () => NOW)
+
+      expect(await store.removePerson('p-ann', AT)).toBe(2)
+      const written = await onDisk(path)
+      expect(written.version).toBe(3)
+      expect(written.people).toEqual([household.people[1]])
+      expect((written.sessions as SessionRecord[]).map((r) => r.id)).toEqual(['b-1', 'seed-1'])
+      // Each check-in keeps KV-21's tombstone; the person keeps theirs: a key
+      // and a time, no name, no id.
+      expect(written.removed).toEqual([
+        { id: 'a-1', personId: 'p-ann', removedAt: AT.toISOString() },
+        { id: 'a-2', personId: 'p-ann', removedAt: AT.toISOString() },
+      ])
+      expect(written.removedPeople).toEqual([{ key: ANN_KEY, removedAt: AT.toISOString() }])
+      expect(JSON.stringify(written.removedPeople)).not.toMatch(/Ann|p-ann/)
+      expect(written.lastExported).toEqual({ 'p-bill': NOW.toISOString() })
+      // And it reads back: Bill's history as it was, Ann nowhere.
+      expect((await store.people()).map((p) => p.name)).toEqual(['Bill'])
+      expect(await store.list('p-ann')).toEqual([])
+    })
+
+    it('refuses someone not on the list, the demo included, and writes nothing', async () => {
+      const path = await pathIn()
+      const text = JSON.stringify(household)
+      await writeFile(path, text, 'utf8')
+      const store = createJsonSessionStore(path, () => NOW)
+      await expect(store.removePerson('p-nobody', AT)).rejects.toThrow(/nobody with the id/)
+      await expect(store.removePerson(DEMO_PERSON_ID, AT)).rejects.toThrow(/nobody with the id/)
+      expect(await readFile(path, 'utf8')).toBe(text)
+    })
+
+    it('reads a version-2 file as version 3 without writing it, and says 3 once it writes', async () => {
+      const path = await pathIn()
+      const text = JSON.stringify(household)
+      await writeFile(path, text, 'utf8')
+      const store = createJsonSessionStore(path, () => NOW)
+      expect((await store.people()).map((p) => p.name)).toEqual(['Ann', 'Bill'])
+      expect(await readFile(path, 'utf8')).toBe(text)
+      await store.rename('p-bill', 'William')
+      expect((await onDisk(path)).version).toBe(3)
+    })
+
+    it('refuses a file whose record of a deleted person it cannot read, and names the list', async () => {
+      const path = await pathIn()
+      const store = createJsonSessionStore(path, () => NOW)
+      for (const [removedPeople, pattern] of [
+        [{}, /list of deleted people .* cannot be read \(it is not a list\)/],
+        [
+          [{ key: ANN_KEY, removedAt: AT.toISOString() }, { key: 'k', removedAt: AT.toISOString() }],
+          /Deleted person 2 of 2 .* \(its key is not one\)/,
+        ],
+        [[{ key: ANN_KEY, removedAt: 'yesterday' }], /Deleted person 1 of 1 .* \(when it was/],
+      ] as const) {
+        await writeFile(path, JSON.stringify({ ...household, version: 3, removedPeople }), 'utf8')
+        const thrown = await store.people().catch((e: unknown) => e)
+        expect(thrown).toBeInstanceOf(UnrecognisedRecordError)
+        expect(String(thrown)).toMatch(pattern)
+      }
+    })
   })
 
   it('answers who is here and whether the demo has days in one read', async () => {

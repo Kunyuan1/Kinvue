@@ -1503,6 +1503,33 @@ key, and *Start a new history*'s sentence.
 - **Not yet measured:** KV-20's 200% zoom check on the names screen (880px, six names).
   The tests hold it to one column of full-width rows; the measurement itself is by hand.
 
+Second, deleting a person (`store.removePerson`, `ConfirmPersonRemoval.tsx`):
+
+- **The file moves to version 3,** for one new list: `removedPeople`, a key and a time for
+  each person deleted here, checked field by field as it is read, as `removed` is. A
+  version-2 file is read as version 3 that has deleted nobody — nothing to make, so
+  nothing written on reading — and its next write says 3. The number moved so a build
+  that knows only 2 refuses a file that has deleted someone as newer (KV-13), rather than
+  reading past the record that keeps them deleted. Only the inner number moved, as it did
+  for version 2: a build that knows the envelope opens it and refuses what is inside as
+  newer, so the envelope's own `version` (KV-175) stays 2.
+- **Deleting a person is one write:** their name, every check-in of theirs (each leaving
+  KV-21's tombstone), when they were last exported, and a person tombstone of their key
+  and when — no name, no id, nothing of what they said. Seeded days written under their
+  id before KV-18 are the demo's and stay. *People on this computer* offers it for the
+  person shown, beside *Rename*, through a confirm step that names them and their count
+  of check-ins, says it cannot be undone, not even by restoring an export, offers an
+  export first, and says what stays. *Keep them* has the focus. The demo is never
+  offered: its days go from the history panel, as any history's do.
+- **A reading held for them goes too.** Main refuses to store a check-in for anyone not on
+  the list, at submit as it already did at capture: a reading the questions were put off
+  for, answered after its person was deleted, would otherwise have added them back
+  unnamed under a new key. The dashboard drops such a reading as the deletion lands.
+- ***Start a new history* says it is the household's:** "This sets aside everyone's
+  check-ins on this computer, and their names, in the old file, and starts an empty
+  history for everyone", and its notice says the old file kept everyone's check-ins and
+  names.
+
 ---
 
 ## The cared-for person's path, sized for them (KV-20)

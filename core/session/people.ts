@@ -1,3 +1,4 @@
+import { isInstant } from './check'
 import type { SessionRecord } from './types'
 
 /**
@@ -190,6 +191,30 @@ export function holdsAsName(name: string): boolean {
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * What is kept of a person deleted here (KV-18): their key, and when — no name,
+ * no id, nothing of their check-ins. KV-21's tombstones are per check-in, and
+ * there was none for a person, so a restored export would have brought back the
+ * one thing deleting them is about: their name, on an empty person. A restore
+ * whose key has one is refused whole, so deleting a person cannot be undone,
+ * not even by restoring an export.
+ */
+export interface PersonTombstone {
+  key: string
+  removedAt: string
+}
+
+/** Why `value` is not a record of a person deleted here, or null when it is one. */
+export function checkPersonTombstone(value: unknown): string | null {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return 'it is not a record of a deletion'
+  }
+  const { key, removedAt } = value as Record<string, unknown>
+  if (typeof key !== 'string' || !UUID.test(key)) return 'its key is not one'
+  if (!isInstant(removedAt)) return 'when it was deleted is not a time'
+  return null
+}
 
 /**
  * `people`, with a person added for any real record whose `personId` has none,

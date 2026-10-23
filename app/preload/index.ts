@@ -55,6 +55,13 @@ const api = {
     ipcRenderer.invoke('people:rename', personId, name),
 
   /**
+   * Deletes someone and every check-in of theirs, keeping only their key, so no
+   * export brings them back. Resolves to how many check-ins went.
+   */
+  removePerson: (personId: string): Promise<number> =>
+    ipcRenderer.invoke('people:remove', personId),
+
+  /**
    * Sets an unreadable history aside and starts an empty one (KV-98). Resolves
    * to where the old file now is, or null when there was nothing to set aside.
    */
