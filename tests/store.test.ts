@@ -235,12 +235,12 @@ describe('a file it cannot read', () => {
     // the shape check first and was reported as "it has no list of sessions" —
     // a claim about the person's data rather than the real problem.
     const { path } = await storeIn()
-    await writeFile(path, JSON.stringify({ version: 3, records: [] }), 'utf8')
+    await writeFile(path, JSON.stringify({ version: 4, records: [] }), 'utf8')
 
     const thrown = await createJsonSessionStore(path)
       .list('p')
       .catch((e: unknown) => e)
-    expect(String(thrown)).toMatch(/version 3/)
+    expect(String(thrown)).toMatch(/version 4/)
     expect(String(thrown)).not.toMatch(/no list of sessions/)
   })
 
@@ -350,7 +350,7 @@ describe('the temp-then-rename write', () => {
     await store.append(session({ id: 'two', capturedAt: '2026-09-02T09:00:00.000Z' }))
 
     const onDisk: unknown = JSON.parse(await readFile(path, 'utf8'))
-    expect(onDisk).toMatchObject({ version: 2 })
+    expect(onDisk).toMatchObject({ version: 3 })
     expect((await store.list('test-person')).map((s) => s.id)).toEqual(['one', 'two'])
   })
 
@@ -466,13 +466,13 @@ describe('what starting a new history will not do (KV-98 review)', () => {
     // A whole history, not a broken one. Setting it aside would strand it: the
     // newer version, installed again, would find no file and start from nothing.
     const { path } = await storeIn()
-    const newer = JSON.stringify({ version: 3, sessions: [] })
+    const newer = JSON.stringify({ version: 4, sessions: [] })
     await writeFile(path, newer, 'utf8')
     const store = createJsonSessionStore(path, () => ON)
 
     const listed = await store.list('test-person').catch((e: unknown) => e)
     expect(listed).toBeInstanceOf(NewerStoreError)
-    expect(String(listed)).toMatch(/written by a newer version of Kinvue \(file version 3/)
+    expect(String(listed)).toMatch(/written by a newer version of Kinvue \(file version 4/)
     expect(classifyDashboardError(listed)).toBe('store-newer')
     expect(classifySubmitError(listed)).toBe('store-unreadable')
 
@@ -709,7 +709,7 @@ describe('exporting, restoring and deleting (KV-21)', () => {
     await store.append(session({ id: 'seed-x', seeded: true }))
     expect(await store.remove(DEMO_PERSON_ID, { kind: 'all' }, AT)).toBe(1)
     // Nobody on the list, either: a seeded day adds no person (KV-18).
-    expect(await onDisk(path)).toEqual({ version: 2, sessions: [], people: [] })
+    expect(await onDisk(path)).toEqual({ version: 3, sessions: [], people: [] })
   })
 
   it('keeps a deleted check-in deleted when it arrives again, and writes nothing', async () => {
@@ -848,6 +848,6 @@ describe('a version-1 history whose upgrade cannot be written (KV-18, review of 
     expect((await store.list('test-person')).map((s) => s.id)).toEqual(['one'])
     const again = await store.people()
     expect(again).toEqual(first)
-    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ ...v1, version: 2, people: first })
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ ...v1, version: 3, people: first })
   })
 })

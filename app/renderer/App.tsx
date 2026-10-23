@@ -14,6 +14,7 @@ import {
 import type { Protection } from '../shared/protection'
 import { CARD_BOX, CHART_BOX } from './components/boxes'
 import CaptureScreen from './components/CaptureScreen'
+import ConfirmPersonRemoval from './components/ConfirmPersonRemoval'
 import ConfirmRemoval from './components/ConfirmRemoval'
 import HistoryPanel from './components/HistoryPanel'
 import QuestionFlow from './components/QuestionFlow'
@@ -300,12 +301,15 @@ function Dashboard(): React.JSX.Element {
   const [readingFor, setReadingFor] = useState<string | null>(null)
   const readingName =
     readers.length > 1 ? (readers.find((p) => p.id === readingFor)?.name ?? null) : null
-  // Adding someone, or renaming someone, from the dashboard (KV-18). A rename
-  // holds whom it renames from the moment it opens, and closes when another
-  // person is shown: read from `viewedId` as it saved, it renamed whoever the
-  // switcher had moved to since (review of #203).
-  const [naming, setNaming] = useState<
-    { what: 'add' } | { what: 'rename'; id: string; name: string } | null
+  // Adding someone, renaming them, or deleting them, from the dashboard
+  // (KV-18). A rename or a deletion holds whom it is about from the moment it
+  // opens, and closes when another person is shown: read from `viewedId` as it
+  // saved, a rename renamed whoever the switcher had moved to since (review of
+  // #203).
+  const [changing, setChanging] = useState<
+    | { what: 'add' }
+    | { what: 'rename' | 'delete'; id: string; name: string }
+    | null
   >(null)
   const demoShown = viewedId === DEMO_PERSON_ID
   // Null when the person shown has not been named yet.
@@ -393,7 +397,7 @@ function Dashboard(): React.JSX.Element {
   /** Shows a person's check-ins, or the demo's, as chosen at the top (KV-18). */
   const show = (id: string): void => {
     wanted.current = id
-    setNaming(null)
+    setChanging(null)
     void refresh().catch((e: unknown) => showFailure(e, 'The check-ins could not be shown.'))
   }
 
@@ -520,7 +524,8 @@ function Dashboard(): React.JSX.Element {
           e,
           aside === null
             ? 'The list could not be reloaded.'
-            : `A new, empty history was started and the old file was kept, unchanged, as ${aside}. ` +
+            : 'A new, empty history was started for everyone on this computer. The old file, ' +
+                `with everyone's check-ins and names, was kept unchanged as ${aside}. ` +
                 'The list could not be reloaded.',
         )
         return
@@ -528,7 +533,8 @@ function Dashboard(): React.JSX.Element {
       setNotice(
         aside === null
           ? 'The history could be read after all, so nothing was moved.'
-          : `A new, empty history was started. The old file was kept, unchanged, as ${aside}.`,
+          : 'A new, empty history was started for everyone on this computer. The old file, ' +
+            `with everyone's check-ins and names, was kept unchanged as ${aside}.`,
       )
     } finally {
       setBusy(false)
@@ -1007,8 +1013,9 @@ function Dashboard(): React.JSX.Element {
           {(error.failure === 'store-unreadable' || error.failure === 'store-undecryptable') && (
             <>
               <p className="mt-2 text-(--color-muted)">
-                Starting a new history keeps this file as it is, renamed beside it, and begins
-                an empty one. Nothing in the old file is deleted.
+                This sets aside everyone&rsquo;s check-ins on this computer, and their names,
+                in the old file, and starts an empty history for everyone. The old file is kept
+                as it is, renamed beside it: nothing in it is deleted.
               </p>
               <button
                 type="button"
@@ -1135,14 +1142,17 @@ function Dashboard(): React.JSX.Element {
         </SectionBoundary>
       )}
 
-      {/* Adding someone, and renaming them (KV-18): the caregiver's, so down
+      {/* Adding someone, renaming and deleting them (KV-18): the caregiver's, so down
           here with the history, not beside *Take a reading*, which starts the
           cared-for person's path (review of #203). Never the demo: it is
           nobody, and its name is not anyone's to change. Contained like every
           other section (KV-163). */}
       {people !== null && (
         <SectionBoundary
-          fallback="Adding and renaming people could not be shown here. Nobody has been changed."
+          fallback={
+            'Adding, renaming and deleting people could not be shown here. ' +
+            'Nobody has been changed.'
+          }
           className="mt-10"
         >
           <section
@@ -1153,46 +1163,102 @@ function Dashboard(): React.JSX.Element {
               People on this computer
             </h2>
             <div className="mt-3">
-              {naming === null ? (
+              {changing === null ? (
                 <div className="flex flex-wrap gap-4">
-                  <button type="button" onClick={() => setNaming({ what: 'add' })} className={LINK}>
+                  <button
+                    type="button"
+                    onClick={() => setChanging({ what: 'add' })}
+                    className={LINK}
+                  >
                     Add a person&hellip;
                   </button>
                   {viewedId !== null && !demoShown && viewedName !== null && (
-                    <button
-                      type="button"
-                      onClick={() => setNaming({ what: 'rename', id: viewedId, name: viewedName })}
-                      className={LINK}
-                    >
-                      Rename {viewedName}&hellip;
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setChanging({ what: 'rename', id: viewedId, name: viewedName })
+                        }
+                        className={LINK}
+                      >
+                        Rename {viewedName}&hellip;
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setChanging({ what: 'delete', id: viewedId, name: viewedName })
+                        }
+                        className={LINK}
+                      >
+                        Delete {viewedName}&hellip;
+                      </button>
+                    </>
                   )}
                 </div>
+              ) : changing.what === 'delete' ? (
+                <ConfirmPersonRemoval
+                  person={changing}
+                  // The person shown: a deletion closes when another is.
+                  checkIns={sessions?.length ?? 0}
+                  onExport={exportHistory}
+                  onCancel={() => setChanging(null)}
+                  onFailure={(e) =>
+                    showFailure(
+                      e,
+                      `${changing.name} could not be deleted. Nothing has been changed.`,
+                    )
+                  }
+                  onDone={async (removed) => {
+                    const { id, name } = changing
+                    setChanging(null)
+                    // A reading held for them can no longer be stored as theirs.
+                    if (readingFor === id) setReading(null)
+                    // Whoever is first on the list now.
+                    wanted.current = null
+                    try {
+                      await refresh()
+                    } catch (e) {
+                      showFailure(e, `${name} was deleted, but the list could not be reloaded.`)
+                      return
+                    }
+                    setNotice(
+                      removed === 0
+                        ? `Deleted ${name}.`
+                        : `Deleted ${name} and ${
+                            removed === 1 ? 'their one check-in' : `${String(removed)} check-ins`
+                          }.`,
+                    )
+                  }}
+                />
               ) : (
                 <div className="rounded-lg border border-(--color-line) p-4">
-                  {naming.what === 'add' ? (
+                  {changing.what === 'add' ? (
                     <NameField
                       label="Their name"
                       save={(name) => window.kinvue.addPerson(name)}
                       onNamed={(person) => {
-                        setNaming(null)
+                        setChanging(null)
                         show(person.id)
                       }}
                     />
                   ) : (
                     <NameField
                       // Says whom, since the box outlives the link that named them.
-                      label={`New name for ${naming.name}`}
-                      save={(name) => window.kinvue.renamePerson(naming.id, name)}
+                      label={`New name for ${changing.name}`}
+                      save={(name) => window.kinvue.renamePerson(changing.id, name)}
                       onNamed={() => {
-                        setNaming(null)
+                        setChanging(null)
                         void refresh().catch((e: unknown) =>
                           showFailure(e, 'The name was saved, but the list could not be reloaded.'),
                         )
                       }}
                     />
                   )}
-                  <button type="button" onClick={() => setNaming(null)} className={`mt-3 ${LINK}`}>
+                  <button
+                    type="button"
+                    onClick={() => setChanging(null)}
+                    className={`mt-3 ${LINK}`}
+                  >
                     Cancel
                   </button>
                 </div>

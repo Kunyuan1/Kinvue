@@ -312,7 +312,12 @@ describe('starting a new history (KV-98)', () => {
     render(<App />)
 
     expect(await screen.findByText('Start a new history')).toBeTruthy()
-    expect(document.body.textContent).toMatch(/Nothing in the old file is deleted/)
+    // The household's, said whatever the number of people (KV-18): one file
+    // holds everyone, and it cannot say who was in it.
+    expect(document.body.textContent).toMatch(
+      /sets aside everyone’s check-ins on this computer, and their names/,
+    )
+    expect(document.body.textContent).toMatch(/nothing in it is deleted/)
   })
 
   it('is not offered for a history that could not be opened, or for anything else', async () => {
@@ -354,7 +359,7 @@ describe('starting a new history (KV-98)', () => {
 
     fireEvent.click(await screen.findByText('Start a new history'))
 
-    expect(await screen.findByText(/kept, unchanged, as .*unreadable-2026-09-22/)).toBeTruthy()
+    expect(await screen.findByText(/kept unchanged as .*unreadable-2026-09-22/)).toBeTruthy()
     expect(startNewHistory).toHaveBeenCalledTimes(1)
     expect(screen.queryByText(/could not be read/)).toBeNull()
     // Empty now, so the demo can be seeded again.
@@ -392,7 +397,7 @@ describe('starting a new history (KV-98)', () => {
 
     listSessions.mockResolvedValue([])
     fireEvent.click(screen.getByText('Start a new history'))
-    expect(await screen.findByText(/kept, unchanged, as .*unreadable-2026-09-24/)).toBeTruthy()
+    expect(await screen.findByText(/kept unchanged as .*unreadable-2026-09-24/)).toBeTruthy()
   })
 
   it('offers no button when the press finds the file is from a newer version', async () => {
@@ -418,7 +423,7 @@ describe('starting a new history (KV-98)', () => {
     fireEvent.click(await screen.findByText('Start a new history'))
 
     expect(
-      await screen.findByText(/old file was kept, unchanged, as .*unreadable-2026-09-24\. The list/),
+      await screen.findByText(/everyone's check-ins and names, was kept unchanged as .*unreadable-2026-09-24\. The list/),
     ).toBeTruthy()
   })
 
@@ -2435,6 +2440,92 @@ describe('more than one person: who is taking the reading, and whose check-ins a
     await dashboard('Bill')
     expect(screen.queryByLabelText(/^New name/)).toBeNull()
     expect(renamePerson).not.toHaveBeenCalled()
+  })
+
+  describe('deleting a person', () => {
+    const toBill = async (): Promise<void> => {
+      render(<App />)
+      await dashboard('Ann')
+      fireEvent.click(screen.getByRole('button', { name: 'Bill' }))
+      await dashboard('Bill')
+    }
+
+    it('says who goes, with how many check-ins, and deletes them on the press', async () => {
+      two()
+      const removePerson = vi.fn(() => Promise.resolve(3))
+      Object.assign(window.kinvue, { removePerson })
+      await toBill()
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Bill…' }))
+
+      const asked = screen.getByRole('group', { name: 'Delete Bill from this computer?' })
+      expect(asked.textContent).toMatch(/All 3 of their check-ins go with them, and so does their name/)
+      expect(asked.textContent).toMatch(/cannot be undone, not even by restoring an export/)
+      expect(asked.textContent).toMatch(/It holds no name, no readings and no answers/)
+      // The choice that changes nothing has the focus.
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Keep them' }))
+
+      listPeople.mockResolvedValue({ people: [ANN], demo: false, checkedIn: true })
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Bill' }))
+      // Then whoever is first on the list.
+      await dashboard('Ann')
+      expect(removePerson).toHaveBeenCalledWith(BILL.id)
+      expect(await screen.findByText('Deleted Bill and 3 check-ins.')).toBeTruthy()
+    })
+
+    it('keeps them on Keep them, and closes when someone else is shown', async () => {
+      two()
+      const removePerson = vi.fn()
+      Object.assign(window.kinvue, { removePerson })
+      await toBill()
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Bill…' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Keep them' }))
+      expect(screen.queryByRole('group', { name: /^Delete Bill/ })).toBeNull()
+
+      // Open again, then switched to Ann: it goes, never offering to delete Ann
+      // under Bill's name, or Bill from Ann's screen.
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Bill…' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Ann' }))
+      await dashboard('Ann')
+      expect(screen.queryByRole('group', { name: /^Delete Bill/ })).toBeNull()
+      expect(removePerson).not.toHaveBeenCalled()
+    })
+
+    it('never offers to delete the demo as a person', async () => {
+      two(true)
+      render(<App />)
+      await dashboard('Ann')
+      fireEvent.click(screen.getByRole('button', { name: 'The demo' }))
+      await screen.findByRole('heading', { level: 1, name: /^The demo:/ })
+      // Its days go from the history panel, as anyone's do; not as a person.
+      const people = screen.getByRole('region', { name: 'People on this computer' })
+      expect(people.textContent).not.toMatch(/Delete/)
+    })
+
+    it('drops a reading held for the person deleted, which could no longer be theirs', async () => {
+      two()
+      const nothingMeasured = {
+        captureId: 'c-1',
+        vitals: { pulseRateBpm: null, breathingRateBrpm: null, hrvRmssdMs: null },
+      }
+      Object.assign(window.kinvue, {
+        capture: vi.fn(() => Promise.resolve(nothingMeasured)),
+        removePerson: vi.fn(() => Promise.resolve(3)),
+      })
+      render(<App />)
+      await dashboard('Ann')
+      fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+      await screen.findByRole('heading', { name: 'Who is taking the reading?' })
+      fireEvent.click(screen.getByRole('button', { name: 'Bill' }))
+      // Back on the dashboard, on Bill, with the reading waiting.
+      await screen.findByRole('heading', { name: 'Nothing was measured' })
+      await dashboard('Bill')
+
+      listPeople.mockResolvedValue({ people: [ANN], demo: false, checkedIn: true })
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Bill…' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Bill' }))
+      await dashboard('Ann')
+      expect(screen.queryByRole('heading', { name: 'Nothing was measured' })).toBeNull()
+    })
   })
 
   it('renames the person shown, and never offers to rename the demo', async () => {
