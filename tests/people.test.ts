@@ -381,13 +381,15 @@ describe('the people list in the history file (KV-18)', () => {
   it('answers who is here and whether the demo has days in one read', async () => {
     const path = await pathIn()
     const store = createJsonSessionStore(path, () => NOW)
-    expect(await store.roster()).toEqual({ people: [], demo: false })
+    expect(await store.roster()).toEqual({ people: [], demo: false, checkedIn: false })
     await store.append(session({ id: 'one' }))
     expect((await store.roster()).demo).toBe(false)
     // A day seeded under a real person's id before KV-18 is still the demo's.
     await store.append({ ...session({ id: 'seed-1', seeded: true }), personId: 'test-person' })
     const roster = await store.roster()
     expect(roster.demo).toBe(true)
+    // Its own check-in counts; the seeded day, though written under its id, does not.
+    expect(roster.checkedIn).toBe(true)
     expect(roster.people.map((p) => p.id)).toEqual(['test-person'])
   })
 

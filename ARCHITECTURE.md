@@ -1461,16 +1461,24 @@ key, and *Start a new history*'s sentence.
 **Part two, built in three PRs.** First, more than one person (`WhoIsReading.tsx`,
 `App.tsx`):
 
-- **A second person can be added,** from the dashboard's *Add a person*, under the same
-  name rule. The refusal above is gone with the reason for it: the screens now show
-  whoever is chosen, and ask who takes each reading.
+- **A second person can be added,** from *Add a person* under *People on this
+  computer*, under the same name rule. The refusal above is gone with the reason for it:
+  the screens now show whoever is chosen, and ask who takes each reading. The section
+  sits with the history, below *Take a reading*, not beside it: adding and renaming are
+  the caregiver's, and *Take a reading* starts the cared-for person's path (review of
+  #203).
 - **Who is taking the reading?** opens from *Take a reading* when more than one person
   takes readings, and never otherwise. One full-width 64px row per name, the size of an
   answer (`PERSON_CHOICE`, shared with the questions so the two cannot drift); the
   heading takes focus and nothing is focused before it; the demo is never on it. The
   reading is filed under the name pressed, not the person the dashboard was showing,
   and the dashboard moves to them so the card lands among their check-ins. *Try the
-  camera again* retakes as the same person, without asking again.
+  camera again* retakes as the same person, without asking again. **Windows is asked
+  about the camera before the names, not after** (review of #203): asked after, a name
+  pressed with the camera off was dropped on the setup screen, and the dashboard drew
+  for a moment between the names and the capture, taking focus under whoever it had
+  been showing. Every way a reading starts goes through one function, so its guards
+  hold for each.
 - **Their name is on the capture and the questions** where more than one person takes
   readings: "Reading for Ann" after the capture's heading, and ", for Ann" in each
   question's place in the four, which the heading is described by, so it is read with
@@ -1479,9 +1487,19 @@ key, and *Start a new history*'s sentence.
   from. The choice is a person's id (or the demo's), read when a reload runs, so #200's
   rule holds between two people as it did between a person and the demo: the latest
   reload is shown, and a failed switch falls back to what is shown.
-- **The person shown can be renamed from the dashboard;** the demo never can.
-- **"The first reading"** on the setup screen is said when nobody here has taken one, as
-  far as has been seen; someone just added is known to have none at once.
+- **The person shown can be renamed from the dashboard;** the demo never can. The rename
+  holds whom it renames from the moment it opens, and its label says so; switching to
+  someone else closes it. Read as it saved, it renamed whoever the switcher had moved to
+  (review of #203).
+- **One state says who a reading is for,** feeding both the name on the screens and the
+  person its answers are stored under, so the two cannot drift apart.
+- **"The first reading"** on the setup screen is said when nobody here has taken one, by
+  the store's count of every record (`roster()`), never by which people the caregiver
+  happened to look at (review of #203). A seeded day never counts.
+- **Who is unnamed is asked before anyone's reading,** not only the reader's. Today an
+  unnamed person comes only from a history from before KV-18 or a name this build could
+  not hold, each one person on their own; restore by key, the third PR, can bring one in
+  beside others, and decides there whether it must be scoped to the reader.
 - **Not yet measured:** KV-20's 200% zoom check on the names screen (880px, six names).
   The tests hold it to one column of full-width rows; the measurement itself is by hand.
 

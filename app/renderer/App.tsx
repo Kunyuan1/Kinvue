@@ -278,11 +278,6 @@ function Dashboard(): React.JSX.Element {
   // Whose check-ins `sessions` are: set with them, by the same reload, so the
   // heading, the usual and the trend are always about the records shown.
   const [viewedId, setViewedId] = useState<string | null>(null)
-  // Whether each person has taken a reading, as last seen: absent until a
-  // reload has listed theirs. Kept apart from `sessions`, which may be the
-  // demo's, or not yet loaded, while the setup screen is up (second review of
-  // #200).
-  const [checkedIn, setCheckedIn] = useState<Record<string, boolean>>({})
   // Everyone who takes readings here (KV-18). The demo is never one of them.
   const readers: PersonShown[] = people?.people ?? []
   // Someone whose check-ins are here but who has not been named: a history
@@ -290,17 +285,28 @@ function Dashboard(): React.JSX.Element {
   // #200). The setup screen asks for one name at a time.
   const unnamed: PersonShown | undefined = readers.find((p) => p.name === null)
   // Nobody to take a reading, or someone not told whose check-ins are whose:
-  // the setup screen asks (KV-18).
+  // the setup screen asks (KV-18). For the whole household, not only whoever
+  // sits down: today an unnamed person comes only from a history from before
+  // KV-18 or a name this build could not hold, each one person on their own.
+  // Restore by key (#18's third PR) can bring one in beside others, and is
+  // where this is scoped to the reader if it must be (review of #203).
   const nameNeeded = people != null && (readers.length === 0 || unnamed !== undefined)
   // *Who is taking the reading?* is open (KV-18).
   const [choosing, setChoosing] = useState(false)
-  // Who the reading on screen is for, shown on the capture and the questions
-  // where more than one person takes readings. Null with one: nothing changes.
-  const [readingAs, setReadingAs] = useState<string | null>(null)
+  // Who the reading running now is for: its answers are stored as theirs, and
+  // their name is on the capture and the questions where more than one person
+  // takes readings. One state for both, so the name shown and the person filed
+  // under cannot drift apart — a ref beside it once could (review of #203).
+  const [readingFor, setReadingFor] = useState<string | null>(null)
   const readingName =
-    readers.length > 1 ? (readers.find((p) => p.id === readingAs)?.name ?? null) : null
-  // Adding someone, or renaming the person shown, from the dashboard (KV-18).
-  const [naming, setNaming] = useState<'add' | 'rename' | null>(null)
+    readers.length > 1 ? (readers.find((p) => p.id === readingFor)?.name ?? null) : null
+  // Adding someone, or renaming someone, from the dashboard (KV-18). A rename
+  // holds whom it renames from the moment it opens, and closes when another
+  // person is shown: read from `viewedId` as it saved, it renamed whoever the
+  // switcher had moved to since (review of #203).
+  const [naming, setNaming] = useState<
+    { what: 'add' } | { what: 'rename'; id: string; name: string } | null
+  >(null)
   const demoShown = viewedId === DEMO_PERSON_ID
   // Null when the person shown has not been named yet.
   const viewedName = demoShown
@@ -308,8 +314,6 @@ function Dashboard(): React.JSX.Element {
     : (people?.people.find((p) => p.id === viewedId)?.name ?? null)
   // Which reload is the latest: only its answer is shown (review of #200).
   const loads = useRef(0)
-  // Who the reading running now is for, so its answers are stored as theirs.
-  const readingFor = useRef<string | null>(null)
   // Back on the dashboard from the camera, the questions or the setup screen,
   // focus goes to its heading (KV-20): the button pressed to leave — Stop, Go
   // back, Finish, Go to the check-ins — is gone, and focus left on nothing
@@ -371,10 +375,6 @@ function Dashboard(): React.JSX.Element {
     wantShown.current = asked
     setViewedId(id)
     setSessions(listed)
-    if (id !== null && id !== DEMO_PERSON_ID) {
-      const shownId = id
-      setCheckedIn((was) => ({ ...was, [shownId]: listed.length > 0 }))
-    }
     // The file just read may not be the one the protection line described — a
     // new history started, a restore written (review of #187) — so it is asked
     // again here. Not worth a screen: the line is all it feeds.
@@ -390,17 +390,10 @@ function Dashboard(): React.JSX.Element {
     setNotice(null)
   }, [])
 
-  /**
-   * Someone just added has taken no reading: known now, not once their list
-   * loads, so the setup screen does not say "next" in between (second review
-   * of #200).
-   */
-  const added = (personId: string): void =>
-    setCheckedIn((was) => ({ ...was, [personId]: false }))
-
   /** Shows a person's check-ins, or the demo's, as chosen at the top (KV-18). */
   const show = (id: string): void => {
     wanted.current = id
+    setNaming(null)
     void refresh().catch((e: unknown) => showFailure(e, 'The check-ins could not be shown.'))
   }
 
@@ -624,12 +617,11 @@ function Dashboard(): React.JSX.Element {
     })
   }, [])
 
-  // Starts a capture with no checks at all. Only `takeReading`, below, calls
-  // it: every button that starts a reading goes through that, so Windows is
-  // asked about the camera first (review of #193).
+  // Starts a capture with no checks at all. Only `readAs`, below, calls it, and
+  // only `beginReading` reaches that: every button that starts a reading goes
+  // through it, so Windows is asked about the camera first (review of #193).
   const startCaptureUnchecked = useCallback((personId: string): void => {
-    readingFor.current = personId
-    setReadingAs(personId)
+    setReadingFor(personId)
     setReading(null)
     setCaptureFailure(null)
     setCapturing(true)
@@ -690,7 +682,7 @@ function Dashboard(): React.JSX.Element {
   /** Submits the answers against the reading main is holding. */
   const submit = useCallback(
     (answers: CheckInAnswers): void => {
-      const personId = readingFor.current
+      const personId = readingFor
       if (answering === null || personId === null) return
       setSubmitting(true)
       setSubmitFailure(null)
@@ -722,15 +714,20 @@ function Dashboard(): React.JSX.Element {
           setSubmitFailure(classifySubmitError(e))
         })
     },
-    [answering, refresh],
+    [answering, readingFor, refresh],
   )
 
-  // A reading starts only once Windows has been asked again: a switch turned
-  // off since, or a key that is not there, is said on the setup screen, not by
-  // a capture that cannot run.
-  const takeReading = (): void => {
-    // Nobody to take it, or nobody told whose the check-ins are: the setup
-    // screen asks first (KV-18). Never the demo, whose days are invented.
+  /**
+   * Every way a reading starts — *Take a reading*, and *Try the camera again*
+   * for `personId` — so the guards hold for each (review of #203). In order:
+   * nobody to take it, or someone not told whose the check-ins are, goes to the
+   * setup screen (KV-18); then Windows is asked about the camera, and one
+   * turned off since, or a key not there, is said on the setup screen, not by a
+   * capture that cannot run; then, with more than one person and nobody chosen,
+   * who is taking it. The camera before the names, so a name pressed is never
+   * dropped on the setup screen (review of #203). Never the demo.
+   */
+  const beginReading = (personId: string | null): void => {
     if (people === null) {
       setNotice(
         'Kinvue could not tell whose check-ins these are, so a reading cannot start. ' +
@@ -744,27 +741,34 @@ function Dashboard(): React.JSX.Element {
     }
     // More than one person: they say who they are (KV-18), never whoever the
     // dashboard happens to show. With one, nothing is asked.
-    const only = readers.length === 1 ? readers[0] : undefined
-    if (only === undefined) setChoosing(true)
-    else readAs(only.id)
-  }
-
-  /** A reading for `personId`, once Windows has been asked about the camera. */
-  const readAs = (personId: string): void => {
-    setChoosing(false)
-    // Back to the person whose reading it is, so a card a capture leaves on the
-    // dashboard is shown with their check-ins, not the demo's or another's.
-    if (viewedId !== personId) show(personId)
+    const who = personId ?? (readers.length === 1 ? (readers[0]?.id ?? null) : null)
+    const next = (): void => (who === null ? setChoosing(true) : readAs(who))
     void askCamera().then(
       (now) => {
         // Known by the time a reading can be asked for: the dashboard is
         // not drawn until it is.
         if (keyStatus !== undefined && setupNeeded(now, keyStatus, false)) setPastSetup(false)
-        else startCaptureUnchecked(personId)
+        else next()
       },
       // Not asked: the capture is tried, and says what is wrong if it fails.
-      () => startCaptureUnchecked(personId),
+      next,
     )
+  }
+  const takeReading = (): void => beginReading(null)
+
+  /**
+   * The capture for `personId`, opened in the same commit that closes the
+   * names: in between, the dashboard drew and took focus under whoever it was
+   * showing (review of #203).
+   */
+  const readAs = (personId: string): void => {
+    setChoosing(false)
+    // Back to the person whose reading it is, so a card a capture leaves on the
+    // dashboard is shown with their check-ins, not the demo's or another's.
+    // Asked of `wanted`, not `viewedId`: the screen lags a switch still on its
+    // way, and asked of it, the reading came back to the demo (review of #203).
+    if (wanted.current !== personId) show(personId)
+    startCaptureUnchecked(personId)
   }
 
   if (capturing) {
@@ -880,14 +884,13 @@ function Dashboard(): React.JSX.Element {
         keyStatus={keyStatus}
         nameNeeded={nameNeeded}
         unnamed={unnamed ?? null}
-        // Nobody here yet, or nobody here with anything taken. Not known yet is
-        // "next": "first" is never said over a history.
-        firstReading={readers.every((p) => checkedIn[p.id] === false)}
+        // Nobody here has taken a reading, by the store's count of every
+        // record. A list that could not be read is "next": "first" is never
+        // said over a history.
+        firstReading={people !== null && !people.checkedIn}
         onCheckAgain={askCamera}
         onKeyKept={setKeyStatus}
-        onNamed={(person) => {
-          // Someone added, not someone named: nothing taken yet, known at once.
-          if (unnamed === undefined) added(person.id)
+        onNamed={() => {
           void refresh().catch((e: unknown) =>
             showFailure(e, 'The name was saved, but the check-ins could not be shown.'),
           )
@@ -903,80 +906,36 @@ function Dashboard(): React.JSX.Element {
           the demo a person of its own after them. Only when there is a choice.
           The caregiver's view: who takes a reading is asked at the button. */}
       {people !== null && readers.length + (people.demo ? 1 : 0) > 1 && (
-        <nav aria-label="Whose check-ins are shown" className="mb-4 flex flex-wrap gap-2">
-          {readers.map((person) => (
-            <button
-              key={person.id}
-              type="button"
-              aria-pressed={viewedId === person.id}
-              onClick={() => show(person.id)}
-              className={`${SWITCH} ${
-                viewedId === person.id ? SWITCH_ON : 'border-(--color-line)'
-              }`}
-            >
-              {person.name ?? UNNAMED}
-            </button>
-          ))}
-          {people.demo && (
-            <button
-              type="button"
-              aria-pressed={demoShown}
-              onClick={() => show(DEMO_PERSON_ID)}
-              className={`${SWITCH} ${demoShown ? SWITCH_ON : 'border-(--color-line)'}`}
-            >
-              The demo
-            </button>
-          )}
-        </nav>
-      )}
-
-      {/* Adding someone, and renaming whoever is shown (KV-18). Never the
-          demo: it is nobody, and its name is not anyone's to change. */}
-      {people !== null && (
-        <div className="mb-6 text-sm">
-          {naming === null ? (
-            <div className="flex flex-wrap gap-4">
-              <button type="button" onClick={() => setNaming('add')} className={LINK}>
-                Add a person&hellip;
+        <SectionBoundary
+          fallback="Whose check-ins are shown could not be chosen here."
+          className="mb-4"
+        >
+          <nav aria-label="Whose check-ins are shown" className="mb-4 flex flex-wrap gap-2">
+            {readers.map((person) => (
+              <button
+                key={person.id}
+                type="button"
+                aria-pressed={viewedId === person.id}
+                onClick={() => show(person.id)}
+                className={`${SWITCH} ${
+                  viewedId === person.id ? SWITCH_ON : 'border-(--color-line)'
+                }`}
+              >
+                {person.name ?? UNNAMED}
               </button>
-              {viewedId !== null && !demoShown && viewedName !== null && (
-                <button type="button" onClick={() => setNaming('rename')} className={LINK}>
-                  Rename {viewedName}&hellip;
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="rounded-lg border border-(--color-line) p-4">
-              {naming === 'add' ? (
-                <NameField
-                  label="Their name"
-                  save={(name) => window.kinvue.addPerson(name)}
-                  onNamed={(person) => {
-                    setNaming(null)
-                    added(person.id)
-                    show(person.id)
-                  }}
-                />
-              ) : (
-                viewedId !== null && (
-                  <NameField
-                    label="New name"
-                    save={(name) => window.kinvue.renamePerson(viewedId, name)}
-                    onNamed={() => {
-                      setNaming(null)
-                      void refresh().catch((e: unknown) =>
-                        showFailure(e, 'The name was saved, but the list could not be reloaded.'),
-                      )
-                    }}
-                  />
-                )
-              )}
-              <button type="button" onClick={() => setNaming(null)} className={`mt-3 ${LINK}`}>
-                Cancel
+            ))}
+            {people.demo && (
+              <button
+                type="button"
+                aria-pressed={demoShown}
+                onClick={() => show(DEMO_PERSON_ID)}
+                className={`${SWITCH} ${demoShown ? SWITCH_ON : 'border-(--color-line)'}`}
+              >
+                The demo
               </button>
-            </div>
-          )}
-        </div>
+            )}
+          </nav>
+        </SectionBoundary>
       )}
 
       <header className="mb-8">
@@ -1027,9 +986,7 @@ function Dashboard(): React.JSX.Element {
         <ReadingSummary
           result={reading}
           // The same person again: a retake is the reading just tried.
-          onRetake={() =>
-            readingFor.current === null ? takeReading() : readAs(readingFor.current)
-          }
+          onRetake={() => beginReading(readingFor)}
           onContinue={() => {
             setAnswering(reading)
             setReading(null)
@@ -1175,6 +1132,73 @@ function Dashboard(): React.JSX.Element {
             onChanged={refresh}
             onFailure={showFailure}
           />
+        </SectionBoundary>
+      )}
+
+      {/* Adding someone, and renaming them (KV-18): the caregiver's, so down
+          here with the history, not beside *Take a reading*, which starts the
+          cared-for person's path (review of #203). Never the demo: it is
+          nobody, and its name is not anyone's to change. Contained like every
+          other section (KV-163). */}
+      {people !== null && (
+        <SectionBoundary
+          fallback="Adding and renaming people could not be shown here. Nobody has been changed."
+          className="mt-10"
+        >
+          <section
+            aria-labelledby="people-heading"
+            className="mt-10 border-t border-(--color-line) pt-6 text-sm"
+          >
+            <h2 id="people-heading" className="text-base font-semibold">
+              People on this computer
+            </h2>
+            <div className="mt-3">
+              {naming === null ? (
+                <div className="flex flex-wrap gap-4">
+                  <button type="button" onClick={() => setNaming({ what: 'add' })} className={LINK}>
+                    Add a person&hellip;
+                  </button>
+                  {viewedId !== null && !demoShown && viewedName !== null && (
+                    <button
+                      type="button"
+                      onClick={() => setNaming({ what: 'rename', id: viewedId, name: viewedName })}
+                      className={LINK}
+                    >
+                      Rename {viewedName}&hellip;
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-(--color-line) p-4">
+                  {naming.what === 'add' ? (
+                    <NameField
+                      label="Their name"
+                      save={(name) => window.kinvue.addPerson(name)}
+                      onNamed={(person) => {
+                        setNaming(null)
+                        show(person.id)
+                      }}
+                    />
+                  ) : (
+                    <NameField
+                      // Says whom, since the box outlives the link that named them.
+                      label={`New name for ${naming.name}`}
+                      save={(name) => window.kinvue.renamePerson(naming.id, name)}
+                      onNamed={() => {
+                        setNaming(null)
+                        void refresh().catch((e: unknown) =>
+                          showFailure(e, 'The name was saved, but the list could not be reloaded.'),
+                        )
+                      }}
+                    />
+                  )}
+                  <button type="button" onClick={() => setNaming(null)} className={`mt-3 ${LINK}`}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
         </SectionBoundary>
       )}
 

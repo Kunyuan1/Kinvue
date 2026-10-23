@@ -583,8 +583,8 @@ function registerIpc(
   // show. Never a key: it tells a person from another across computers, and
   // the screens have no use for it.
   handle("people:list", async (): Promise<PeopleNow> => {
-    const { people, demo } = await store.roster();
-    return { people: people.map(shown), demo };
+    const { people, demo, checkedIn } = await store.roster();
+    return { people: people.map(shown), demo, checkedIn };
   });
   // A name is checked in the store (`checkName`), which is the one place that
   // knows everyone else's; here only that it is text at all.
