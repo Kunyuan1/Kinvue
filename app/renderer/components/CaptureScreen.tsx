@@ -149,9 +149,16 @@ export default function CaptureScreen({
   failure,
   onCancel,
   captureSeconds,
+  name = null,
 }: {
   failure: CaptureFailure | null
   onCancel: () => void
+  /**
+   * Who the reading is for, where more than one person takes readings (KV-18):
+   * the line after the heading, so a reading taken as the wrong person can be
+   * stopped while it runs. Null with one person: nothing changes.
+   */
+  name?: string | null
   /** What main will actually run, so the countdown cannot promise a different
    *  number from the capture (#63). */
   captureSeconds: number
@@ -244,6 +251,7 @@ export default function CaptureScreen({
       <h2 ref={heading} tabIndex={-1} className="text-2xl font-semibold">
         Sit comfortably and look at the camera
       </h2>
+      {name !== null && <p className={`mt-2 ${PERSON_NOTE}`}>Reading for {name}</p>}
 
       <div className="relative mt-6 overflow-hidden rounded-xl border border-(--color-line) bg-(--color-raised)">
         {previewFailed ? (

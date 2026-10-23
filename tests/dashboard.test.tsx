@@ -58,11 +58,14 @@ const drawControl = vi.hoisted(() => ({
 // and `failure-screens.test.tsx` draws both for real. Here only whether they
 // throw matters (review of #164).
 vi.mock('@renderer/components/CaptureScreen', () => ({
-  default: ({ onCancel }: { onCancel: () => void }) => {
+  // Says whose reading it is told it is (KV-18): what the screen does with the
+  // name is `failure-screens.test.tsx`'s to check.
+  default: ({ onCancel, name }: { onCancel: () => void; name?: string | null }) => {
     if (drawControl.captureThrows) throw new Error('capture screen failed to draw')
     return (
       <>
         <p>in front of the camera</p>
+        <p>capture for {name ?? 'nobody named'}</p>
         <button type="button" onClick={onCancel}>
           Go back
         </button>
@@ -72,9 +75,14 @@ vi.mock('@renderer/components/CaptureScreen', () => ({
 }))
 
 vi.mock('@renderer/components/QuestionFlow', () => ({
-  default: () => {
+  default: ({ name }: { name?: string | null }) => {
     if (drawControl.questionsThrow) throw new Error('questions failed to draw')
-    return <p>the questions</p>
+    return (
+      <>
+        <p>the questions</p>
+        <p>questions for {name ?? 'nobody named'}</p>
+      </>
+    )
   },
 }))
 
@@ -183,7 +191,7 @@ beforeEach(() => {
   openKeyRegistration = vi.fn<() => Promise<void>>(() => Promise.resolve())
   forgetApiKey = vi.fn<() => Promise<KeyStatus>>(() => Promise.resolve('none'))
   listPeople = vi.fn<() => Promise<PeopleNow>>(() =>
-    Promise.resolve({ people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }], demo: false }),
+    Promise.resolve({ people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }], demo: false, checkedIn: true }),
   )
   Object.defineProperty(window, 'kinvue', {
     configurable: true,
@@ -1166,7 +1174,7 @@ describe('the cared-for person’s path through the dashboard (KV-20)', () => {
   })
 
   it('opens the setup screen at its heading and nothing before it when only a name is needed (KV-18)', async () => {
-    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false, checkedIn: true })
     listSessions.mockResolvedValue(sessions())
     // The name field took autoFocus where it was all the screen asked for.
     const focused = vi.spyOn(HTMLElement.prototype, 'focus')
@@ -1380,7 +1388,7 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     // is a person of its own (KV-18), shown when chosen at the top.
     listPeople.mockResolvedValue({
       people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
-      demo: true,
+      demo: true, checkedIn: true,
     })
     listSessions.mockImplementation((id: string) =>
       Promise.resolve(
@@ -1941,7 +1949,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
   const named = (id: string, name: string) => ({ ok: true as const, person: { id, name } })
 
   it('asks once whose a history from before KV-18 is, and names that person', async () => {
-    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false, checkedIn: true })
     listSessions.mockResolvedValue(days())
     const renamePerson = vi.fn(() => Promise.resolve(named(DEMO_PERSON_ID, 'Ann')))
     Object.assign(window.kinvue, { renamePerson, addPerson: vi.fn() })
@@ -1949,7 +1957,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
 
     expect(await screen.findByText(/taken before Kinvue asked whose they are/)).toBeTruthy()
     // Named, the list says so: the dashboard is theirs.
-    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: 'Ann' }], demo: false })
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: 'Ann' }], demo: false, checkedIn: true })
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ann' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
 
@@ -1961,21 +1969,21 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
   })
 
   it('heads the screen the next reading for a history, and the first only for nobody yet (review of #200)', async () => {
-    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false, checkedIn: true })
     listSessions.mockResolvedValue(days())
     Object.assign(window.kinvue, { renamePerson: vi.fn(), addPerson: vi.fn() })
     const { unmount } = render(<App />)
     expect(await screen.findByRole('heading', { level: 1, name: 'Before the next reading' })).toBeTruthy()
     unmount()
 
-    listPeople.mockResolvedValue({ people: [], demo: false })
+    listPeople.mockResolvedValue({ people: [], demo: false, checkedIn: false })
     listSessions.mockResolvedValue([])
     render(<App />)
     expect(await screen.findByRole('heading', { level: 1, name: 'Before the first reading' })).toBeTruthy()
   })
 
   it('adds the first person on a computer with nobody yet', async () => {
-    listPeople.mockResolvedValue({ people: [], demo: false })
+    listPeople.mockResolvedValue({ people: [], demo: false, checkedIn: false })
     listSessions.mockResolvedValue([])
     const addPerson = vi.fn(() => Promise.resolve(named('p-1', 'Ann')))
     Object.assign(window.kinvue, { addPerson, renamePerson: vi.fn() })
@@ -1988,7 +1996,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
   })
 
   it('says why a name was not taken, and keeps what was typed', async () => {
-    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false, checkedIn: true })
     listSessions.mockResolvedValue(days())
     Object.assign(window.kinvue, {
       renamePerson: vi.fn(() => Promise.resolve({ ok: false, problem: 'invisible' })),
@@ -2002,7 +2010,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
   })
 
   it('asks for the name again, not the camera, when Take a reading is pressed unnamed', async () => {
-    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false })
+    listPeople.mockResolvedValue({ people: [{ id: DEMO_PERSON_ID, name: null }], demo: false, checkedIn: true })
     listSessions.mockResolvedValue(days())
     const capture = vi.fn(() => new Promise<never>(() => undefined))
     Object.assign(window.kinvue, { capture, renamePerson: vi.fn() })
@@ -2018,7 +2026,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
   it('takes a reading as the person, never the demo, even with the demo on screen', async () => {
     listPeople.mockResolvedValue({
       people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
-      demo: true,
+      demo: true, checkedIn: true,
     })
     listSessions.mockImplementation((id: string) =>
       Promise.resolve(
@@ -2045,7 +2053,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
   it('shows the latest choice, whichever reload answers last (review of #200)', async () => {
     listPeople.mockResolvedValue({
       people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
-      demo: true,
+      demo: true, checkedIn: true,
     })
     listSessions.mockResolvedValue(days())
     render(<App />)
@@ -2075,7 +2083,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
   it('says nothing of a failed reload a later one has answered since (second review of #200)', async () => {
     listPeople.mockResolvedValue({
       people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
-      demo: true,
+      demo: true, checkedIn: true,
     })
     listSessions.mockResolvedValue(days())
     render(<App />)
@@ -2103,7 +2111,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
   })
 
   it('keeps saying the first reading while the person just named is loading (second review of #200)', async () => {
-    listPeople.mockResolvedValue({ people: [], demo: false })
+    listPeople.mockResolvedValue({ people: [], demo: false, checkedIn: false })
     listSessions.mockResolvedValue([])
     cameraAccess.mockResolvedValue('off-for-apps')
     const addPerson = vi.fn(() => Promise.resolve(named('p-1', 'Ann')))
@@ -2112,7 +2120,11 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
     expect(await screen.findByRole('heading', { level: 1, name: 'Before the first reading' })).toBeTruthy()
 
     // Named, the list has them at once; their check-ins have not answered yet.
-    listPeople.mockResolvedValue({ people: [{ id: 'p-1', name: 'Ann' }], demo: false })
+    listPeople.mockResolvedValue({
+      people: [{ id: 'p-1', name: 'Ann' }],
+      demo: false,
+      checkedIn: false,
+    })
     listSessions.mockImplementation(() => new Promise<never>(() => undefined))
     fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Ann' } })
     fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
@@ -2124,7 +2136,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
   it('offers no restore into the demo, and says where one goes (review of #200)', async () => {
     listPeople.mockResolvedValue({
       people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
-      demo: true,
+      demo: true, checkedIn: true,
     })
     listSessions.mockImplementation((id: string) =>
       Promise.resolve(
@@ -2158,7 +2170,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
     seedDemo.mockImplementation(() => {
       listPeople.mockResolvedValue({
         people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
-        demo: true,
+        demo: true, checkedIn: true,
       })
       return Promise.resolve(14)
     })
@@ -2176,5 +2188,275 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
     render(<App />)
     expect(await screen.findByRole('alert')).toBeTruthy()
     expect(screen.queryByText(/Whose check-ins/)).toBeNull()
+  })
+})
+
+describe('more than one person: who is taking the reading, and whose check-ins are shown (KV-18)', () => {
+  const ANN = { id: 'p-ann', name: 'Ann' }
+  const BILL = { id: 'p-bill', name: 'Bill' }
+  const theirs = (personId: string): SessionRecord[] =>
+    history(3).map((r) => ({ ...r, id: `${personId}-${r.id}`, personId }))
+  const measured = {
+    captureId: 'c-1',
+    vitals: { pulseRateBpm: 70, breathingRateBrpm: 14, hrvRmssdMs: 40 },
+  }
+  const two = (demo = false): void => {
+    listPeople.mockResolvedValue({ people: [ANN, BILL], demo, checkedIn: true })
+    listSessions.mockImplementation((id: string) => Promise.resolve(theirs(id)))
+  }
+  const dashboard = (name: string): Promise<HTMLElement> =>
+    screen.findByRole('heading', { level: 1, name: `${name}’s check-ins` })
+
+  it('asks who is taking the reading, and takes it as the name pressed', async () => {
+    two(true)
+    const capture = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    await dashboard('Ann')
+    // Every focus as the screen opens: its heading, and nothing before it.
+    const focused = vi.spyOn(HTMLElement.prototype, 'focus')
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+
+    const asked = await screen.findByRole('heading', { name: 'Who is taking the reading?' })
+    expect(document.activeElement).toBe(asked)
+    expect(focused.mock.contexts).toEqual([asked])
+    // One full-width row per name, sized as the answers are; never the demo.
+    const names = screen.getAllByRole('listitem').map((li) => li.textContent)
+    expect(names).toEqual(['Ann', 'Bill'])
+    expect(screen.getByRole('button', { name: 'Bill' }).className).toMatch(/\bmin-h-16\b/)
+    expect(screen.queryByRole('button', { name: 'The demo' })).toBeNull()
+    expect(capture).not.toHaveBeenCalled()
+
+    // Not whoever the dashboard showed (Ann): the one pressed.
+    fireEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledWith(BILL.id))
+    expect(await screen.findByText('capture for Bill')).toBeTruthy()
+  })
+
+  it('asks nothing, and names nobody on the screens, where one person takes readings', async () => {
+    listPeople.mockResolvedValue({ people: [ANN], demo: true, checkedIn: true })
+    listSessions.mockImplementation((id: string) => Promise.resolve(theirs(id)))
+    const capture = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    await dashboard('Ann')
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledWith(ANN.id))
+    expect(screen.queryByRole('heading', { name: 'Who is taking the reading?' })).toBeNull()
+    expect(await screen.findByText('capture for nobody named')).toBeTruthy()
+  })
+
+  it('names the person on the questions too', async () => {
+    two()
+    Object.assign(window.kinvue, { capture: vi.fn(() => Promise.resolve(measured)) })
+    render(<App />)
+    await dashboard('Ann')
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+    // The names, not the switcher's button of the same name behind them.
+    await screen.findByRole('heading', { name: 'Who is taking the reading?' })
+    fireEvent.click(screen.getByRole('button', { name: 'Bill' }))
+
+    expect(await screen.findByText('questions for Bill')).toBeTruthy()
+  })
+
+  it('moves no focus between the name pressed and the capture (review of #203)', async () => {
+    two()
+    const capture = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    await dashboard('Ann')
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+    await screen.findByRole('heading', { name: 'Who is taking the reading?' })
+
+    // The way out of the names, watched as the way in is: nothing focused
+    // between them, least of all the dashboard's heading under Ann's name.
+    const focused = vi.spyOn(HTMLElement.prototype, 'focus')
+    fireEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledWith(BILL.id))
+    expect(focused.mock.contexts.map((el) => (el as HTMLElement).tagName)).not.toContain('H1')
+  })
+
+  it('asks Windows about the camera before asking who, so a name pressed is never dropped (review of #203)', async () => {
+    two()
+    const capture = vi.fn()
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    await dashboard('Ann')
+    cameraAccess.mockResolvedValue('off-for-apps')
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+
+    expect(await screen.findByRole('heading', { level: 1, name: SETUP_HEADING })).toBeTruthy()
+    expect(screen.queryByRole('heading', { name: 'Who is taking the reading?' })).toBeNull()
+    expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('comes back to the person the reading was for, though another was being switched to (review of #203)', async () => {
+    listPeople.mockResolvedValue({ people: [ANN], demo: true, checkedIn: true })
+    // The demo's days answer only when told to: a switch still on its way.
+    let demoAnswers: (records: SessionRecord[]) => void = () => undefined
+    listSessions.mockImplementation((id: string) =>
+      id === THE_DEMO
+        ? new Promise((resolve) => (demoAnswers = resolve))
+        : Promise.resolve(theirs(id)),
+    )
+    const capture = vi.fn(() => new Promise<never>(() => undefined))
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    await dashboard('Ann')
+
+    fireEvent.click(screen.getByRole('button', { name: 'The demo' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+    await vi.waitFor(() => expect(capture).toHaveBeenCalledWith(ANN.id))
+    await act(async () => demoAnswers(theirs(THE_DEMO)))
+    fireEvent.click(screen.getByRole('button', { name: 'Go back' }))
+
+    expect(await dashboard('Ann')).toBeTruthy()
+    expect(screen.queryByRole('heading', { level: 1, name: /^The demo:/ })).toBeNull()
+  })
+
+  it('says the first reading for a household where nobody has taken one, whoever was looked at (review of #203)', async () => {
+    // Two people, nothing taken, the camera off: a restart before anyone's
+    // first reading. Only Ann's list is ever loaded; Bill's is never looked at.
+    listPeople.mockResolvedValue({ people: [ANN, BILL], demo: false, checkedIn: false })
+    listSessions.mockResolvedValue([])
+    cameraAccess.mockResolvedValue('off-for-apps')
+    render(<App />)
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Before the first reading' }),
+    ).toBeTruthy()
+    cleanup()
+
+    // Someone has, though not the person shown: the next one.
+    listPeople.mockResolvedValue({ people: [ANN, BILL], demo: false, checkedIn: true })
+    render(<App />)
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'Before the next reading' }),
+    ).toBeTruthy()
+  })
+
+  it('goes back from the names to the dashboard, at its heading, with nothing started', async () => {
+    two()
+    const capture = vi.fn()
+    Object.assign(window.kinvue, { capture })
+    render(<App />)
+    await dashboard('Ann')
+    fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Go back' }))
+
+    expect(document.activeElement).toBe(await dashboard('Ann'))
+    expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('shows each person’s own check-ins, chosen at the top, the demo after them', async () => {
+    two(true)
+    render(<App />)
+    await dashboard('Ann')
+    const nav = screen.getByRole('navigation', { name: 'Whose check-ins are shown' })
+    expect([...nav.querySelectorAll('button')].map((b) => b.textContent)).toEqual([
+      'Ann',
+      'Bill',
+      'The demo',
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    await dashboard('Bill')
+    expect(listSessions).toHaveBeenLastCalledWith(BILL.id)
+    expect(screen.getByRole('button', { name: 'Bill' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Ann' }).getAttribute('aria-pressed')).toBe('false')
+  })
+
+  it('shows the latest choice between two people, whichever reload answers last', async () => {
+    two()
+    render(<App />)
+    await dashboard('Ann')
+    // Bill's check-ins answer slowly; Ann's at once.
+    let billAnswers: (records: SessionRecord[]) => void = () => undefined
+    listSessions.mockImplementation((id: string) =>
+      id === BILL.id
+        ? new Promise((resolve) => (billAnswers = resolve))
+        : Promise.resolve(theirs(id)),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Ann' }))
+    await vi.waitFor(() => expect(listSessions).toHaveBeenLastCalledWith(ANN.id))
+    await act(async () => billAnswers(theirs(BILL.id)))
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Ann’s check-ins' })).toBeTruthy()
+    expect(screen.queryByRole('heading', { level: 1, name: 'Bill’s check-ins' })).toBeNull()
+  })
+
+  it('keeps adding and renaming with the history, below the person’s Take a reading (review of #203)', async () => {
+    two()
+    render(<App />)
+    await dashboard('Ann')
+    const take = screen.getByRole('button', { name: 'Take a reading' })
+    const people = screen.getByRole('region', { name: 'People on this computer' })
+    const history = screen.getByRole('region', { name: 'Your history' })
+    const after = (a: Node, b: Node): boolean =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    expect(after(take, people)).toBe(true)
+    expect(after(history, people)).toBe(true)
+    expect(people.contains(screen.getByRole('button', { name: 'Add a person…' }))).toBe(true)
+    expect(people.contains(screen.getByRole('button', { name: 'Rename Ann…' }))).toBe(true)
+  })
+
+  it('adds a person from the dashboard, and shows them', async () => {
+    listPeople.mockResolvedValue({ people: [ANN], demo: false, checkedIn: true })
+    listSessions.mockImplementation((id: string) =>
+      Promise.resolve(id === ANN.id ? theirs(id) : []),
+    )
+    const addPerson = vi.fn(() => Promise.resolve({ ok: true as const, person: BILL }))
+    Object.assign(window.kinvue, { addPerson, renamePerson: vi.fn() })
+    render(<App />)
+    await dashboard('Ann')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add a person…' }))
+    listPeople.mockResolvedValue({ people: [ANN, BILL], demo: false, checkedIn: true })
+    fireEvent.change(screen.getByLabelText('Their name'), { target: { value: 'Bill' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
+
+    await dashboard('Bill')
+    expect(addPerson).toHaveBeenCalledWith('Bill')
+    expect(listSessions).toHaveBeenLastCalledWith(BILL.id)
+  })
+
+  it('closes an open rename when another person is shown, never renaming them (review of #203)', async () => {
+    two(true)
+    const renamePerson = vi.fn()
+    Object.assign(window.kinvue, { renamePerson, addPerson: vi.fn() })
+    render(<App />)
+    await dashboard('Ann')
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Ann…' }))
+    expect(screen.getByLabelText('New name for Ann')).toBeTruthy()
+
+    // Switched with the box open: it goes, rather than renaming Bill as Ann.
+    fireEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    await dashboard('Bill')
+    expect(screen.queryByLabelText(/^New name/)).toBeNull()
+    expect(renamePerson).not.toHaveBeenCalled()
+  })
+
+  it('renames the person shown, and never offers to rename the demo', async () => {
+    two(true)
+    const renamePerson = vi.fn(() =>
+      Promise.resolve({ ok: true as const, person: { ...BILL, name: 'William' } }),
+    )
+    Object.assign(window.kinvue, { renamePerson, addPerson: vi.fn() })
+    render(<App />)
+    await dashboard('Ann')
+    fireEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    await dashboard('Bill')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename Bill…' }))
+    listPeople.mockResolvedValue({ people: [ANN, { ...BILL, name: 'William' }], demo: true, checkedIn: true })
+    fireEvent.change(screen.getByLabelText('New name for Bill'), { target: { value: 'William' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
+    await dashboard('William')
+    expect(renamePerson).toHaveBeenCalledWith(BILL.id, 'William')
+
+    fireEvent.click(screen.getByRole('button', { name: 'The demo' }))
+    await screen.findByRole('heading', { level: 1, name: /^The demo:/ })
+    expect(screen.queryByRole('button', { name: /^Rename/ })).toBeNull()
   })
 })

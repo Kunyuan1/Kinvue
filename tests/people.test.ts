@@ -328,16 +328,15 @@ describe('the people list in the history file (KV-18)', () => {
     expect(await onDisk(path)).toEqual(file)
   })
 
-  it('adds nobody beside someone when asked to add only the first', async () => {
+  it('adds a second person beside the first, each with an id and key of their own', async () => {
     const path = await pathIn()
     const store = createJsonSessionStore(path, () => NOW)
-    const added = await store.addPerson('Ann', { onlyIfNobody: true })
-    expect(added.ok).toBe(true)
-    await expect(store.addPerson('Bill', { onlyIfNobody: true })).rejects.toThrow(/one person/)
-    expect((await store.people()).map((p) => p.name)).toEqual(['Ann'])
-    // Renaming the one here is still allowed.
-    if (!added.ok) throw new Error('not added')
-    expect((await store.rename(added.person.id, 'Bill')).ok).toBe(true)
+    const ann = await store.addPerson('Ann')
+    const bill = await store.addPerson('Bill')
+    if (!ann.ok || !bill.ok) throw new Error('not added')
+    expect((await store.people()).map((p) => p.name)).toEqual(['Ann', 'Bill'])
+    expect(bill.person.id).not.toBe(ann.person.id)
+    expect(bill.person.key).not.toBe(ann.person.key)
   })
 
   it('adds someone under a name held to the rule, with ids and keys of their own', async () => {
@@ -382,13 +381,15 @@ describe('the people list in the history file (KV-18)', () => {
   it('answers who is here and whether the demo has days in one read', async () => {
     const path = await pathIn()
     const store = createJsonSessionStore(path, () => NOW)
-    expect(await store.roster()).toEqual({ people: [], demo: false })
+    expect(await store.roster()).toEqual({ people: [], demo: false, checkedIn: false })
     await store.append(session({ id: 'one' }))
     expect((await store.roster()).demo).toBe(false)
     // A day seeded under a real person's id before KV-18 is still the demo's.
     await store.append({ ...session({ id: 'seed-1', seeded: true }), personId: 'test-person' })
     const roster = await store.roster()
     expect(roster.demo).toBe(true)
+    // Its own check-in counts; the seeded day, though written under its id, does not.
+    expect(roster.checkedIn).toBe(true)
     expect(roster.people.map((p) => p.id)).toEqual(['test-person'])
   })
 

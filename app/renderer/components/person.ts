@@ -32,6 +32,16 @@ export const PERSON_PRIMARY =
   'min-h-12 rounded-lg border-2 border-(--color-ink) px-6 py-2 text-lg font-medium ' +
   'hover:bg-(--color-raised) disabled:opacity-50'
 
+/**
+ * One of several things to pick, a full-width row: an answer to a question, a
+ * name at *Who is taking the reading?* (KV-18). 64px tall, 20px text, bigger
+ * than `PERSON_BUTTON` because it is what the whole screen is for. Its border
+ * colour is the caller's, which knows whether it is chosen.
+ */
+export const PERSON_CHOICE =
+  'flex min-h-16 w-full items-center rounded-xl border-2 bg-(--color-raised) px-5 py-3 ' +
+  'text-left text-xl'
+
 /** A line the person reads beside the main one: still 18px, only quieter. */
 export const PERSON_NOTE = 'text-lg text-(--color-muted)'
 

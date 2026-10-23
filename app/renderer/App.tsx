@@ -20,6 +20,8 @@ import QuestionFlow from './components/QuestionFlow'
 import SectionBoundary from './components/SectionBoundary'
 import SetupScreen, { setupNeeded } from './components/SetupScreen'
 import KeySettings from './components/KeySettings'
+import NameField from './components/NameField'
+import WhoIsReading from './components/WhoIsReading'
 import {
   PERSON_BUTTON,
   PERSON_NOTE,
@@ -195,14 +197,17 @@ function BaselineStatus({
 }
 
 /**
- * Whose check-ins the dashboard shows (KV-18): the person who takes readings,
- * or the demo when it is asked for — or when there is nobody else, so a
- * computer that has only seeded the demo shows it. Null when there is neither.
+ * Whose check-ins the dashboard shows (KV-18): whoever was chosen at the top,
+ * the demo among them, while they are still here; otherwise the first person
+ * on the list; otherwise the demo, so a computer that has only seeded it shows
+ * it. Null when there is nobody and no demo.
  */
-function viewedOf(now: PeopleNow, wantDemo: boolean): string | null {
-  const reader = now.people[0]
-  if (now.demo && (wantDemo || reader === undefined)) return DEMO_PERSON_ID
-  return reader?.id ?? null
+function viewedOf(now: PeopleNow, wanted: string | null): string | null {
+  if (wanted === DEMO_PERSON_ID && now.demo) return DEMO_PERSON_ID
+  if (wanted !== null && now.people.some((p) => p.id === wanted)) return wanted
+  const first = now.people[0]
+  if (first !== undefined) return first.id
+  return now.demo ? DEMO_PERSON_ID : null
 }
 
 /**
@@ -211,6 +216,13 @@ function viewedOf(now: PeopleNow, wantDemo: boolean): string | null {
  * someone could choose as a name (review of #200).
  */
 const UNNAMED = 'This person'
+
+/** A button at the top choosing whose check-ins are shown, and the one chosen. */
+const SWITCH = 'rounded-lg border px-3 py-1 text-sm'
+const SWITCH_ON = 'border-(--color-ink) font-medium'
+
+/** A quiet control of the caregiver's, drawn as the delete links are. */
+const LINK = 'text-(--color-muted) underline underline-offset-2 hover:text-(--color-ink)'
 
 function Dashboard(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null)
@@ -254,29 +266,47 @@ function Dashboard(): React.JSX.Element {
   // undefined until known, null when it could not be asked — the dashboard's
   // error says why, and no name is asked for over a list nobody could read.
   const [people, setPeople] = useState<PeopleNow | null | undefined>(undefined)
-  // Whether the demo's days are wanted instead of the person's, chosen at the
-  // top. A ref, read by `refresh` when it runs, not a state it closes over: the
-  // closure was what let a reload started before a switch land after it
-  // (review of #200).
-  const wantDemo = useRef(false)
-  // The choice the screen shows now: what `wantDemo` goes back to when the
-  // reload asked for by a switch fails, so the switch pressed next is not
-  // honoured by some later reload, a deletion's say (second review of #200).
-  const wantShown = useRef(false)
+  // Whose check-ins are wanted, chosen at the top: a person's id, the demo's,
+  // or null for the first person. A ref, read by `refresh` when it runs, not a
+  // state it closes over: the closure was what let a reload started before a
+  // switch land after it (review of #200).
+  const wanted = useRef<string | null>(null)
+  // The choice the screen shows now: what `wanted` goes back to when the reload
+  // asked for by a switch fails, so the switch pressed next is not honoured by
+  // some later reload, a deletion's say (second review of #200).
+  const wantShown = useRef<string | null>(null)
   // Whose check-ins `sessions` are: set with them, by the same reload, so the
   // heading, the usual and the trend are always about the records shown.
   const [viewedId, setViewedId] = useState<string | null>(null)
-  // Whether the one who takes readings has taken any, as last seen: undefined
-  // until a reload has listed theirs. Kept apart from `sessions`, which may be
-  // the demo's, or not yet loaded, while the setup screen is up (second review
-  // of #200).
-  const [readerHasCheckIns, setReaderHasCheckIns] = useState<boolean | undefined>(undefined)
-  // The one person who takes readings: the first on the list. Asking who before
-  // each reading, once there can be more than one, is #18's second part.
-  const reader: PersonShown | undefined = people?.people[0]
-  // Nobody to take a reading, or nobody told whose the check-ins are: the setup
-  // screen asks (KV-18).
-  const nameNeeded = people != null && (reader === undefined || reader.name === null)
+  // Everyone who takes readings here (KV-18). The demo is never one of them.
+  const readers: PersonShown[] = people?.people ?? []
+  // Someone whose check-ins are here but who has not been named: a history
+  // from before KV-18, or a name this build could not hold (second review of
+  // #200). The setup screen asks for one name at a time.
+  const unnamed: PersonShown | undefined = readers.find((p) => p.name === null)
+  // Nobody to take a reading, or someone not told whose check-ins are whose:
+  // the setup screen asks (KV-18). For the whole household, not only whoever
+  // sits down: today an unnamed person comes only from a history from before
+  // KV-18 or a name this build could not hold, each one person on their own.
+  // Restore by key (#18's third PR) can bring one in beside others, and is
+  // where this is scoped to the reader if it must be (review of #203).
+  const nameNeeded = people != null && (readers.length === 0 || unnamed !== undefined)
+  // *Who is taking the reading?* is open (KV-18).
+  const [choosing, setChoosing] = useState(false)
+  // Who the reading running now is for: its answers are stored as theirs, and
+  // their name is on the capture and the questions where more than one person
+  // takes readings. One state for both, so the name shown and the person filed
+  // under cannot drift apart — a ref beside it once could (review of #203).
+  const [readingFor, setReadingFor] = useState<string | null>(null)
+  const readingName =
+    readers.length > 1 ? (readers.find((p) => p.id === readingFor)?.name ?? null) : null
+  // Adding someone, or renaming someone, from the dashboard (KV-18). A rename
+  // holds whom it renames from the moment it opens, and closes when another
+  // person is shown: read from `viewedId` as it saved, it renamed whoever the
+  // switcher had moved to since (review of #203).
+  const [naming, setNaming] = useState<
+    { what: 'add' } | { what: 'rename'; id: string; name: string } | null
+  >(null)
   const demoShown = viewedId === DEMO_PERSON_ID
   // Null when the person shown has not been named yet.
   const viewedName = demoShown
@@ -284,8 +314,6 @@ function Dashboard(): React.JSX.Element {
     : (people?.people.find((p) => p.id === viewedId)?.name ?? null)
   // Which reload is the latest: only its answer is shown (review of #200).
   const loads = useRef(0)
-  // Who the reading running now is for, so its answers are stored as theirs.
-  const readingFor = useRef<string | null>(null)
   // Back on the dashboard from the camera, the questions or the setup screen,
   // focus goes to its heading (KV-20): the button pressed to leave — Stop, Go
   // back, Finish, Go to the check-ins — is gone, and focus left on nothing
@@ -302,7 +330,7 @@ function Dashboard(): React.JSX.Element {
     keyStatus !== undefined &&
     setupNeeded(camera, keyStatus, nameNeeded) &&
     !pastSetup
-  const away = capturing || answering !== null || showingSetup
+  const away = capturing || answering !== null || showingSetup || choosing
   const wasAway = useRef(away)
   const dashboardHeading = useRef<HTMLHeadingElement>(null)
   useLayoutEffect(() => {
@@ -315,7 +343,7 @@ function Dashboard(): React.JSX.Element {
   const refresh = useCallback(async (): Promise<void> => {
     const mine = ++loads.current
     const latest = (): boolean => mine === loads.current
-    const wanted = wantDemo.current
+    const asked = wanted.current
     let now: PeopleNow
     let id: string | null
     let listed: SessionRecord[]
@@ -326,7 +354,7 @@ function Dashboard(): React.JSX.Element {
       // the error rather than waiting. Who is here is the same answer whichever
       // reload fetched it.
       if (latest()) setPeople(now)
-      id = viewedOf(now, wanted)
+      id = viewedOf(now, asked)
       listed = id === null ? [] : await window.kinvue.listSessions(id)
     } catch (e) {
       // Only the latest reload says what went wrong: a failure of one a later
@@ -337,19 +365,16 @@ function Dashboard(): React.JSX.Element {
       // Known not to be known, so the screen is drawn with the error, rather
       // than waiting on a list that is not coming.
       setPeople((was) => was ?? null)
-      wantDemo.current = wantShown.current
+      wanted.current = wantShown.current
       throw e
     }
     // A later reload began while this one waited — a switch pressed, a seed —
     // and its answer is the one to show. Landing after it, this one put a real
     // person's check-ins under the demo's heading (review of #200).
     if (!latest()) return
-    wantShown.current = wanted
+    wantShown.current = asked
     setViewedId(id)
     setSessions(listed)
-    const first = now.people[0]
-    if (first === undefined) setReaderHasCheckIns(false)
-    else if (id === first.id) setReaderHasCheckIns(listed.length > 0)
     // The file just read may not be the one the protection line described — a
     // new history started, a restore written (review of #187) — so it is asked
     // again here. Not worth a screen: the line is all it feeds.
@@ -365,9 +390,10 @@ function Dashboard(): React.JSX.Element {
     setNotice(null)
   }, [])
 
-  /** Shows the demo's days, or the person's, as chosen at the top (KV-18). */
-  const showDemo = (demo: boolean): void => {
-    wantDemo.current = demo
+  /** Shows a person's check-ins, or the demo's, as chosen at the top (KV-18). */
+  const show = (id: string): void => {
+    wanted.current = id
+    setNaming(null)
     void refresh().catch((e: unknown) => showFailure(e, 'The check-ins could not be shown.'))
   }
 
@@ -531,7 +557,7 @@ function Dashboard(): React.JSX.Element {
     }
     // The demo is a person of its own (KV-18): seeded, it is what is shown —
     // by the reload below, which reads the choice when it runs.
-    wantDemo.current = true
+    wanted.current = DEMO_PERSON_ID
     await refresh().catch((e: unknown) =>
       showFailure(e, 'The demo history was added, but the list could not be reloaded.'),
     )
@@ -591,11 +617,11 @@ function Dashboard(): React.JSX.Element {
     })
   }, [])
 
-  // Starts a capture with no checks at all. Only `takeReading`, below, calls
-  // it: every button that starts a reading goes through that, so Windows is
-  // asked about the camera first (review of #193).
+  // Starts a capture with no checks at all. Only `readAs`, below, calls it, and
+  // only `beginReading` reaches that: every button that starts a reading goes
+  // through it, so Windows is asked about the camera first (review of #193).
   const startCaptureUnchecked = useCallback((personId: string): void => {
-    readingFor.current = personId
+    setReadingFor(personId)
     setReading(null)
     setCaptureFailure(null)
     setCapturing(true)
@@ -656,7 +682,7 @@ function Dashboard(): React.JSX.Element {
   /** Submits the answers against the reading main is holding. */
   const submit = useCallback(
     (answers: CheckInAnswers): void => {
-      const personId = readingFor.current
+      const personId = readingFor
       if (answering === null || personId === null) return
       setSubmitting(true)
       setSubmitFailure(null)
@@ -688,8 +714,62 @@ function Dashboard(): React.JSX.Element {
           setSubmitFailure(classifySubmitError(e))
         })
     },
-    [answering, refresh],
+    [answering, readingFor, refresh],
   )
+
+  /**
+   * Every way a reading starts — *Take a reading*, and *Try the camera again*
+   * for `personId` — so the guards hold for each (review of #203). In order:
+   * nobody to take it, or someone not told whose the check-ins are, goes to the
+   * setup screen (KV-18); then Windows is asked about the camera, and one
+   * turned off since, or a key not there, is said on the setup screen, not by a
+   * capture that cannot run; then, with more than one person and nobody chosen,
+   * who is taking it. The camera before the names, so a name pressed is never
+   * dropped on the setup screen (review of #203). Never the demo.
+   */
+  const beginReading = (personId: string | null): void => {
+    if (people === null) {
+      setNotice(
+        'Kinvue could not tell whose check-ins these are, so a reading cannot start. ' +
+          'Nothing has been changed.',
+      )
+      return
+    }
+    if (nameNeeded) {
+      setPastSetup(false)
+      return
+    }
+    // More than one person: they say who they are (KV-18), never whoever the
+    // dashboard happens to show. With one, nothing is asked.
+    const who = personId ?? (readers.length === 1 ? (readers[0]?.id ?? null) : null)
+    const next = (): void => (who === null ? setChoosing(true) : readAs(who))
+    void askCamera().then(
+      (now) => {
+        // Known by the time a reading can be asked for: the dashboard is
+        // not drawn until it is.
+        if (keyStatus !== undefined && setupNeeded(now, keyStatus, false)) setPastSetup(false)
+        else next()
+      },
+      // Not asked: the capture is tried, and says what is wrong if it fails.
+      next,
+    )
+  }
+  const takeReading = (): void => beginReading(null)
+
+  /**
+   * The capture for `personId`, opened in the same commit that closes the
+   * names: in between, the dashboard drew and took focus under whoever it was
+   * showing (review of #203).
+   */
+  const readAs = (personId: string): void => {
+    setChoosing(false)
+    // Back to the person whose reading it is, so a card a capture leaves on the
+    // dashboard is shown with their check-ins, not the demo's or another's.
+    // Asked of `wanted`, not `viewedId`: the screen lags a switch still on its
+    // way, and asked of it, the reading came back to the demo (review of #203).
+    if (wanted.current !== personId) show(personId)
+    startCaptureUnchecked(personId)
+  }
 
   if (capturing) {
     return (
@@ -713,6 +793,7 @@ function Dashboard(): React.JSX.Element {
             failure={captureFailure}
             onCancel={stopCapture}
             captureSeconds={captureSeconds}
+            name={readingName}
           />
         </SectionBoundary>
       </main>
@@ -755,6 +836,30 @@ function Dashboard(): React.JSX.Element {
             }}
             submitting={submitting}
             failure={submitFailure}
+            name={readingName}
+          />
+        </SectionBoundary>
+      </main>
+    )
+  }
+
+  if (choosing) {
+    return (
+      <main className="mx-auto max-w-3xl px-6 py-10">
+        {/* Contained like the other screens on the path (KV-163): one that
+            cannot be drawn goes back to the dashboard and says so. */}
+        <SectionBoundary
+          fallback="The names could not be shown."
+          className=""
+          onFailure={() => {
+            setChoosing(false)
+            setNotice('The names could not be shown, so no reading was started.')
+          }}
+        >
+          <WhoIsReading
+            people={readers}
+            onChoose={(person) => readAs(person.id)}
+            onCancel={() => setChoosing(false)}
           />
         </SectionBoundary>
       </main>
@@ -778,10 +883,11 @@ function Dashboard(): React.JSX.Element {
         camera={camera}
         keyStatus={keyStatus}
         nameNeeded={nameNeeded}
-        unnamed={reader?.name === null ? reader : null}
-        // Nobody here yet, or the one person here with nothing taken. Not known
-        // yet is "next": "first" is never said over a history.
-        firstReading={reader === undefined || readerHasCheckIns === false}
+        unnamed={unnamed ?? null}
+        // Nobody here has taken a reading, by the store's count of every
+        // record. A list that could not be read is "next": "first" is never
+        // said over a history.
+        firstReading={people !== null && !people.checkedIn}
         onCheckAgain={askCamera}
         onKeyKept={setKeyStatus}
         onNamed={() => {
@@ -794,64 +900,42 @@ function Dashboard(): React.JSX.Element {
     )
   }
 
-  // A reading starts only once Windows has been asked again: a switch turned
-  // off since, or a key that is not there, is said on the setup screen, not by
-  // a capture that cannot run.
-  const takeReading = (): void => {
-    // Nobody to take it, or nobody told whose the check-ins are: the setup
-    // screen asks first (KV-18). Never the demo, whose days are invented.
-    if (people === null) {
-      setNotice(
-        'Kinvue could not tell whose check-ins these are, so a reading cannot start. ' +
-          'Nothing has been changed.',
-      )
-      return
-    }
-    if (reader === undefined || reader.name === null) {
-      setPastSetup(false)
-      return
-    }
-    const personId = reader.id
-    // Back to the person whose reading it is, so a card a capture leaves on the
-    // dashboard is shown with their check-ins, not the demo's.
-    if (wantDemo.current) showDemo(false)
-    void askCamera().then(
-      (now) => {
-        if (setupNeeded(now, keyStatus, false)) setPastSetup(false)
-        else startCaptureUnchecked(personId)
-      },
-      // Not asked: the capture is tried, and says what is wrong if it fails.
-      () => startCaptureUnchecked(personId),
-    )
-  }
-
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
-      {/* Whose check-ins are shown (KV-18): the person's, or the demo's, which
-          is a person of its own. Only when there is a demo to show. */}
-      {people !== null && people.demo && reader !== undefined && (
-        <nav aria-label="Whose check-ins are shown" className="mb-6 flex flex-wrap gap-2">
-          <button
-            type="button"
-            aria-pressed={!demoShown}
-            onClick={() => showDemo(false)}
-            className={`rounded-lg border px-3 py-1 text-sm ${
-              demoShown ? 'border-(--color-line)' : 'border-(--color-ink) font-medium'
-            }`}
-          >
-            {reader.name ?? UNNAMED}
-          </button>
-          <button
-            type="button"
-            aria-pressed={demoShown}
-            onClick={() => showDemo(true)}
-            className={`rounded-lg border px-3 py-1 text-sm ${
-              demoShown ? 'border-(--color-ink) font-medium' : 'border-(--color-line)'
-            }`}
-          >
-            The demo
-          </button>
-        </nav>
+      {/* Whose check-ins are shown (KV-18): one person at a time, chosen here,
+          the demo a person of its own after them. Only when there is a choice.
+          The caregiver's view: who takes a reading is asked at the button. */}
+      {people !== null && readers.length + (people.demo ? 1 : 0) > 1 && (
+        <SectionBoundary
+          fallback="Whose check-ins are shown could not be chosen here."
+          className="mb-4"
+        >
+          <nav aria-label="Whose check-ins are shown" className="mb-4 flex flex-wrap gap-2">
+            {readers.map((person) => (
+              <button
+                key={person.id}
+                type="button"
+                aria-pressed={viewedId === person.id}
+                onClick={() => show(person.id)}
+                className={`${SWITCH} ${
+                  viewedId === person.id ? SWITCH_ON : 'border-(--color-line)'
+                }`}
+              >
+                {person.name ?? UNNAMED}
+              </button>
+            ))}
+            {people.demo && (
+              <button
+                type="button"
+                aria-pressed={demoShown}
+                onClick={() => show(DEMO_PERSON_ID)}
+                className={`${SWITCH} ${demoShown ? SWITCH_ON : 'border-(--color-line)'}`}
+              >
+                The demo
+              </button>
+            )}
+          </nav>
+        </SectionBoundary>
       )}
 
       <header className="mb-8">
@@ -901,7 +985,8 @@ function Dashboard(): React.JSX.Element {
       {reading !== null && (
         <ReadingSummary
           result={reading}
-          onRetake={takeReading}
+          // The same person again: a retake is the reading just tried.
+          onRetake={() => beginReading(readingFor)}
           onContinue={() => {
             setAnswering(reading)
             setReading(null)
@@ -1047,6 +1132,73 @@ function Dashboard(): React.JSX.Element {
             onChanged={refresh}
             onFailure={showFailure}
           />
+        </SectionBoundary>
+      )}
+
+      {/* Adding someone, and renaming them (KV-18): the caregiver's, so down
+          here with the history, not beside *Take a reading*, which starts the
+          cared-for person's path (review of #203). Never the demo: it is
+          nobody, and its name is not anyone's to change. Contained like every
+          other section (KV-163). */}
+      {people !== null && (
+        <SectionBoundary
+          fallback="Adding and renaming people could not be shown here. Nobody has been changed."
+          className="mt-10"
+        >
+          <section
+            aria-labelledby="people-heading"
+            className="mt-10 border-t border-(--color-line) pt-6 text-sm"
+          >
+            <h2 id="people-heading" className="text-base font-semibold">
+              People on this computer
+            </h2>
+            <div className="mt-3">
+              {naming === null ? (
+                <div className="flex flex-wrap gap-4">
+                  <button type="button" onClick={() => setNaming({ what: 'add' })} className={LINK}>
+                    Add a person&hellip;
+                  </button>
+                  {viewedId !== null && !demoShown && viewedName !== null && (
+                    <button
+                      type="button"
+                      onClick={() => setNaming({ what: 'rename', id: viewedId, name: viewedName })}
+                      className={LINK}
+                    >
+                      Rename {viewedName}&hellip;
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-lg border border-(--color-line) p-4">
+                  {naming.what === 'add' ? (
+                    <NameField
+                      label="Their name"
+                      save={(name) => window.kinvue.addPerson(name)}
+                      onNamed={(person) => {
+                        setNaming(null)
+                        show(person.id)
+                      }}
+                    />
+                  ) : (
+                    <NameField
+                      // Says whom, since the box outlives the link that named them.
+                      label={`New name for ${naming.name}`}
+                      save={(name) => window.kinvue.renamePerson(naming.id, name)}
+                      onNamed={() => {
+                        setNaming(null)
+                        void refresh().catch((e: unknown) =>
+                          showFailure(e, 'The name was saved, but the list could not be reloaded.'),
+                        )
+                      }}
+                    />
+                  )}
+                  <button type="button" onClick={() => setNaming(null)} className={`mt-3 ${LINK}`}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
         </SectionBoundary>
       )}
 

@@ -15,6 +15,13 @@ export interface PersonShown {
 export interface PeopleNow {
   people: PersonShown[]
   demo: boolean
+  /**
+   * Whether anyone here has taken a reading — the demo's invented days never
+   * count. The store's answer, from every record, so "the first reading" does
+   * not depend on whose check-ins the caregiver happened to look at (review of
+   * #203).
+   */
+  checkedIn: boolean
 }
 
 /** What naming someone came to: the person as now named, or why the name was not taken. */

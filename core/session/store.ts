@@ -62,17 +62,14 @@ export interface SessionStore {
    */
   people(): Promise<Person[]>
   /**
-   * The people, and whether the demo has days to show, from one read (review
-   * of #200): what the dashboard asks every time it loads, on a history that
-   * may be sealed, so one pass rather than one for each.
+   * The people, whether the demo has days to show, and whether anyone real has
+   * a check-in, from one read (review of #200): what the dashboard asks every
+   * time it loads, on a history that may be sealed, so one pass rather than one
+   * for each. A seeded day is the demo's, so it never makes `checkedIn` true.
    */
-  roster(): Promise<{ people: Person[]; demo: boolean }>
-  /**
-   * Adds someone under `name`, held to `checkName`, in one write (KV-18). With
-   * `onlyIfNobody`, throws instead when someone is on the list already, checked
-   * in the same turn as the write: one person until #18's second part.
-   */
-  addPerson(name: string, options?: { onlyIfNobody?: boolean }): Promise<NameResult>
+  roster(): Promise<{ people: Person[]; demo: boolean; checkedIn: boolean }>
+  /** Adds someone under `name`, held to `checkName`, in one write (KV-18). */
+  addPerson(name: string): Promise<NameResult>
   /** Names or renames `personId`, held to `checkName`. Changes no check-in. */
   rename(personId: string, name: string): Promise<NameResult>
   /**
@@ -923,17 +920,15 @@ export function createJsonSessionStore(
     },
     async roster() {
       const { people, sessions } = await reading()
-      return { people, demo: sessions.some((s) => ownerOf(s) === DEMO_PERSON_ID) }
+      return {
+        people,
+        demo: sessions.some((s) => ownerOf(s) === DEMO_PERSON_ID),
+        checkedIn: sessions.some((s) => ownerOf(s) !== DEMO_PERSON_ID),
+      }
     },
-    addPerson(name, { onlyIfNobody = false } = {}) {
+    addPerson(name) {
       return exclusive(async () => {
         const data = await current()
-        if (onlyIfNobody && data.people.length > 0) {
-          throw new Error(
-            'This version shows one person, so a second would not be seen. The person ' +
-              'already here is named by renaming them.',
-          )
-        }
         const checked = named(data, name, null)
         if (!checked.ok) return checked
         const person: Person = {
