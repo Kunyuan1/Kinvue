@@ -56,6 +56,23 @@ describe('createCheckIn', () => {
     expect(record.assessment).toBeDefined()
   })
 
+  it('stores a check-in only for someone still on the list, asked of the store as it writes (review of #206)', async () => {
+    const asked: unknown[] = []
+    const { checkIn } = setup({
+      store: {
+        list: async () => [],
+        append: async (_record, options) => {
+          asked.push(options)
+        },
+      },
+    })
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+    // Decided in the store's own turn, not by a look at the list beforehand,
+    // which a deletion could land between.
+    expect(asked).toEqual([{ onlyIfListed: true }])
+  })
+
   it('says on the record which format it is in and which rules scored it (KV-30)', async () => {
     const { checkIn, stored } = setup()
     const { captureId } = await checkIn.capture(PERSON, measure())

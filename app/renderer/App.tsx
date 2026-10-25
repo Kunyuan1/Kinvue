@@ -1211,10 +1211,19 @@ function Dashboard(): React.JSX.Element {
                   onDone={async (removed) => {
                     const { id, name } = changing
                     setChanging(null)
-                    // A reading held for them can no longer be stored as theirs.
-                    if (readingFor === id) setReading(null)
+                    // A reading held for them can no longer be stored as theirs,
+                    // and nobody it is for is on the list (review of #206).
+                    if (readingFor === id) {
+                      setReading(null)
+                      setReadingFor(null)
+                    }
                     // Whoever is first on the list now.
                     wanted.current = null
+                    // The last one gone: the dashboard stays, empty and saying
+                    // so, rather than the first-run screen in its place with no
+                    // word of what just happened. A reading asks for a name, as
+                    // any would with nobody here (review of #206).
+                    if (readers.length === 1) setPastSetup(true)
                     try {
                       await refresh()
                     } catch (e) {

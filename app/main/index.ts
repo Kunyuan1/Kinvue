@@ -378,12 +378,6 @@ function registerIpc(
     ): Promise<SessionRecord> => {
       const id = parsePersonId(personId);
       if (id === null) throw new Error("checkin:submit needs a person id.");
-      // Still on the list (KV-18), as at capture: a reading held for someone
-      // deleted since would otherwise bring them back, unnamed, under a key of
-      // their own — and deleting a person is meant to stay done.
-      if (!(await store.people()).some((p) => p.id === id)) {
-        throw new Error("checkin:submit is only for someone on this computer's list.");
-      }
       if (typeof captureId !== "string")
         throw new Error("checkin:submit needs a capture id.");
       const parsed = parseCheckInAnswers(answers);
@@ -616,8 +610,16 @@ function registerIpc(
   // is not on the list: its days go as any history's do.
   handle(
     "people:remove",
-    async (_e, personId: unknown): Promise<number> =>
-      await store.removePerson(personFor("people:remove", personId), new Date()),
+    async (_e, personId: unknown): Promise<number> => {
+      const id = personFor("people:remove", personId);
+      // Said for what it is, as `restoreFor` says it (review of #206).
+      if (id === DEMO_PERSON_ID) {
+        throw new Error(
+          "people:remove: the demo is not a person on the list; its days are deleted as a history.",
+        );
+      }
+      return await store.removePerson(id, new Date());
+    },
   );
 
   // KV-8. Opt-in, and every record it writes is marked `seeded: true`.

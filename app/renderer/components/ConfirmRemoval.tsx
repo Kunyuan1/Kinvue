@@ -1,11 +1,6 @@
-import { useId, useState } from 'react'
 import type { SessionRecord } from '@core/session/types'
 import { chosenFor, type Removal } from '@core/session/lifecycle'
-import ExportChoice from './ExportChoice'
-
-// Dimmed, with no hover, when disabled (KV-175): a guard that looks live is no guard.
-const BUTTON = 'rounded-lg border px-4 py-2' +
-  ' enabled:hover:bg-(--color-raised) disabled:cursor-not-allowed disabled:opacity-50'
+import ConfirmDeletion from './ConfirmDeletion'
 
 /** A moment on this device, for the confirm screen: "3 October, 23:40". */
 const moment = (instant: string): string =>
@@ -28,7 +23,8 @@ const moment = (instant: string): string =>
  * a settled card has been explained before it appears. Deleting everything also
  * says what is kept of it, and why that cannot go.
  *
- * "Keep them" has the focus: the choice that changes nothing is the default.
+ * The buttons, the export and the focus are `ConfirmDeletion`'s, shared with
+ * deleting a person.
  */
 export default function ConfirmRemoval({
   sessions,
@@ -42,11 +38,7 @@ export default function ConfirmRemoval({
   sessions: readonly SessionRecord[]
   personId: string
   which: Removal
-  /**
-   * Makes an export, from the screen that offers one first: the dashboard's
-   * one export, resolving to what to say, shown here beside the Delete it
-   * precedes (review of #185), or null when there is nothing to say.
-   */
+  /** Makes an export first, resolving to what to say, or null (`ConfirmDeletion`). */
   onExport: (passphrase?: string) => Promise<string | null>
   /** Called with how many were deleted, once they are. */
   onDone: (removed: number) => Promise<void>
@@ -54,11 +46,6 @@ export default function ConfirmRemoval({
   /** A step that failed: the dashboard says so the way it says any other. */
   onFailure: (e: unknown) => void
 }) {
-  const heading = useId()
-  const [busy, setBusy] = useState(false)
-  const [exported, setExported] = useState<string | null>(null)
-  // "Export first" asks the same question the panel does (KV-175).
-  const [choosing, setChoosing] = useState(false)
   const chosen = chosenFor(sessions, personId, which)
   const last = chosen.at(-1)
   if (last === undefined) return null
@@ -67,93 +54,33 @@ export default function ConfirmRemoval({
   // check-in is going (review of #185) — on a fresh install, none is.
   const leavesANote = chosen.some((r) => r.seeded !== true)
 
-  const run = async (step: () => Promise<void>): Promise<void> => {
-    setBusy(true)
-    try {
-      await step()
-    } catch (e) {
-      onFailure(e)
-    } finally {
-      setBusy(false)
-    }
-  }
-
   return (
-    <div
-      role="group"
-      aria-labelledby={heading}
-      className="mt-3 rounded-lg border border-(--color-line) p-4 text-sm"
+    <ConfirmDeletion
+      heading={
+        (which.kind === 'all' ? 'Delete the whole history' : `Delete ${count}`) +
+        (chosen.length > 1 ? `, the last taken ${moment(last.capturedAt)}?` : '?')
+      }
+      deleteLabel="Delete"
+      afterNote="An export is a copy to keep: restoring it will not bring these back."
+      onDelete={async () => {
+        await onDone(await window.kinvue.removeCheckIns(personId, which))
+      }}
+      onExport={onExport}
+      onCancel={onCancel}
+      onFailure={onFailure}
     >
-      <p id={heading} className="font-medium">
-        {which.kind === 'all' ? 'Delete the whole history' : `Delete ${count}`}
-        {chosen.length > 1 ? `, the last taken ${moment(last.capturedAt)}?` : '?'}
-      </p>
-      <ul className="mt-2 list-disc space-y-1 pl-5 text-(--color-muted)">
-        <li>This cannot be undone, not even by restoring an export.</li>
+      <li>This cannot be undone, not even by restoring an export.</li>
+      <li>
+        Older cards compared against {chosen.length === 1 ? 'this day' : 'these days'} may
+        note that they would read differently now.
+      </li>
+      {which.kind === 'all' && leavesANote && (
         <li>
-          Older cards compared against {chosen.length === 1 ? 'this day' : 'these days'} may
-          note that they would read differently now.
+          A note of which check-ins were deleted, and when, stays on this computer, so that an
+          export made earlier cannot bring them back. It holds no readings and no answers.
         </li>
-        {which.kind === 'all' && leavesANote && (
-          <li>
-            A note of which check-ins were deleted, and when, stays on this computer, so that an
-            export made earlier cannot bring them back. It holds no readings and no answers.
-          </li>
-        )}
-        {!leavesANote && <li>These are demo days, so nothing is kept of them.</li>}
-      </ul>
-      <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          autoFocus
-          disabled={busy}
-          onClick={onCancel}
-          className={`${BUTTON} border-(--color-line)`}
-        >
-          Keep them
-        </button>
-        <button
-          type="button"
-          disabled={busy || choosing}
-          onClick={() => setChoosing(true)}
-          className={`${BUTTON} border-(--color-line)`}
-        >
-          Export first
-        </button>
-        {/* Not while "Export first" is unfinished (review of #187): the copy it
-            is making is the safeguard, and Delete must not cut it short. */}
-        <button
-          type="button"
-          disabled={busy || choosing}
-          onClick={() =>
-            void run(async () => {
-              await onDone(await window.kinvue.removeCheckIns(personId, which))
-            })
-          }
-          className={`${BUTTON} border-(--color-elevated) text-(--color-elevated)`}
-        >
-          Delete
-        </button>
-      </div>
-      {choosing && (
-        <ExportChoice
-          onExport={onExport}
-          onCancel={() => setChoosing(false)}
-          onDone={(said) => {
-            setChoosing(false)
-            setExported(said)
-          }}
-        />
       )}
-      {/* Said on the screen, not only in ARCHITECTURE.md (review of #185): beside
-          "not even by restoring an export", the offer would read as an undo. */}
-      <p className="mt-2 text-xs text-(--color-muted)">
-        An export is a copy to keep: restoring it will not bring these back.
-      </p>
-      {/* Always there, so what an export says is announced when it arrives. */}
-      <p aria-live="polite" className="mt-2 min-h-5 text-(--color-muted)">
-        {exported}
-      </p>
-    </div>
+      {!leavesANote && <li>These are demo days, so nothing is kept of them.</li>}
+    </ConfirmDeletion>
   )
 }

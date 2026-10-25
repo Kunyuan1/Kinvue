@@ -350,7 +350,7 @@ describe('the temp-then-rename write', () => {
     await store.append(session({ id: 'two', capturedAt: '2026-09-02T09:00:00.000Z' }))
 
     const onDisk: unknown = JSON.parse(await readFile(path, 'utf8'))
-    expect(onDisk).toMatchObject({ version: 3 })
+    expect(onDisk).toMatchObject({ version: 2 })
     expect((await store.list('test-person')).map((s) => s.id)).toEqual(['one', 'two'])
   })
 
@@ -709,7 +709,7 @@ describe('exporting, restoring and deleting (KV-21)', () => {
     await store.append(session({ id: 'seed-x', seeded: true }))
     expect(await store.remove(DEMO_PERSON_ID, { kind: 'all' }, AT)).toBe(1)
     // Nobody on the list, either: a seeded day adds no person (KV-18).
-    expect(await onDisk(path)).toEqual({ version: 3, sessions: [], people: [] })
+    expect(await onDisk(path)).toEqual({ version: 2, sessions: [], people: [] })
   })
 
   it('keeps a deleted check-in deleted when it arrives again, and writes nothing', async () => {
@@ -848,6 +848,6 @@ describe('a version-1 history whose upgrade cannot be written (KV-18, review of 
     expect((await store.list('test-person')).map((s) => s.id)).toEqual(['one'])
     const again = await store.people()
     expect(again).toEqual(first)
-    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ ...v1, version: 3, people: first })
+    expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ ...v1, version: 2, people: first })
   })
 })

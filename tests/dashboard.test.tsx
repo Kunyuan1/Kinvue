@@ -2472,6 +2472,29 @@ describe('more than one person: who is taking the reading, and whose check-ins a
       expect(await screen.findByText('Deleted Bill and 3 check-ins.')).toBeTruthy()
     })
 
+    it('stays on the dashboard, saying so, when the only person is deleted (review of #206)', async () => {
+      listPeople.mockResolvedValue({ people: [ANN], demo: false, checkedIn: true })
+      listSessions.mockImplementation((id: string) => Promise.resolve(theirs(id)))
+      Object.assign(window.kinvue, { removePerson: vi.fn(() => Promise.resolve(3)) })
+      render(<App />)
+      await dashboard('Ann')
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Ann…' }))
+      listPeople.mockResolvedValue({ people: [], demo: false, checkedIn: false })
+      listSessions.mockResolvedValue([])
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Ann' }))
+
+      // Said where it happened, not swapped for the first-run screen in silence.
+      expect(await screen.findByText('Deleted Ann and 3 check-ins.')).toBeTruthy()
+      expect(screen.queryByRole('heading', { level: 1, name: SETUP_HEADING })).toBeNull()
+      expect(screen.getByRole('heading', { level: 1, name: 'Check-ins' })).toBeTruthy()
+
+      // A reading from here asks for a name first, as on a first run.
+      fireEvent.click(screen.getByRole('button', { name: 'Take a reading' }))
+      expect(
+        await screen.findByRole('heading', { level: 1, name: 'Before the first reading' }),
+      ).toBeTruthy()
+    })
+
     it('keeps them on Keep them, and closes when someone else is shown', async () => {
       two()
       const removePerson = vi.fn()

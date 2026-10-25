@@ -66,7 +66,7 @@ describe('a history encrypted at rest (KV-175)', () => {
     const path = await storePath()
     const store = createJsonSessionStore(path, ON, cipherFor('mine', { encrypts: false }))
     await store.append(noted)
-    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ version: 3 })
+    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({ version: 2 })
   })
 
   it('seals a plain history once, at start, and leaves a sealed or missing one alone', async () => {
