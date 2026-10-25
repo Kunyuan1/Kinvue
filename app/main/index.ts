@@ -605,6 +605,23 @@ function registerIpc(
       ),
   );
 
+  // KV-18. Deleting a person and every check-in of theirs, in one store write
+  // that keeps their key so no export brings them back. Never the demo, which
+  // is not on the list: its days go as any history's do.
+  handle(
+    "people:remove",
+    async (_e, personId: unknown): Promise<number> => {
+      const id = personFor("people:remove", personId);
+      // Said for what it is, as `restoreFor` says it (review of #206).
+      if (id === DEMO_PERSON_ID) {
+        throw new Error(
+          "people:remove: the demo is not a person on the list; its days are deleted as a history.",
+        );
+      }
+      return await store.removePerson(id, new Date());
+    },
+  );
+
   // KV-8. Opt-in, and every record it writes is marked `seeded: true`.
   handle("demo:seed", async (): Promise<number> => {
     const existing = await store.list(DEMO_PERSON_ID);

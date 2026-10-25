@@ -146,7 +146,10 @@ export function createCheckIn(deps: CheckInDeps): CheckIn {
         // Scored against prior sessions only — the new one must not be in its
         // own baseline. See core/baseline.
         session.assessment = deps.score(session, history)
-        await deps.store.append(session)
+        // Only for someone still on the list (KV-18): asked of the store in
+        // its own turn, so a person deleted while this reading waited stays
+        // deleted (review of #206).
+        await deps.store.append(session, { onlyIfListed: true })
         return session
       } catch (err) {
         // Nothing was stored, so the reading is still theirs to submit — unless

@@ -1503,6 +1503,47 @@ key, and *Start a new history*'s sentence.
 - **Not yet measured:** KV-20's 200% zoom check on the names screen (880px, six names).
   The tests hold it to one column of full-width rows; the measurement itself is by hand.
 
+Second, deleting a person (`store.removePerson`, `ConfirmPersonRemoval.tsx`):
+
+- **Version 3, for one new list:** `removedPeople`, a key and a time for each person
+  deleted here, checked field by field as it is read, as `removed` is — on a version-1
+  file too, before its upgrade writes it back (review of #206). A version-2 file is read
+  as version 3 that has deleted nobody, with nothing written on reading. **The version
+  says what the file holds** (review of #206): 3 only once `removedPeople` is there, 2
+  until then, as `removed` is absent until the first deletion. So a build that knows only
+  2 refuses exactly the files that would mislead it — one that has deleted someone, read
+  past the record that keeps them deleted (KV-13) — and goes on reading every household's
+  that never deleted anyone, so rolling back loses nothing there. The cost, taken on
+  purpose: each later change of format decides afresh which earlier version it still
+  writes. Only the inner number moved, as it did for version 2, so the envelope's
+  `version` (KV-175) stays 2.
+- **Deleting a person is one write:** their name, every check-in of theirs (each leaving
+  KV-21's tombstone), when they were last exported, and a person tombstone of their key
+  and when — no name, no id, nothing of what they said. Seeded days written under their
+  id before KV-18 are the demo's and stay. *People on this computer* offers it for the
+  person shown, beside *Rename*, through a confirm step that names them and their count
+  of check-ins, says it cannot be undone, not even by restoring an export, offers an
+  export first, and says what stays. *Keep them* has the focus. The demo is never
+  offered: its days go from the history panel, as any history's do.
+- **A reading held for them goes too.** The store refuses a check-in for anyone not on
+  the list, decided in the same turn as the write (`append`'s `onlyIfListed`, which every
+  check-in is stored through): a reading the questions were put off for, answered after
+  its person was deleted, would otherwise have added them back unnamed under a new key.
+  A look at the list in main beforehand, as this first did, left a gap a deletion could
+  land in, in the one layer with no tests (review of #206). The dashboard drops such a
+  reading as the deletion lands.
+- **Deleting the only person keeps the dashboard,** empty, with the sentence saying who
+  went — not the first-run screen in its place with no word of what just happened. A
+  reading from there asks for a name first, as any would with nobody here (review of
+  #206).
+- **One shell for confirming a deletion** (`ConfirmDeletion.tsx`): deleting check-ins and
+  deleting a person say different things in it, and share its buttons, its export and
+  its focus, so a change to how a deletion is confirmed reaches both (review of #206).
+- ***Start a new history* says it is the household's:** "This sets aside everyone's
+  check-ins on this computer, and their names, in the old file, and starts an empty
+  history for everyone", and its notice says the old file kept everyone's check-ins and
+  names.
+
 ---
 
 ## The cared-for person's path, sized for them (KV-20)
@@ -2208,9 +2249,13 @@ export (T16) is the same history outside even that boundary.
   bytes. **The envelope's `version`** starts at 2, above every plain file a build before
   KV-175 knows, so such a build refuses it as written by a newer version
   (`NewerStoreError`) — true, and it leaves the file alone. **The sealed file keeps its
-  own `version`** — today's `FILE_VERSION`, 1 — checked as now once opened. They move
-  apart: a change to the plain file's shape raises the inner number, and any change an
-  older build must not read, at either level, raises the envelope's too. Under a new name,
+  own `version`** — `FILE_VERSION`, 1 when this was decided and 3 since KV-18 — checked
+  as any plain file's is once opened. They move apart: a change to the plain file's shape
+  raises the inner number, and a change to the envelope itself raises the envelope's. A
+  build that knows the envelope opens it and refuses a newer inner number as newer, so a
+  change inside the sealed file needs no outer bump to be refused (corrected in review of
+  #206; this used to say any change an older build must not read raised both, which
+  KV-18's versions 2 and 3 did not need and did not do). Under a new name,
   an older build would find no `sessions.json`, take the ordinary first run, and start
   and write an empty history while the real one sat unread under the other name — a
   history stranded, the outcome KV-98's review kept *Start a new history* away from newer

@@ -156,9 +156,9 @@ describe('the envelope itself', () => {
   })
 
   it('tells a plain file of a later format from a sealed one: newer, not "encrypted"', async () => {
-    const listed = await listing(await fileOf({ version: 3, sessions: [] }))
+    const listed = await listing(await fileOf({ version: 4, sessions: [] }))
     expect(listed).toBeInstanceOf(NewerStoreError)
-    expect(String(listed)).toMatch(/file version 3/)
+    expect(String(listed)).toMatch(/file version 4/)
   })
 
   it('refuses an envelope it cannot make sense of, as an unreadable file', async () => {
@@ -220,6 +220,10 @@ describe('atRest: what is on disk, read without opening it (review of #187)', ()
     expect(await at()).toBe('nothing')
     await writeFile(path, JSON.stringify({ version: 1, sessions: [] }), 'utf8')
     expect(await at()).toBe('nothing')
+    // Every list empty, the deleted people's among them (KV-18): still nothing.
+    const empty = { version: 3, sessions: [], people: [], removedPeople: [] }
+    await writeFile(path, JSON.stringify(empty), 'utf8')
+    expect(await at()).toBe('nothing')
     await createJsonSessionStore(path).append(noted)
     expect(await at()).toBe('plain')
     await createJsonSessionStore(path, ON, cipherFor('mine')).encryptAtRest()
@@ -236,6 +240,13 @@ describe('atRest: what is on disk, read without opening it (review of #187)', ()
       // A person's id and a time, plain, with no check-ins (review of #187).
       JSON.stringify({ version: 1, sessions: [], lastExported: { 'test-person': 'x' } }),
       JSON.stringify({ version: 1, sessions: [], laterField: true }),
+      // A deleted person's key and when, with nobody left (KV-18).
+      JSON.stringify({
+        version: 3,
+        sessions: [],
+        people: [],
+        removedPeople: [{ key: '11111111-1111-4111-8111-111111111111', removedAt: 'x' }],
+      }),
       JSON.stringify({ kind: 'kinvue-history', version: 2, protection: {}, sealed: 'abc' }),
     ]) {
       await writeFile(path, text, 'utf8')
