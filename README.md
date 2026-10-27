@@ -19,8 +19,9 @@ It should be enough to understand how the system fits together and where to make
 > the dashboard, all on real hardware. The SmartSpectra capture has returned real pulse,
 > breathing and HRV from a webcam (KV-1) — on one machine, in one room, which corrected
 > several assumptions this code was built on. What the SDK sends to Presage has been
-> measured (KV-65): a licence meter, not the video. Nothing here has been used by anyone it
-> was built for.
+> measured (KV-65): a licence meter, not the video. Since KV-18 one check-in computer can
+> hold a household — several people, each named, each with their own baseline, asked who
+> is taking each reading. Nothing here has been used by anyone it was built for.
 
 ---
 
@@ -142,6 +143,9 @@ app/
     frames.ts            camera frames → a small picture a screen can show
     env.ts               loads .env into process.env before anything reads it
     history-file.ts      reads and names an exported history; no Electron (KV-21)
+    protected-restore.ts a restore's file held in main while the screen asks: for a
+                         protected export's passphrase (KV-175), or whose an export from
+                         before keys is (KV-18); bound to the page that asked
     cipher.ts            the history's cipher from safeStorage, and which key store counts
                          as one (KV-175)
     vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk
@@ -163,7 +167,12 @@ app/
                          cared-for person reads, not the caregiver
       HistoryPanel.tsx   export, restore and delete, at the foot of the dashboard (KV-21)
       ExportChoice.tsx   whether to protect an export with a passphrase (KV-175)
-      ConfirmRemoval.tsx the step before a deletion: what goes, and what deleting means
+      ConfirmDeletion.tsx
+                         the step before any deletion: what goes, what deleting means,
+                         an export first
+      ConfirmRemoval.tsx deleting check-ins, in that step
+      ConfirmPersonRemoval.tsx
+                         deleting a person and every check-in of theirs, in it (KV-18)
       QuestionFlow.tsx   the four questions, also addressed to them
       SectionBoundary.tsx
                          a card, the chart or a screen that fails to draw leaves a
@@ -172,7 +181,10 @@ app/
       SetupScreen.tsx    before the first reading: a camera Windows keeps Kinvue from,
                          where to turn it on, and the household's key (KV-19)
       KeyField.tsx       the key, typed in; KeySettings.tsx replaces it from the dashboard
-      NameField.tsx      whose the check-ins are, typed in on the setup screen (KV-18)
+      NameField.tsx      a person's name, typed in: on the setup screen, and to add or
+                         rename someone from the dashboard (KV-18)
+      WhoIsReading.tsx   "Who is taking the reading?", before each reading where more than
+                         one person takes them (KV-18)
       TrendChart.tsx     one metric over the baseline window, drawn from core/trend (KV-4)
       boxes.ts           the box a card and the chart are drawn in, shared with the
                          gap each leaves when it fails to draw
@@ -186,12 +198,14 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
     store.ts             JSON session store (MAIN PROCESS ONLY — imports node:fs)
     validate.ts          runtime checks on everything the renderer sends to main
     answers.ts           the four questions: complete, or not a check-in at all
-    people.ts            the people on this computer (KV-18): the name rule, and the demo
-                         as a person of its own, whose seeded days are read as its days
+    people.ts            the people on this computer (KV-18): the name rule, the record
+                         kept of someone deleted, and the demo as a person of its own,
+                         whose seeded days are read as its days
     format.ts            what a record says about itself: its format, and when two
                          arriving are one record (KV-30)
     check.ts             every field of a record read, checked against its type (KV-181)
-    lifecycle.ts         export, restore and delete, with tombstones (KV-21)
+    lifecycle.ts         export, restore and delete, with tombstones (KV-21); whose an
+                         export is, matched by key (KV-18)
     protect.ts           a passphrase-protected export: scrypt, AES-256-GCM (KV-175)
     checkin.ts           holds a capture until its answers arrive, then scores and stores it
     time.ts              which local day a check-in belongs to, where it was taken
@@ -210,6 +224,7 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
 tests/                   Vitest. Covers baseline, scoring, validation, check-in, time,
                          device, guidance, frames, answers, failures, the capture reply,
                          vitals and env.
+  fixtures/              files made by an earlier build, which this one must still open
 ```
 
 ---
@@ -374,7 +389,8 @@ Tuned constants live in code, not env, because changing one changes what the app
 
 ## Data Model
 
-One record per check-in, appended to a JSON file. Sessions are never edited in place.
+One record per check-in, appended to a JSON file. Sessions are never edited in place. The
+same file keeps the people they belong to (KV-18), and what is kept of anyone deleted.
 
 | Type | Notes |
 |---|---|
@@ -382,6 +398,8 @@ One record per check-in, appended to a JSON file. Sessions are never edited in p
 | `CheckInAnswers` | `mood`, `sleep`, `skippedMeal`, `painReported` (+ optional `painNote`). All four are required: there is no way to say "not asked", so the flow collects all of them or stores nothing. The meal answer is one of two, never both and never neither (`MealAnswer`): a record from before KV-16 has `eatenToday` in place of `skippedMeal`, and is read by the question it was asked, except a seeded one, which is read as the question asked now. |
 | `FiredRule` | `id`, `title`, `explanation`, `severity`. One per rule that fired. |
 | `Assessment` | `flag`, `firedRules`, `summary`, `baselineSessions`, plus the optional `baselineSeededSessions`, `baselineRefusedSessions`, `baselineSpan`, `uncomparedMetrics`, `withheld` and `rulesVersion`. Written by the scorer. `rulesVersion` says which version of the rules gave the verdict (KV-30); absent on one scored before it, and read as unknown. `baselineSpan` is the `capturedAt` of the oldest and newest check-in the baseline was built from, so a card can say when its usual had gone stale (KV-154). Like `uncomparedMetrics` it is **absent for two different reasons** — with no baseline sessions (only on a verdict that compared nothing, where absence is correct) and on a verdict scored before KV-154 (unknown) — so read it as unknown only where the card compared something. `baselineRefusedSessions` counts the earlier check-ins refused as unusable — the refusals `baselineSessions` excluded, across the whole history (not everything it leaves out: it is also capped at the window) — so a card still learning can say why its count is low (KV-100); absent on a verdict scored before it, and read as unknown. `withheld` says why an `insufficient-signal` verdict was withheld — an unusable capture (which of the four), a baseline still learning, or an uncompared metric — so the card's sentence is composed from a fact rather than re-decided later (KV-138 review); absent on any other verdict and on one scored before it existed. `uncomparedMetrics` lists the metrics measured at the check-in with too few readings of their own to have a usual, each with how many readings it had and how many were needed, and, when it had any, what they averaged; a would-be `normal` with any entry is withheld (KV-87). It is written only when the check-in was compared against a baseline at all, so it is **absent for two different reasons**: on an unusable capture or a baseline still learning, where nothing was compared and absence is correct, and on a verdict scored before KV-87, where absence means unknown. Read it as unknown only on a `normal` or `elevated` verdict. |
+| `Person` | `id`, `key`, `name`, `addedAt` (KV-18). `id` is what each `SessionRecord.personId` names. `key` is a random UUID that tells this person from anyone else on any computer — an id need not, since `demo-margaret` is the same on every install that ever ran the old demo — and a restore matches by it. It leaves the computer only inside that person's own export. `name` is `null` until someone has been told whose the check-ins are. The demo is never a `Person`. |
+| `PersonTombstone` | `key`, `id`, `removedAt` (KV-18): what is kept of a person deleted here — no name, nothing of their check-ins — so an export made earlier cannot bring them back. The `id` is there because an export from before keys says only an id; tombstones written before it was added carry none. |
 | `SessionRecord` | The above plus `format`, `id`, `personId`, `capturedAt` (UTC), `timeZone`, and `seeded` for demo history. `format` is the record format it was written in (KV-30), so a record read somewhere else says how to read it; absent on a record from before it, which is format 1. |
 
 `timeZone` is the IANA zone of the device at capture time, e.g. `Europe/London` — not a
@@ -425,10 +443,12 @@ them checkable:
   household's own registration, so it can tie when check-ins happen to that account.
 - **Session data is local**, under Electron's `userData`, and `.gitignore` covers
   `sessions/` and video files so a check-in cannot be committed by accident.
-- **Names are kept with the check-ins, and nowhere else** (KV-18). Whose the check-ins
-  are is asked once, on the setup screen, and kept in the same file, encrypted with it. A
-  name never leaves this computer, and neither does the random key that tells one person
-  from another.
+- **Names are kept with the check-ins, and nowhere else** (KV-18). A name is given on
+  the setup screen, or when someone is added or renamed from the dashboard, and kept in
+  the same file, encrypted with it. Each person also has a random key that tells them from
+  anyone else on any computer. Both leave this computer only inside that person's own
+  export — which is what lets a restore put them back as themselves — and never in a
+  share.
 - **The history is encrypted with this computer's key, where it has one** (KV-175):
   Windows's DPAPI, the macOS Keychain, or a Linux desktop keyring, through Electron's
   `safeStorage`. A copied file, a backup or a sync client's copy opened under another
@@ -459,11 +479,21 @@ them checkable:
   - **Restoring writes everything it accepts, or nothing, and never deletes.** Every
     check-in in the file is checked first; one this app cannot read refuses the file, and
     nothing changes. A restore only adds: deleting is always the person's own action.
+  - **A restore goes back into whoever the file says it is,** matched by their key, never
+    by whoever is shown (KV-18). Someone not on this computer is added with it, under
+    their own name unless that name is already used here. Someone deleted here is refused.
+    An export made before keys existed can only say an id, which two households may share,
+    so when someone here has that id the screen asks whose it is before anything is
+    written.
   - **Deleting cannot be undone, not even by restoring an export.** A deleted check-in is
     removed from the store, and a small note of which one and when is kept — no reading, no
     answer, no note — so an export made earlier cannot bring it back (nor, once sharing
     exists, a caregiver's copy). That note survives deleting everything. Verdicts on other
     cards are not rescored.
+  - **Deleting a person deletes them, and they stay deleted** (KV-18). Their name and every
+    check-in go in one write; what is kept is a note of their key, their id and when — no
+    name, no readings — so restoring an export of them is refused. The demo, which has
+    none of these, can be seeded again.
   - **"Deleted" means gone from the app, not from the disk.** The old file's blocks are
     released, not overwritten — ciphertext where the history is encrypted, plain where it
     is not — and the operating system's own backups (File History, Time Machine, a sync
@@ -474,6 +504,10 @@ them checkable:
   tell who is at the keyboard: anyone signed in as the same user can read, export or
   delete the history, and encryption at rest (KV-175) does not change that, since the
   operating system opens it for whoever is signed in. A separate account is the boundary.
+  That holds inside a household too (KV-18): several people on one account share one
+  history file, and each can see, export or delete the others' check-ins. Who is taking a
+  reading is asked, not detected — a reading taken under the wrong name is deleted, not
+  moved, since moving it would change two baselines.
 - **Opt-in by design.** Capture runs only when someone presses the button. There is no
   background monitoring and no always-on camera.
 
@@ -648,6 +682,11 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   writes version *n* refuses a file written by version *n+1*. Bumping it is a one-way door,
   and there is no migration (KV-30): each record now says its own format as well, and a
   history holding a record in a format this build does not know is refused the same way.
+  The file says the oldest version that can hold what is in it (KV-18): 2 with a people
+  list, 3 only once someone has been deleted, so a household that never deleted anyone
+  can still go back a build. Exports are versioned apart — 2 since they carry their
+  person, and 3 for a passphrase-protected one — and an earlier build refuses a newer one
+  as newer, rather than as no export.
   An encrypted history (KV-175) cannot be read at all by a build from before it, which
   says so in the same words. And an encrypted history is bound to the account: a new
   profile or another computer cannot open it — an export is the way across.
