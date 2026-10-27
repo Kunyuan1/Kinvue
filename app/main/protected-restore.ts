@@ -102,3 +102,61 @@ export function protectedRestores(
     },
   }
 }
+
+/**
+ * An export from before keys, read and waiting for the screen to say whose it
+ * is (KV-18): nothing is written until it does. Held as a protected export is
+ * (review of #207) — bound to the page that asked, dropped when that page
+ * navigates or closes, and answered only from it. A protected one arrives here
+ * already opened, so this is what keeps its plaintext from outliving the
+ * question it was opened for, as #187 kept the sealed file from outliving its
+ * passphrase field.
+ */
+export interface UnconfirmedRestores {
+  /** Holds `contents` for `page` until it is answered, let go, or the page goes. */
+  hold(page: PageEvents, contents: unknown): void
+  /** Lets go of whatever is held: Cancel, or another restore starting. */
+  letGo(): void
+  /** Whether a file is held — for the tests. */
+  holding(): boolean
+  /**
+   * Hands what is held to `restore`, for the page that asked and no other, and
+   * lets go. Throws when nothing is held for `page`.
+   */
+  confirm(
+    page: PageEvents,
+    restore: (contents: unknown) => Promise<RestoreResult>,
+  ): Promise<RestoreResult>
+}
+
+export function unconfirmedRestores(): UnconfirmedRestores {
+  let held: { contents: unknown; page: PageEvents; drop: () => void } | null = null
+
+  const letGo = (): void => {
+    if (held === null) return
+    const { page, drop } = held
+    held = null
+    page.off('did-navigate', drop)
+    page.off('destroyed', drop)
+  }
+
+  return {
+    hold(page, contents) {
+      letGo()
+      const drop = (): void => letGo()
+      page.on('did-navigate', drop)
+      page.on('destroyed', drop)
+      held = { contents, page, drop }
+    },
+    letGo,
+    holding: () => held !== null,
+    async confirm(page, restore) {
+      const mine = held
+      if (mine === null || mine.page !== page) {
+        throw new Error('history:restoreConfirmed has nothing waiting to be confirmed.')
+      }
+      letGo()
+      return await restore(mine.contents)
+    },
+  }
+}

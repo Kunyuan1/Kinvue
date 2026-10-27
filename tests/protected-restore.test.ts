@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
-import { protectedRestores } from '../app/main/protected-restore'
+import { protectedRestores, unconfirmedRestores } from '../app/main/protected-restore'
 import type { RestoreResult } from '@core/session/lifecycle'
 import type { ProtectedExport, Unprotected } from '@core/session/protect'
 
@@ -121,5 +121,49 @@ describe('protectedRestores', () => {
     await expect(waiting.unlock('right one', async () => RESTORED)).rejects.toThrow(
       /no protected file waiting/,
     )
+  })
+})
+
+describe('an export from before keys, held for its question (KV-18, review of #207)', () => {
+  const contents = { kind: 'kinvue-history', version: 1, personId: 'demo-margaret' }
+
+  it('restores what it holds, for the page that asked, and lets go', async () => {
+    const asked = unconfirmedRestores()
+    const page = new EventEmitter()
+    asked.hold(page, contents)
+    const restore = vi.fn(async () => RESTORED)
+    expect(await asked.confirm(page, restore)).toBe(RESTORED)
+    expect(restore).toHaveBeenCalledWith(contents)
+    expect(asked.holding()).toBe(false)
+    expect(page.listenerCount('did-navigate') + page.listenerCount('destroyed')).toBe(0)
+  })
+
+  it('answers no other page', async () => {
+    const asked = unconfirmedRestores()
+    asked.hold(new EventEmitter(), contents)
+    const restore = vi.fn(async () => RESTORED)
+    await expect(asked.confirm(new EventEmitter(), restore)).rejects.toThrow(/nothing waiting/)
+    expect(restore).not.toHaveBeenCalled()
+  })
+
+  it('lets go when its page navigates or is destroyed: a protected one is held opened', async () => {
+    const asked = unconfirmedRestores()
+    for (const event of ['did-navigate', 'destroyed'] as const) {
+      const page = new EventEmitter()
+      asked.hold(page, contents)
+      page.emit(event)
+      expect(asked.holding()).toBe(false)
+      expect(page.listenerCount('did-navigate') + page.listenerCount('destroyed')).toBe(0)
+      await expect(asked.confirm(page, async () => RESTORED)).rejects.toThrow(/nothing waiting/)
+    }
+  })
+
+  it('holds one at a time, and leaves no listeners behind', () => {
+    const asked = unconfirmedRestores()
+    const page = new EventEmitter()
+    for (let i = 0; i < 20; i++) asked.hold(page, contents)
+    expect(page.listenerCount('did-navigate')).toBe(1)
+    asked.letGo()
+    expect(page.listenerCount('did-navigate') + page.listenerCount('destroyed')).toBe(0)
   })
 })

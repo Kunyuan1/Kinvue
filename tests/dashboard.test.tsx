@@ -2518,6 +2518,24 @@ describe('more than one person: who is taking the reading, and whose check-ins a
       expect(asked.isConnected).toBe(false)
     })
 
+    it('says what a restore did though the reload after it fails, never "nothing changed" (review of #207)', async () => {
+      two()
+      render(<App />)
+      await dashboard('Ann')
+      restoreHistory.mockResolvedValueOnce({
+        ok: true,
+        outcome,
+        into: { personId: BILL.id, added: null },
+      })
+      listPeople.mockRejectedValue(fromMain(new Error('held by a backup agent'), 'people:list'))
+      fireEvent.click(screen.getByRole('button', { name: 'Restore from an export…' }))
+
+      expect(await screen.findByText('Restored 3 check-ins.')).toBeTruthy()
+      const alert = await screen.findByRole('alert')
+      expect(alert.textContent).toMatch(/could not be reloaded/)
+      expect(alert.textContent).not.toMatch(/Nothing has been changed/)
+    })
+
     it('lets go of an export from before keys on Cancel, writing nothing', async () => {
       two()
       const restoreConfirmed = vi.fn()
@@ -2526,13 +2544,15 @@ describe('more than one person: who is taking the reading, and whose check-ins a
       await dashboard('Ann')
       restoreHistory.mockResolvedValueOnce({
         ok: false,
-        refusal: { kind: 'before-keys', into: 'someone new' },
+        refusal: { kind: 'before-keys', into: null },
       })
       fireEvent.click(screen.getByRole('button', { name: 'Restore from an export…' }))
-      await screen.findByText(/Restore it as someone new on this computer/)
+      await screen.findByText(/the person on this computer who has not been named yet/)
 
       fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
-      expect(screen.queryByText(/Restore it as someone new/)).toBeNull()
+      expect(screen.queryByText(/who has not been named yet/)).toBeNull()
+      // Said, not only gone: the question vanishing was all there was (review of #207).
+      expect(screen.getByText('Nothing has been restored.')).toBeTruthy()
       expect(cancelRestore).toHaveBeenCalled()
       expect(restoreConfirmed).not.toHaveBeenCalled()
     })

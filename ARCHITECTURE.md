@@ -1518,8 +1518,9 @@ Second, deleting a person (`store.removePerson`, `ConfirmPersonRemoval.tsx`):
   writes. Only the inner number moved, as it did for version 2, so the envelope's
   `version` (KV-175) stays 2.
 - **Deleting a person is one write:** their name, every check-in of theirs (each leaving
-  KV-21's tombstone), when they were last exported, and a person tombstone of their key
-  and when — no name, no id, nothing of what they said. Seeded days written under their
+  KV-21's tombstone), when they were last exported, and a person tombstone of their key,
+  their id and when — no name, nothing of what they said. (The id since the review of
+  #207: see below.) Seeded days written under their
   id before KV-18 are the demo's and stay. *People on this computer* offers it for the
   person shown, beside *Rename*, through a confirm step that names them and their count
   of check-ins, says it cannot be undone, not even by restoring an export, offers an
@@ -1562,13 +1563,35 @@ Third, restore matched by key (`whoseExport`, `store.restore`), which finishes K
   check-ins, under the file's id, key and name. A name already used here, or one this
   build cannot hold, is not merged: they are added without one, and named under *People
   on this computer* or on the setup screen before the next reading.
-- **An export from before keys asks first.** It is matched by id, and nothing is written
-  until the screen has asked "This file is from before Kinvue could tell people apart.
-  Restore it into Ann's check-ins only if they are Ann's." and been told yes — *Cancel*
-  has the focus. Main holds the file meanwhile, as it holds a protected one (KV-175), and
-  lets it go on Cancel or another restore. With nobody here under its id — a backup
-  brought to a new computer — it asks to add them as someone new, with a fresh key and no
-  name.
+- **An export from before keys is matched by its id,** the only handle it gives, in this
+  order (review of #207):
+  - **a person deleted here** is refused, as a keyed export of them is. So the person
+    tombstone keeps their id beside their key: without it, a backup made before keys and
+    restored after the deletion put them back on the list under a fresh key, the one
+    thing the tombstone exists to stop. An id names nobody, and KV-21's tombstones
+    already carry one per check-in; the tombstones written before this carry none, and
+    read as they are.
+  - **nobody here with its id** — a backup brought to a new computer — restores as
+    someone new, with a fresh key and no name, **asking nothing.** Asked, "only if they
+    are not already here" was true whatever was pressed, and taught a yes for the time it
+    matters.
+  - **someone here with its id** is the time it matters — perhaps this household's own
+    backup, perhaps another household's `demo-margaret` — so nothing is written until the
+    screen has asked "This file is from before Kinvue could tell people apart. Restore it
+    into Ann's check-ins only if they are Ann's." and been told yes. *Cancel* has the
+    focus, and says so when pressed. Someone unnamed is named as the screen can find
+    them: "the person on this computer who has not been named yet".
+- **The file waiting for that answer is held as a protected one is** (review of #207):
+  in main, bound to the page that asked, dropped when that page navigates or closes, and
+  answered only from it (`unconfirmedRestores`, beside `protectedRestores`, tested as it
+  is). A protected export arrives there already opened, so this is what keeps its
+  plaintext from outliving the question. Starting any restore lets go of anything held
+  first, so a dialog cancelled, or a file that is no export, leaves nothing behind.
+- **Keys are compared in one case.** Read in either, as `randomUUID` writes lower and a
+  hand edit may not: compared exactly, an upper-cased key slipped past the tombstone and
+  came back under its file's name (review of #207).
+- **A key here under another id is its own reason,** not "someone else's": the someone-
+  else sentence now says only what is true of every way to it.
 - **Protected exports move to container version 3,** so they stay above every plain
   export, as they have been since KV-175: the plain export reaching 2 would otherwise have
   shared their number. Version 2 is still opened; what is inside is an export from before

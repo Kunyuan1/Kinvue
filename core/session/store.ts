@@ -1061,7 +1061,7 @@ export function createJsonSessionStore(
           people: data.people.filter((p) => p.id !== personId),
           removedPeople: [
             ...(data.removedPeople ?? []),
-            { key: person.key, removedAt: at.toISOString() },
+            { key: person.key, id: person.id, removedAt: at.toISOString() },
           ],
         }
         // When they were last exported goes with them: it names their id.

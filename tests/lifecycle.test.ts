@@ -401,12 +401,14 @@ describe('whose an export is: by key, never by id (KV-18)', () => {
 
   it('is refused when its key was deleted here, saying when', () => {
     const at = '2026-10-03T09:00:00.000Z'
-    expect(whoseExport(v2(), [], [{ key: ME.key, removedAt: at }], false)).toEqual({
+    expect(whoseExport(v2(), [], [{ key: ME.key, id: PERSON, removedAt: at }], false)).toEqual({
       kind: 'refused',
       refusal: { kind: 'person-deleted', removedAt: at },
     })
     // Before a person with its id is even considered.
-    expect(whoseExport(v2(), [ME], [{ key: ME.key, removedAt: at }], false).kind).toBe('refused')
+    expect(whoseExport(v2(), [ME], [{ key: ME.key, id: PERSON, removedAt: at }], false).kind).toBe(
+      'refused',
+    )
   })
 
   it('is someone else’s when a person here has its id under another key', () => {
@@ -415,6 +417,22 @@ describe('whose an export is: by key, never by id (KV-18)', () => {
       kind: 'refused',
       refusal: { kind: 'someone-else' },
     })
+  })
+
+  it('refuses its key under another id as its own reason, not as an id clash (review of #207)', () => {
+    const sameKeyOtherId: Person = { ...ME, id: 'p-elsewhere' }
+    expect(whoseExport(v2(), [sameKeyOtherId], [], false)).toEqual({
+      kind: 'refused',
+      refusal: {
+        kind: 'unreadable',
+        why: 'its person’s key belongs to someone on this computer under another id',
+      },
+    })
+    // And the someone-else sentence says only what is true of every way to it.
+    expect(describeRefusal({ kind: 'someone-else' }, day)).toBe(
+      'That file is the history of someone else, not of anyone on this computer. ' +
+        'Nothing has been changed.',
+    )
   })
 
   it('is someone new when nobody here has its key or its id, with its key and name', () => {
@@ -426,7 +444,7 @@ describe('whose an export is: by key, never by id (KV-18)', () => {
     })
   })
 
-  it('asks before an export from before keys is matched, naming whom it would go into', () => {
+  it('asks before an export from before keys goes into someone here, naming them', () => {
     expect(whoseExport(v1(), [ME], [], false)).toEqual({
       kind: 'refused',
       refusal: { kind: 'before-keys', into: 'Ann' },
@@ -435,20 +453,42 @@ describe('whose an export is: by key, never by id (KV-18)', () => {
       kind: 'refused',
       refusal: { kind: 'before-keys', into: null },
     })
-    expect(whoseExport(v1(), [BILL], [], false)).toEqual({
-      kind: 'refused',
-      refusal: { kind: 'before-keys', into: 'someone new' },
-    })
+    expect(whoseExport(v1(), [ME], [], true)).toEqual({ kind: 'here', personId: PERSON })
   })
 
-  it('matches an export from before keys by id once asked, or adds them with no key or name', () => {
-    expect(whoseExport(v1(), [ME], [], true)).toEqual({ kind: 'here', personId: PERSON })
-    expect(whoseExport(v1(), [BILL], [], true)).toEqual({
+  it('adds an export from before keys whose id nobody here has, asking nothing (review of #207)', () => {
+    // Asked, the question vouched for nothing: on a computer without them,
+    // "only if they are not already here" is true whatever is pressed.
+    expect(whoseExport(v1(), [BILL], [], false)).toEqual({
       kind: 'new',
       personId: PERSON,
       key: null,
       name: null,
     })
+  })
+
+  it('keeps a person deleted here deleted through an export from before keys (review of #207)', () => {
+    // Exported before keys, then deleted here: the only handle the file gives
+    // is the id, so the tombstone keeps it, and is asked before anything else.
+    const at = '2026-10-20T09:00:00.000Z'
+    const gone = [{ key: ME.key, id: PERSON, removedAt: at }]
+    const refused = { kind: 'refused', refusal: { kind: 'person-deleted', removedAt: at } }
+    expect(whoseExport(v1(), [], gone, false)).toEqual(refused)
+    expect(whoseExport(v1(), [], gone, true)).toEqual(refused)
+  })
+
+  it('matches a key in whatever case it is written, so a changed case slips nothing past (review of #207)', () => {
+    const at = '2026-10-20T09:00:00.000Z'
+    // Letters in it, so a change of case is a change: ME's key is all digits.
+    const LETTERED: Person = { ...ME, key: 'abcdef01-abcd-4abc-8abc-abcdefabcdef' }
+    const shouted = v2({ person: { key: LETTERED.key.toUpperCase(), name: 'Ann' } })
+    expect(shouted.person).not.toEqual({ key: LETTERED.key, name: 'Ann' })
+    const gone = [{ key: LETTERED.key, id: PERSON, removedAt: at }]
+    expect(whoseExport(shouted, [], gone, false)).toEqual({
+      kind: 'refused',
+      refusal: { kind: 'person-deleted', removedAt: at },
+    })
+    expect(whoseExport(shouted, [LETTERED], [], false)).toEqual({ kind: 'here', personId: PERSON })
   })
 
   it('reads an export’s person before it is trusted, and never the demo’s', () => {
@@ -488,8 +528,10 @@ describe('whose an export is: by key, never by id (KV-18)', () => {
       'This file is from before Kinvue could tell people apart. Restore it into Ann’s ' +
         'check-ins only if they are Ann’s.',
     )
-    expect(describeRefusal({ kind: 'before-keys', into: 'someone new' }, day)).toMatch(
-      /Restore it as someone new on this computer only if they are not already here\.$/,
+    // Unnamed, the question names them as the screen can: not by a name they lack.
+    expect(describeRefusal({ kind: 'before-keys', into: null }, day)).toBe(
+      'This file is from before Kinvue could tell people apart. Restore it into the check-ins ' +
+        'of the person on this computer who has not been named yet, only if they are theirs.',
     )
     expect(describeAdded(null)).toBe('')
     expect(describeAdded('named')).toBe(' They were not on this computer, so they have been added.')

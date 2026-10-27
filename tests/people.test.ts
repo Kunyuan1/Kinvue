@@ -422,8 +422,12 @@ describe('the people list in the history file (KV-18)', () => {
         { id: 'a-1', personId: 'p-ann', removedAt: AT.toISOString() },
         { id: 'a-2', personId: 'p-ann', removedAt: AT.toISOString() },
       ])
-      expect(written.removedPeople).toEqual([{ key: ANN_KEY, removedAt: AT.toISOString() }])
-      expect(JSON.stringify(written.removedPeople)).not.toMatch(/Ann|p-ann/)
+      // Their key and their id — an export from before keys says only the id
+      // (review of #207) — and never their name.
+      expect(written.removedPeople).toEqual([
+        { key: ANN_KEY, id: 'p-ann', removedAt: AT.toISOString() },
+      ])
+      expect(JSON.stringify(written.removedPeople)).not.toMatch(/Ann/)
       expect(written.lastExported).toEqual({ 'p-bill': NOW.toISOString() })
       // And it reads back: Bill's history as it was, Ann nowhere.
       expect((await store.people()).map((p) => p.name)).toEqual(['Bill'])
@@ -493,6 +497,13 @@ describe('the people list in the history file (KV-18)', () => {
       expect(await readFile(path, 'utf8')).toBe(text)
     })
 
+    it('reads a record of a deleted person written without an id, as the first build wrote them', async () => {
+      const path = await pathIn()
+      const removedPeople = [{ key: ANN_KEY, removedAt: AT.toISOString() }]
+      await writeFile(path, JSON.stringify({ ...household, version: 3, removedPeople }), 'utf8')
+      expect((await createJsonSessionStore(path, () => NOW).people()).length).toBe(2)
+    })
+
     it('refuses a file whose record of a deleted person it cannot read, and names the list', async () => {
       const path = await pathIn()
       const store = createJsonSessionStore(path, () => NOW)
@@ -503,6 +514,10 @@ describe('the people list in the history file (KV-18)', () => {
           /Deleted person 2 of 2 .* \(its key is not one\)/,
         ],
         [[{ key: ANN_KEY, removedAt: 'yesterday' }], /Deleted person 1 of 1 .* \(when it was/],
+        [
+          [{ key: ANN_KEY, id: ' p-ann', removedAt: AT.toISOString() }],
+          /Deleted person 1 of 1 .* \(its id is not one\)/,
+        ],
       ] as const) {
         await writeFile(path, JSON.stringify({ ...household, version: 3, removedPeople }), 'utf8')
         const thrown = await store.people().catch((e: unknown) => e)
@@ -574,6 +589,23 @@ describe('the people list in the history file (KV-18)', () => {
       })
       expect(await from.people()).toEqual([])
       expect(await from.list(ann?.id ?? '')).toEqual([])
+    })
+
+    it('keeps someone deleted here deleted through their export from before keys (review of #207)', async () => {
+      const { from, exported } = await annsExport()
+      const [ann] = await from.people()
+      // The same check-ins, as a build before keys would have exported them.
+      const { person: _person, ...rest } = exported as Record<string, unknown>
+      const before = { ...rest, version: 1 }
+      await from.removePerson(ann?.id ?? '', AT)
+
+      for (const confirmed of [false, true]) {
+        expect(await from.restore(before, { confirmed })).toEqual({
+          ok: false,
+          refusal: { kind: 'person-deleted', removedAt: AT.toISOString() },
+        })
+      }
+      expect(await from.people()).toEqual([])
     })
 
     it('asks before restoring an export from before keys, and writes only once told', async () => {

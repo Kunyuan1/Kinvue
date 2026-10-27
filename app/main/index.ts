@@ -44,7 +44,7 @@ import { openLink } from "./links";
 import { checkKey, createApiKeyStore, keySource, type ApiKeyStore } from "./api-key";
 import { settleOnce } from "./seal-loop";
 import type { KeyStatus, SetKeyResult } from "../shared/api-key";
-import { protectedRestores } from "./protected-restore";
+import { protectedRestores, unconfirmedRestores, type PageEvents } from "./protected-restore";
 import { localStateHoldsKey, osCipher, protectionOf } from "./cipher";
 import { captureVitals } from "./vitals";
 import { ERR_ABORTED, loadFailureMessage, showWhenReady } from "./window-show";
@@ -478,6 +478,13 @@ function registerIpc(
       passphrase: unknown,
     ): Promise<{ count: number; protected: boolean } | null> => {
       const id = personFor("history:export", personId);
+      // Before any dialog (review of #207): the demo has no key, so it is never
+      // exported, and main does not take the screen's word that it is not asked.
+      if (id === DEMO_PERSON_ID) {
+        throw new Error(
+          "history:export: the demo is not a person on the list, and is never exported.",
+        );
+      }
       // None given: a plain export, as the person chose. One given: protected.
       const secret =
         passphrase === undefined || passphrase === null
@@ -510,22 +517,28 @@ function registerIpc(
   );
 
   // An export from before keys, read, waiting for the screen to say whose it is
-  // (KV-18). Nothing is written until it does; any other restore, or Cancel,
-  // lets it go. In main, as a protected export is, so the renderer never holds
-  // the file.
-  let unconfirmed: unknown = null;
-  // Every restore, plain or protected: whose it is is the file's to say, never
-  // the screen's (KV-18), so no person is passed.
-  const restoring = async (contents: unknown): Promise<RestoreResult> => {
-    unconfirmed = null;
-    const result = await store.restore(contents);
-    if (!result.ok && result.refusal.kind === "before-keys") unconfirmed = contents;
-    return result;
-  };
+  // (KV-18). Nothing is written until it does. Held as a protected export is —
+  // bound to its page, let go when that page goes (`unconfirmedRestores`,
+  // review of #207) — so the renderer never holds the file.
+  const unconfirmed = unconfirmedRestores();
+  // Every restore, plain or protected, for the page that asked: whose it is is
+  // the file's to say, never the screen's (KV-18), so no person is passed.
+  const restoring =
+    (page: PageEvents) =>
+    async (contents: unknown): Promise<RestoreResult> => {
+      const result = await store.restore(contents);
+      if (!result.ok && result.refusal.kind === "before-keys") unconfirmed.hold(page, contents);
+      return result;
+    };
 
   handle(
     "history:restore",
     async (event): Promise<RestoreStep | null> => {
+      // A new restore lets go of any file still held, before anything else:
+      // a dialog cancelled, or a file that is no export, left one behind
+      // (review of #207). The screen offers no second restore while one waits.
+      waiting.letGo();
+      unconfirmed.letGo();
       const options = {
         title: "Restore check-in history",
         properties: ["openFile" as const],
@@ -544,41 +557,36 @@ function registerIpc(
         return { ok: false, refusal: { kind: "unopenable", code: file.code } };
       }
       if (isProtected(file.contents)) {
-        unconfirmed = null;
         waiting.hold(event.sender, file.contents);
         return { needsPassphrase: true };
       }
-      waiting.letGo();
       // The outcome and whose it was, not the merged history: the screen reads
       // the history the way it always does.
-      return await restoring(file.contents);
+      return await restoring(event.sender)(file.contents);
     },
   );
 
   handle(
     "history:restoreProtected",
-    (_e, passphrase: unknown): Promise<RestoreResult> => {
+    (event, passphrase: unknown): Promise<RestoreResult> => {
       if (typeof passphrase !== "string") {
         throw new Error("history:restoreProtected needs a passphrase.");
       }
-      return waiting.unlock(passphrase, restoring);
+      return waiting.unlock(passphrase, restoring(event.sender));
     },
   );
 
   // The screen's yes to an export from before keys (KV-18): the file read a
   // moment ago, written now.
-  handle("history:restoreConfirmed", async (): Promise<RestoreResult> => {
-    const contents = unconfirmed;
-    if (contents === null) {
-      throw new Error("history:restoreConfirmed has no file waiting to be confirmed.");
-    }
-    unconfirmed = null;
-    return await store.restore(contents, { confirmed: true });
-  });
+  handle(
+    "history:restoreConfirmed",
+    (event): Promise<RestoreResult> =>
+      unconfirmed.confirm(event.sender, (contents) => store.restore(contents, { confirmed: true })),
+  );
 
   handle("history:cancelRestore", (): void => {
     waiting.letGo();
-    unconfirmed = null;
+    unconfirmed.letGo();
   });
 
   handle(

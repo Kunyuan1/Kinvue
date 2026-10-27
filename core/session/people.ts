@@ -190,18 +190,26 @@ export function holdsAsName(name: string): boolean {
   return held.ok && held.name === name
 }
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+/** A key's shape: a UUID, in either case (`randomUUID` writes lower). */
+export const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /**
- * What is kept of a person deleted here (KV-18): their key, and when — no name,
- * no id, nothing of their check-ins. KV-21's tombstones are per check-in, and
- * there was none for a person, so a restored export would have brought back the
- * one thing deleting them is about: their name, on an empty person. A restore
- * whose key has one is refused whole, so deleting a person cannot be undone,
- * not even by restoring an export.
+ * What is kept of a person deleted here (KV-18): their key, their id, and when
+ * — no name, nothing of their check-ins. KV-21's tombstones are per check-in,
+ * and there was none for a person, so a restored export would have brought back
+ * the one thing deleting them is about: their name, on an empty person. A
+ * restore whose key has one is refused whole, so deleting a person cannot be
+ * undone, not even by restoring an export.
+ *
+ * **The id as well as the key** (review of #207): an export from before keys
+ * says only an id, so without it here such a file put a deleted person back on
+ * the list. An id names nobody — a random UUID, or the old demo's — and KV-21's
+ * tombstones already carry one per check-in. Absent from the ones the first
+ * build to write these made, which are read as they are.
  */
 export interface PersonTombstone {
   key: string
+  id?: string
   removedAt: string
 }
 
@@ -210,8 +218,11 @@ export function checkPersonTombstone(value: unknown): string | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return 'it is not a record of a deletion'
   }
-  const { key, removedAt } = value as Record<string, unknown>
+  const { key, id, removedAt } = value as Record<string, unknown>
   if (typeof key !== 'string' || !UUID.test(key)) return 'its key is not one'
+  if (id !== undefined && (typeof id !== 'string' || id === '' || id.trim() !== id)) {
+    return 'its id is not one'
+  }
   if (!isInstant(removedAt)) return 'when it was deleted is not a time'
   return null
 }

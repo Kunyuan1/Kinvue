@@ -118,8 +118,16 @@ export default function HistoryPanel({
       setSaid(describeRefusal(result.refusal, deviceDay))
       return
     }
-    await onRestored(result.into)
-    setSaid(describeRestore(result.outcome, deviceDay) + describeAdded(result.into.added))
+    // Said before the reload, and kept if the reload fails: written is written,
+    // and the step's own "nothing has been changed" would be false over it
+    // (review of #207).
+    const said = describeRestore(result.outcome, deviceDay) + describeAdded(result.into.added)
+    setSaid(said)
+    try {
+      await onRestored(result.into)
+    } catch (e) {
+      onFailure(e, `${said} The list could not be reloaded.`)
+    }
   }
 
   const restore = (): Promise<void> =>
@@ -157,7 +165,8 @@ export default function HistoryPanel({
 
   const cancelConfirming = (): void => {
     setConfirming(null)
-    setSaid(null)
+    // Said: the question going was all there was to see (review of #207).
+    setSaid('Nothing has been restored.')
     void window.kinvue.cancelRestore().catch((e: unknown) => {
       console.error('Could not let go of the export waiting to be confirmed.', e)
     })

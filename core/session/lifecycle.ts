@@ -1,6 +1,6 @@
 import { checkRecord, checkTombstone, isInstant } from './check'
 import { checkFormat, RECORD_FORMAT, sameRecord } from './format'
-import { DEMO_PERSON_ID, ownerOf, type Person, type PersonTombstone } from './people'
+import { DEMO_PERSON_ID, ownerOf, UUID, type Person, type PersonTombstone } from './people'
 import type { SessionRecord, Tombstone } from './types'
 
 /**
@@ -201,10 +201,10 @@ export type RestoreRefusal =
    * `demo-margaret` cannot tell this household from another. Not refused —
    * it is this household's own backup in the usual case — but nothing is
    * written until the screen has asked. `into` is the name of the person here
-   * it would go into, null when they have none, or `'someone new'` when nobody
-   * here has its id.
+   * it would go into, null when they have none. Only asked when someone here
+   * has its id (review of #207).
    */
-  | { kind: 'before-keys'; into: string | null | 'someone new' }
+  | { kind: 'before-keys'; into: string | null }
   | { kind: 'unreadable'; why: string }
   | { kind: 'entry'; position: number; total: number; why: string }
 
@@ -260,8 +260,10 @@ export interface RestoredInto {
  * - an id a person here has, under another key: someone else's, never merged
  *   — a `demo-margaret` from another household;
  * - neither: someone new, added under the file's id, key and name;
- * - an export from before keys: matched by id, but only once the screen has
- *   asked (`confirmed`), since an id alone cannot tell households apart.
+ * - an export from before keys, by its id, which is all it gives: refused when
+ *   a person tombstone here has it; someone new, asking nothing, when nobody
+ *   here has it; and into whoever has it only once the screen has asked
+ *   (`confirmed`), since an id alone cannot tell households apart.
  *
  * `file` is one `planRestore` has already read as an export.
  */
@@ -279,32 +281,49 @@ export function whoseExport(
   const personId = file.personId as string
   const byId = people.find((p) => p.id === personId)
   if (file.version === EXPORT_BEFORE_KEYS) {
-    if (!confirmed) {
-      const into = byId === undefined ? 'someone new' : byId.name
-      return { kind: 'refused', refusal: { kind: 'before-keys', into } }
-    }
-    return byId === undefined
-      ? { kind: 'new', personId, key: null, name: null }
-      : { kind: 'here', personId }
+    // The id is all such a file gives, so a person deleted here is found by
+    // it, before anything is asked (review of #207).
+    const gone = removedPeople.find((t) => t.id === personId)
+    if (gone !== undefined) return refusedAsDeleted(gone)
+    // Nobody here has its id: someone new, with nothing asked. Asked, "only if
+    // they are not already here" vouched for nothing, and taught a yes for the
+    // time it matters — an id here, which may be another household's
+    // `demo-margaret` (review of #207).
+    if (byId === undefined) return { kind: 'new', personId, key: null, name: null }
+    if (!confirmed) return { kind: 'refused', refusal: { kind: 'before-keys', into: byId.name } }
+    return { kind: 'here', personId }
   }
-  const { key, name } = file.person as { key: string; name: string | null }
-  const gone = removedPeople.find((t) => t.key === key)
-  if (gone !== undefined) {
-    return { kind: 'refused', refusal: { kind: 'person-deleted', removedAt: gone.removedAt } }
-  }
-  const byKey = people.find((p) => p.key === key)
+  const { name } = file.person as { key: string; name: string | null }
+  // Compared in one case: read in either (`UUID`), a key upper-cased by hand
+  // slipped past the tombstone and came back under its file's name (review of
+  // #207). Kept lower, as `randomUUID` writes them.
+  const key = (file.person as { key: string }).key.toLowerCase()
+  const same = (other: string): boolean => other.toLowerCase() === key
+  const gone = removedPeople.find((t) => same(t.key))
+  if (gone !== undefined) return refusedAsDeleted(gone)
+  const byKey = people.find((p) => same(p.key))
   if (byKey !== undefined) {
-    // The same person, though an id somehow differed: their records must
-    // still be theirs, which `planRestore` checks against this id.
-    return byKey.id === personId ? { kind: 'here', personId } : refusedAsSomeoneElse
+    // Their key under another id: not a file this build can match, whoever
+    // it is — their records name an id that is not theirs here.
+    return byKey.id === personId
+      ? { kind: 'here', personId }
+      : {
+          kind: 'refused',
+          refusal: {
+            kind: 'unreadable',
+            why: 'its person’s key belongs to someone on this computer under another id',
+          },
+        }
   }
   if (byId !== undefined) return refusedAsSomeoneElse
   return { kind: 'new', personId, key, name }
 }
 
 const refusedAsSomeoneElse: Whose = { kind: 'refused', refusal: { kind: 'someone-else' } }
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const refusedAsDeleted = (gone: PersonTombstone): Whose => ({
+  kind: 'refused',
+  refusal: { kind: 'person-deleted', removedAt: gone.removedAt },
+})
 
 /**
  * The first step of a restore: a result, or — for a protected export (KV-175) —
@@ -543,10 +562,9 @@ export function describeRefusal(
       )
     }
     case 'someone-else':
-      return (
-        'That file is the history of someone else, who shares an id with a person on this ' +
-        'computer but is not them.' + unchanged
-      )
+      // True of every way here (review of #207): an id shared with someone
+      // here under another key, or a file asked into a history not its own.
+      return 'That file is the history of someone else, not of anyone on this computer.' + unchanged
     case 'person-deleted':
       return (
         `These check-ins were deleted on this computer on ${day(refusal.removedAt)}, with ` +
@@ -554,11 +572,13 @@ export function describeRefusal(
       )
     case 'before-keys': {
       // A question, not a refusal: nothing is written until it is answered.
+      // Unnamed, they are named as the screen can find them, not as "this
+      // person", who may not be the one shown (review of #207).
       const into =
-        refusal.into === 'someone new'
-          ? 'as someone new on this computer only if they are not already here'
-          : `into ${refusal.into === null ? 'this person' : refusal.into}’s check-ins only if ` +
-            `they are ${refusal.into === null ? 'theirs' : `${refusal.into}’s`}`
+        refusal.into === null
+          ? 'into the check-ins of the person on this computer who has not been named yet, ' +
+            'only if they are theirs'
+          : `into ${refusal.into}’s check-ins only if they are ${refusal.into}’s`
       return `This file is from before Kinvue could tell people apart. Restore it ${into}.`
     }
     case 'unreadable':
