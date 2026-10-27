@@ -1518,8 +1518,9 @@ Second, deleting a person (`store.removePerson`, `ConfirmPersonRemoval.tsx`):
   writes. Only the inner number moved, as it did for version 2, so the envelope's
   `version` (KV-175) stays 2.
 - **Deleting a person is one write:** their name, every check-in of theirs (each leaving
-  KV-21's tombstone), when they were last exported, and a person tombstone of their key
-  and when — no name, no id, nothing of what they said. Seeded days written under their
+  KV-21's tombstone), when they were last exported, and a person tombstone of their key,
+  their id and when — no name, nothing of what they said. (The id since the review of
+  #207: see below.) Seeded days written under their
   id before KV-18 are the demo's and stay. *People on this computer* offers it for the
   person shown, beside *Rename*, through a confirm step that names them and their count
   of check-ins, says it cannot be undone, not even by restoring an export, offers an
@@ -1543,6 +1544,66 @@ Second, deleting a person (`store.removePerson`, `ConfirmPersonRemoval.tsx`):
   check-ins on this computer, and their names, in the old file, and starts an empty
   history for everyone", and its notice says the old file kept everyone's check-ins and
   names.
+
+Third, restore matched by key (`whoseExport`, `store.restore`), which finishes KV-18:
+
+- **An export says whose it is.** Export version 2 adds `person: { key, name }`; the key
+  leaves the device here and nowhere else. Only someone on the list is exported: the demo
+  has no key. Version 1 is still read.
+- **Restore is the household's, not the shown person's.** The file says whose it is, so
+  *Restore from an export* takes no person, is offered whoever is shown — the demo
+  included, which reverses the two bullets above that kept restore away from the demo:
+  they were about a restore that went into whoever was shown — and the dashboard moves to
+  whoever the file went into.
+- **Whose, decided before anything is merged** (`whoseExport`), in the order decided
+  above: a key with a person tombstone here is refused ("…deleted on this computer on 3
+  October, with their person, and stay deleted"); a key a person here has is theirs, and
+  KV-21's merge runs as it did; an id a person here has under another key is someone
+  else's, never merged; neither is someone new, added in the same write as their
+  check-ins, under the file's id, key and name. A name already used here, or one this
+  build cannot hold, is not merged: they are added without one, and named under *People
+  on this computer* or on the setup screen before the next reading.
+- **An export from before keys is matched by its id,** the only handle it gives, in this
+  order (review of #207):
+  - **a person deleted here** is refused, as a keyed export of them is. So the person
+    tombstone keeps their id beside their key: without it, a backup made before keys and
+    restored after the deletion put them back on the list under a fresh key, the one
+    thing the tombstone exists to stop. An id names nobody, and KV-21's tombstones
+    already carry one per check-in; the tombstones written before this carry none, and
+    read as they are.
+  - **nobody here with its id** — a backup brought to a new computer — restores as
+    someone new, with a fresh key and no name, **asking nothing.** Asked, "only if they
+    are not already here" was true whatever was pressed, and taught a yes for the time it
+    matters.
+  - **someone here with its id** is the time it matters — perhaps this household's own
+    backup, perhaps another household's `demo-margaret` — so nothing is written until the
+    screen has asked "This file is from before Kinvue could tell people apart. Restore it
+    into Ann's check-ins only if they are Ann's." and been told yes. *Cancel* has the
+    focus, and says so when pressed. Someone unnamed is named as the screen can find
+    them: "the person on this computer who has not been named yet".
+- **The file waiting for that answer is held as a protected one is** (review of #207):
+  in main, bound to the page that asked, dropped when that page navigates or closes, and
+  answered only from it (`unconfirmedRestores`, beside `protectedRestores`, tested as it
+  is). A protected export arrives there already opened, so this is what keeps its
+  plaintext from outliving the question. Starting any restore lets go of anything held
+  first, so a dialog cancelled, or a file that is no export, leaves nothing behind.
+- **Keys are compared in one case.** Read in either, as `randomUUID` writes lower and a
+  hand edit may not: compared exactly, an upper-cased key slipped past the tombstone and
+  came back under its file's name (review of #207).
+- **A key here under another id is its own reason,** not "someone else's": the someone-
+  else sentence now says only what is true of every way to it.
+- **Protected exports move to container version 3,** so they stay above every plain
+  export, as they have been since KV-175: the plain export reaching 2 would otherwise have
+  shared their number. Version 2 is still opened; what is inside is an export from before
+  keys. A test opens one made by the build before this.
+- **Who is unnamed is still asked before anyone's reading** (the question #203 left
+  here). A restore is now how an unnamed person can arrive beside others, and asking
+  straight away — the dashboard stays, saying what the restore did and offering to name
+  them; a reading asks first — costs one name, once, against a reading filed under nobody.
+  Scoping it to whoever sits down would let readings go on while someone's check-ins sat
+  under no name. So it stays the household's.
+- **A file claiming the demo's id is refused as unreadable,** before it could add a person
+  the history file would then refuse to hold.
 
 ---
 

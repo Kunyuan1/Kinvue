@@ -1,6 +1,6 @@
 import { checkRecord, checkTombstone, isInstant } from './check'
 import { checkFormat, RECORD_FORMAT, sameRecord } from './format'
-import { ownerOf } from './people'
+import { DEMO_PERSON_ID, ownerOf, UUID, type Person, type PersonTombstone } from './people'
 import type { SessionRecord, Tombstone } from './types'
 
 /**
@@ -113,7 +113,14 @@ export const EXPORT_KIND = 'kinvue-history'
  * from the store file's `version` (the shape of `sessions.json`) and each
  * record's `format` (the shape of a record, the same inside both).
  */
-export const EXPORT_VERSION = 1
+export const EXPORT_VERSION = 2
+
+/**
+ * The export version from before a file said whose it was (KV-18): its records
+ * carry a `personId` and nothing else about the person. Still read, and matched
+ * by that id only once the screen has asked (`whoseExport`).
+ */
+export const EXPORT_BEFORE_KEYS = 1
 
 /**
  * The shortest passphrase a protected export takes (KV-175): it is the whole
@@ -138,19 +145,27 @@ export interface HistoryExport {
   version: typeof EXPORT_VERSION
   exportedAt: string
   personId: string
+  /**
+   * Whose it is (KV-18): their key, which tells them from anyone else on any
+   * computer, and their name, so a restore that adds them can call them
+   * something. The key leaves the device here and nowhere else.
+   */
+  person: { key: string; name: string | null }
   /** Their real check-ins exactly as stored. Seeded days are never exported. */
   records: SessionRecord[]
   /** What is kept of their deleted check-ins, so a restore cannot bring them back. */
   removed: Tombstone[]
 }
 
-/** `personId`'s history as a restorable export: records as stored, seeded days left out. */
-export function exportOf(history: History, personId: string, now: Date): HistoryExport {
+/** `person`'s history as a restorable export: records as stored, seeded days left out. */
+export function exportOf(history: History, person: Person, now: Date): HistoryExport {
+  const personId = person.id
   return {
     kind: EXPORT_KIND,
     version: EXPORT_VERSION,
     exportedAt: now.toISOString(),
     personId,
+    person: { key: person.key, name: person.name },
     records: chosenFor(history.sessions, personId, { kind: 'all' }).filter(
       (r) => r.seeded !== true,
     ),
@@ -175,6 +190,21 @@ export type RestoreRefusal =
    */
   | { kind: 'newer'; of: 'export' | 'record'; version: number }
   | { kind: 'someone-else' }
+  /**
+   * A person deleted on this computer, with every check-in of theirs (KV-18):
+   * the file's key has a person tombstone here. Refused whole, so deleting a
+   * person cannot be undone by restoring an export. `removedAt` for the sentence.
+   */
+  | { kind: 'person-deleted'; removedAt: string }
+  /**
+   * An export from before keys (KV-18): it can say only an id, which for
+   * `demo-margaret` cannot tell this household from another. Not refused —
+   * it is this household's own backup in the usual case — but nothing is
+   * written until the screen has asked. `into` is the name of the person here
+   * it would go into, null when they have none. Only asked when someone here
+   * has its id (review of #207).
+   */
+  | { kind: 'before-keys'; into: string | null }
   | { kind: 'unreadable'; why: string }
   | { kind: 'entry'; position: number; total: number; why: string }
 
@@ -207,8 +237,93 @@ export type RestorePlan =
  * the way it always does, and is never handed a second copy of it.
  */
 export type RestoreResult =
-  | { ok: true; outcome: RestoreOutcome }
+  | { ok: true; outcome: RestoreOutcome; into: RestoredInto }
   | { ok: false; refusal: RestoreRefusal }
+
+/**
+ * Whose history a restore went into (KV-18): the file says, never the screen.
+ * `added` when they were not on this computer and now are — `unnamed` when the
+ * name the file gave was taken here, or none, so the setup screen asks.
+ */
+export interface RestoredInto {
+  personId: string
+  added: 'named' | 'unnamed' | null
+}
+
+/**
+ * Whose a restorable file is, decided before any record of it is merged
+ * (KV-18, ARCHITECTURE.md: "A restored history brings its person — matched by
+ * key, never by id"). In this order:
+ *
+ * - a key with a person tombstone here: refused, they were deleted here;
+ * - a key a person here has: theirs;
+ * - an id a person here has, under another key: someone else's, never merged
+ *   — a `demo-margaret` from another household;
+ * - neither: someone new, added under the file's id, key and name;
+ * - an export from before keys, by its id, which is all it gives: refused when
+ *   a person tombstone here has it; someone new, asking nothing, when nobody
+ *   here has it; and into whoever has it only once the screen has asked
+ *   (`confirmed`), since an id alone cannot tell households apart.
+ *
+ * `file` is one `planRestore` has already read as an export.
+ */
+export type Whose =
+  | { kind: 'here'; personId: string }
+  | { kind: 'new'; personId: string; key: string | null; name: string | null }
+  | { kind: 'refused'; refusal: RestoreRefusal }
+
+export function whoseExport(
+  file: Record<string, unknown>,
+  people: readonly Person[],
+  removedPeople: readonly PersonTombstone[],
+  confirmed: boolean,
+): Whose {
+  const personId = file.personId as string
+  const byId = people.find((p) => p.id === personId)
+  if (file.version === EXPORT_BEFORE_KEYS) {
+    // The id is all such a file gives, so a person deleted here is found by
+    // it, before anything is asked (review of #207).
+    const gone = removedPeople.find((t) => t.id === personId)
+    if (gone !== undefined) return refusedAsDeleted(gone)
+    // Nobody here has its id: someone new, with nothing asked. Asked, "only if
+    // they are not already here" vouched for nothing, and taught a yes for the
+    // time it matters — an id here, which may be another household's
+    // `demo-margaret` (review of #207).
+    if (byId === undefined) return { kind: 'new', personId, key: null, name: null }
+    if (!confirmed) return { kind: 'refused', refusal: { kind: 'before-keys', into: byId.name } }
+    return { kind: 'here', personId }
+  }
+  const { name } = file.person as { key: string; name: string | null }
+  // Compared in one case: read in either (`UUID`), a key upper-cased by hand
+  // slipped past the tombstone and came back under its file's name (review of
+  // #207). Kept lower, as `randomUUID` writes them.
+  const key = (file.person as { key: string }).key.toLowerCase()
+  const same = (other: string): boolean => other.toLowerCase() === key
+  const gone = removedPeople.find((t) => same(t.key))
+  if (gone !== undefined) return refusedAsDeleted(gone)
+  const byKey = people.find((p) => same(p.key))
+  if (byKey !== undefined) {
+    // Their key under another id: not a file this build can match, whoever
+    // it is — their records name an id that is not theirs here.
+    return byKey.id === personId
+      ? { kind: 'here', personId }
+      : {
+          kind: 'refused',
+          refusal: {
+            kind: 'unreadable',
+            why: 'its person’s key belongs to someone on this computer under another id',
+          },
+        }
+  }
+  if (byId !== undefined) return refusedAsSomeoneElse
+  return { kind: 'new', personId, key, name }
+}
+
+const refusedAsSomeoneElse: Whose = { kind: 'refused', refusal: { kind: 'someone-else' } }
+const refusedAsDeleted = (gone: PersonTombstone): Whose => ({
+  kind: 'refused',
+  refusal: { kind: 'person-deleted', removedAt: gone.removedAt },
+})
 
 /**
  * The first step of a restore: a result, or — for a protected export (KV-175) —
@@ -243,11 +358,34 @@ export function planRestore(history: History, personId: string, file: unknown): 
   if (typeof version === 'number' && Number.isFinite(version) && version > EXPORT_VERSION) {
     return refuse({ kind: 'newer', of: 'export', version })
   }
-  if (version !== EXPORT_VERSION) {
+  if (version !== EXPORT_VERSION && version !== EXPORT_BEFORE_KEYS) {
     return refuse({ kind: 'unreadable', why: 'it does not say which version of an export it is' })
   }
   if (!Array.isArray(file.records) || !Array.isArray(file.removed)) {
     return refuse({ kind: 'unreadable', why: 'it has no list of check-ins' })
+  }
+  if (
+    typeof file.personId !== 'string' ||
+    file.personId === '' ||
+    file.personId.trim() !== file.personId
+  ) {
+    return refuse({ kind: 'unreadable', why: 'it does not say whose it is' })
+  }
+  // Never the demo's (KV-18): it is not exported, and added as a person, it
+  // would be one the history file refuses to hold.
+  if (file.personId === DEMO_PERSON_ID) {
+    return refuse({ kind: 'unreadable', why: 'it says it is the demo’s, which is never exported' })
+  }
+  // Whose it is, from version 2 (KV-18): read before it is trusted to decide.
+  if (version === EXPORT_VERSION) {
+    const person = file.person
+    if (!isObject(person)) return refuse({ kind: 'unreadable', why: 'it does not say whose it is' })
+    if (typeof person.key !== 'string' || !UUID.test(person.key)) {
+      return refuse({ kind: 'unreadable', why: 'its person’s key is not one' })
+    }
+    if (person.name !== null && typeof person.name !== 'string') {
+      return refuse({ kind: 'unreadable', why: 'its person’s name is not one' })
+    }
   }
   if (file.personId !== personId) return refuse({ kind: 'someone-else' })
 
@@ -373,8 +511,27 @@ export function describeRestore(outcome: RestoreOutcome, day: (instant: string) 
   return parts.join(' ')
 }
 
-/** Why a file was not restored, in words for the person who chose it. Nothing was changed. */
-export function describeRefusal(refusal: RestoreRefusal): string {
+/**
+ * Said after `describeRestore` when the file's person was not on this computer
+ * and has been added (KV-18): an empty string when they were already here.
+ */
+export function describeAdded(added: RestoredInto['added']): string {
+  if (added === null) return ''
+  return added === 'named'
+    ? ' They were not on this computer, so they have been added.'
+    : ' They were not on this computer, so they have been added, without a name: the file ' +
+        'gives none, or one already used here. Name them under People on this computer; ' +
+        'it is asked for before the next reading too.'
+}
+
+/**
+ * Why a file was not restored, in words for the person who chose it. Nothing
+ * was changed. `day` names an instant's day, as `describeRestore`'s does.
+ */
+export function describeRefusal(
+  refusal: RestoreRefusal,
+  day: (instant: string) => string,
+): string {
   const unchanged = ' Nothing has been changed.'
   switch (refusal.kind) {
     case 'not-an-export':
@@ -405,7 +562,25 @@ export function describeRefusal(refusal: RestoreRefusal): string {
       )
     }
     case 'someone-else':
-      return 'That file is someone else’s history, not this one.' + unchanged
+      // True of every way here (review of #207): an id shared with someone
+      // here under another key, or a file asked into a history not its own.
+      return 'That file is the history of someone else, not of anyone on this computer.' + unchanged
+    case 'person-deleted':
+      return (
+        `These check-ins were deleted on this computer on ${day(refusal.removedAt)}, with ` +
+        'their person, and stay deleted.' + unchanged
+      )
+    case 'before-keys': {
+      // A question, not a refusal: nothing is written until it is answered.
+      // Unnamed, they are named as the screen can find them, not as "this
+      // person", who may not be the one shown (review of #207).
+      const into =
+        refusal.into === null
+          ? 'into the check-ins of the person on this computer who has not been named yet, ' +
+            'only if they are theirs'
+          : `into ${refusal.into}’s check-ins only if they are ${refusal.into}’s`
+      return `This file is from before Kinvue could tell people apart. Restore it ${into}.`
+    }
     case 'unreadable':
       return `That file cannot be restored: ${refusal.why}.` + unchanged
     case 'entry':

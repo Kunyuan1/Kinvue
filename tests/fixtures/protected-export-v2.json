@@ -1,0 +1,15 @@
+{
+  "kind": "kinvue-history",
+  "version": 2,
+  "protection": {
+    "kdf": "scrypt",
+    "N": 131072,
+    "r": 8,
+    "p": 1,
+    "salt": "AKdI0vqY8pXUeRuQ5KoIRA==",
+    "cipher": "aes-256-gcm",
+    "iv": "jD/wXSXof9QmdnBo",
+    "tag": "OXXoT491kgHsDaeHTO5T1g=="
+  },
+  "sealed": "LABiUh1/cKmsltZC0U36JvzqiksTGr502Qm3BdCTGUjWH53eXzDS/YA/sXn1K9caKU/MnhjHnbxDdByUl1ADivu8PoQY7JHpuaM2KJDNsQinrCD8aCJM9rmEkh/AFlypmF4GyW0mVifOm6iEXtOww5xPf6t+OfOYXzyJ/qH1ngn/272j+LZqfP0iXN0LqPDokQxSBuSndjzddSgAyzz2RFlwzu1+tu+TPV9vO2pMLMIYZsSqrZwYoOLTsPphxpq9T+KR1DKBRhfU0/bboJbfgsNbzNCSbz/dJSZYLmpi7zZ2NFGk26XWMMYArESDA3Q7wALW9D81uKnfkHsFAE4R4UiOl3RLFQMm1KR0t5Ngb8+URHt96WmjTjSQ2rCbrOPQgl+MrxVeiRBZGOm7+NNPpvYs90Q7e2ZVvWx67QSTO5qWv6Gvo7Ap7lMRjPGF1eYbDuE31mGbtQ6pAbnZiGFB6YoCi6LjqBN66Ce4r2uEBp1b3ztJwN1yXIpfL0nxnlj7gQGpJByyv86OzX/c76WR+pRTjFlEp/g/C5EM3XDoNasS3Kt7"
+}

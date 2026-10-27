@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { exportOf, planRestore } from '@core/session/lifecycle'
 import {
   isProtected,
@@ -23,7 +25,12 @@ const file = exportOf(
     sessions: [session({ id: 'a', answers: { painReported: true, painNote: 'left hip' } })],
     removed: [],
   },
-  'test-person',
+  {
+    id: 'test-person',
+    key: '11111111-1111-4111-8111-111111111111',
+    name: 'Ann',
+    addedAt: '2026-09-01T09:00:00.000Z',
+  },
   NOW,
 )
 const PASSPHRASE = 'blue kettle morning'
@@ -170,6 +177,21 @@ describe('protect and unprotect', () => {
     // build before KV-175 has it, says something true about a file Kinvue made.
     const sealed = JSON.parse(JSON.stringify(await protect(file, PASSPHRASE))) as unknown
     const plan = planRestore({ sessions: [], removed: [] }, 'test-person', sealed)
-    expect(plan).toEqual({ ok: false, refusal: { kind: 'newer', of: 'export', version: 2 } })
+    expect(plan).toEqual({
+      ok: false,
+      refusal: { kind: 'newer', of: 'export', version: PROTECTED_EXPORT_VERSION },
+    })
+  })
+
+  it('opens a protected export made before the plain export said whose it was (KV-18)', SLOW, async () => {
+    // Made by the build before KV-18 part three, at protected version 2, which
+    // the plain export now says itself: still opened, and what is inside is an
+    // export from before keys.
+    const before = JSON.parse(
+      readFileSync(join(__dirname, 'fixtures', 'protected-export-v2.json'), 'utf8'),
+    ) as unknown
+    expect(isProtected(before)).toBe(true)
+    const opened = await unprotect(before as ProtectedExport, PASSPHRASE)
+    expect(opened.ok && opened.contents).toMatchObject({ version: 1, personId: 'demo-margaret' })
   })
 })

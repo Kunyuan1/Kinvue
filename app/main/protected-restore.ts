@@ -17,15 +17,17 @@ export interface PageEvents {
 }
 
 interface Held {
-  personId: string
   file: ProtectedExport
   page: PageEvents
   drop: () => void
 }
 
 export interface ProtectedRestores {
-  /** Holds `file` for `personId` until it is restored, cancelled, or the page goes. */
-  hold(page: PageEvents, personId: string, file: ProtectedExport): void
+  /**
+   * Holds `file` until it is restored, cancelled, or the page goes. Whose it is
+   * is the file's to say once opened (KV-18), not the screen's.
+   */
+  hold(page: PageEvents, file: ProtectedExport): void
   /** Lets go of whatever is held: Cancel, or another restore starting. */
   letGo(): void
   /** Whether a file is held — for the tests. */
@@ -35,7 +37,6 @@ export interface ProtectedRestores {
    * `restore`. A wrong passphrase keeps the file for another try.
    */
   unlock(
-    personId: string,
     passphrase: string,
     restore: (contents: unknown) => Promise<RestoreResult>,
   ): Promise<RestoreResult>
@@ -59,7 +60,7 @@ export function protectedRestores(
   }
 
   return {
-    hold(page, personId, file) {
+    hold(page, file) {
       letGo()
       // Not for the rest of the process's life (review of #187): a page that
       // reloads or closes has lost its passphrase field and its Cancel, so the
@@ -67,16 +68,16 @@ export function protectedRestores(
       const drop = (): void => letGo()
       page.on('did-navigate', drop)
       page.on('destroyed', drop)
-      held = { personId, file, page, drop }
+      held = { file, page, drop }
     },
     letGo,
     holding: () => held !== null,
-    unlock(personId, passphrase, restore) {
+    unlock(passphrase, restore) {
       const work = async (): Promise<RestoreResult> => {
         // Asked once its turn comes: a try queued behind one that restored
         // finds nothing held, and says so.
         const mine = held
-        if (mine === null || mine.personId !== personId) {
+        if (mine === null) {
           throw new Error('history:restoreProtected has no protected file waiting.')
         }
         const opened = await open(mine.file, passphrase)
@@ -98,6 +99,64 @@ export function protectedRestores(
       const run = queue.then(work, work)
       queue = run.catch(() => undefined)
       return run
+    },
+  }
+}
+
+/**
+ * An export from before keys, read and waiting for the screen to say whose it
+ * is (KV-18): nothing is written until it does. Held as a protected export is
+ * (review of #207) — bound to the page that asked, dropped when that page
+ * navigates or closes, and answered only from it. A protected one arrives here
+ * already opened, so this is what keeps its plaintext from outliving the
+ * question it was opened for, as #187 kept the sealed file from outliving its
+ * passphrase field.
+ */
+export interface UnconfirmedRestores {
+  /** Holds `contents` for `page` until it is answered, let go, or the page goes. */
+  hold(page: PageEvents, contents: unknown): void
+  /** Lets go of whatever is held: Cancel, or another restore starting. */
+  letGo(): void
+  /** Whether a file is held — for the tests. */
+  holding(): boolean
+  /**
+   * Hands what is held to `restore`, for the page that asked and no other, and
+   * lets go. Throws when nothing is held for `page`.
+   */
+  confirm(
+    page: PageEvents,
+    restore: (contents: unknown) => Promise<RestoreResult>,
+  ): Promise<RestoreResult>
+}
+
+export function unconfirmedRestores(): UnconfirmedRestores {
+  let held: { contents: unknown; page: PageEvents; drop: () => void } | null = null
+
+  const letGo = (): void => {
+    if (held === null) return
+    const { page, drop } = held
+    held = null
+    page.off('did-navigate', drop)
+    page.off('destroyed', drop)
+  }
+
+  return {
+    hold(page, contents) {
+      letGo()
+      const drop = (): void => letGo()
+      page.on('did-navigate', drop)
+      page.on('destroyed', drop)
+      held = { contents, page, drop }
+    },
+    letGo,
+    holding: () => held !== null,
+    async confirm(page, restore) {
+      const mine = held
+      if (mine === null || mine.page !== page) {
+        throw new Error('history:restoreConfirmed has nothing waiting to be confirmed.')
+      }
+      letGo()
+      return await restore(mine.contents)
     },
   }
 }

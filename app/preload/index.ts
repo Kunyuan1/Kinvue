@@ -111,12 +111,17 @@ const api = {
    * (KV-21). For a protected export, asks for its passphrase instead (KV-175).
    * Null when the person cancelled.
    */
-  restoreHistory: (personId: string): Promise<RestoreStep | null> =>
-    ipcRenderer.invoke('history:restore', personId),
+  restoreHistory: (): Promise<RestoreStep | null> => ipcRenderer.invoke('history:restore'),
 
   /** Opens the protected export waiting in main with `passphrase`, and restores it. */
-  restoreProtected: (personId: string, passphrase: string): Promise<RestoreResult> =>
-    ipcRenderer.invoke('history:restoreProtected', personId, passphrase),
+  restoreProtected: (passphrase: string): Promise<RestoreResult> =>
+    ipcRenderer.invoke('history:restoreProtected', passphrase),
+
+  /**
+   * Restores the export from before keys that main is holding, now the screen
+   * has asked whose it is and been told (KV-18).
+   */
+  restoreConfirmed: (): Promise<RestoreResult> => ipcRenderer.invoke('history:restoreConfirmed'),
 
   /** Lets go of a protected export waiting for its passphrase. */
   cancelRestore: (): Promise<void> => ipcRenderer.invoke('history:cancelRestore'),

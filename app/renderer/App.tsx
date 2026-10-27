@@ -1137,6 +1137,17 @@ function Dashboard(): React.JSX.Element {
             protection={protection}
             onExport={exportHistory}
             onChanged={refresh}
+            // Whoever the file went into, which the file decided (KV-18).
+            onRestored={async (into) => {
+              wanted.current = into.personId
+              setChanging(null)
+              // Someone added without a name: the dashboard stays, saying what
+              // the restore did, and offers to name them, rather than the setup
+              // screen in its place with the sentence gone. A reading asks for
+              // the name first, as it would anyway (review of #206's shape).
+              if (into.added === 'unnamed') setPastSetup(true)
+              await refresh()
+            }}
             onFailure={showFailure}
           />
         </SectionBoundary>
@@ -1172,6 +1183,18 @@ function Dashboard(): React.JSX.Element {
                   >
                     Add a person&hellip;
                   </button>
+                  {viewedId !== null && !demoShown && viewedName === null && (
+                    // Someone a restore added without a name, or one this
+                    // build could not hold (KV-18): named here as well as on
+                    // the setup screen before the next reading.
+                    <button
+                      type="button"
+                      onClick={() => setChanging({ what: 'rename', id: viewedId, name: UNNAMED })}
+                      className={LINK}
+                    >
+                      Name this person&hellip;
+                    </button>
+                  )}
                   {viewedId !== null && !demoShown && viewedName !== null && (
                     <>
                       <button
