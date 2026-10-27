@@ -3,12 +3,14 @@ import type { SessionRecord } from '@core/session/types'
 import {
   chosenFor,
   describeLastExport,
+  describeAdded,
   describeRefusal,
   describeRestore,
   type Removal,
+  type RestoredInto,
+  type RestoreResult,
 } from '@core/session/lifecycle'
 import type { Protection } from '../../shared/protection'
-import { DEMO_PERSON_ID } from '@core/session/people'
 import ConfirmRemoval from './ConfirmRemoval'
 import ExportChoice from './ExportChoice'
 
@@ -55,6 +57,7 @@ export default function HistoryPanel({
   protection,
   onExport,
   onChanged,
+  onRestored,
   onFailure,
 }: {
   personId: string
@@ -70,15 +73,22 @@ export default function HistoryPanel({
    * Protected with `passphrase` when one is given (KV-175).
    */
   onExport: (passphrase?: string) => Promise<string | null>
-  /** After a restore or a deletion: reloads the list. */
+  /** After a deletion: reloads the list. */
   onChanged: () => Promise<void>
+  /**
+   * After a restore (KV-18): shows whoever the file went into, which the file
+   * decides, not this panel — and asks for their name when they came without
+   * one.
+   */
+  onRestored: (into: RestoredInto) => Promise<void>
   onFailure: (e: unknown, fallback: string) => void
 }) {
   const [said, setSaid] = useState<string | null>(null)
   const [before, setBefore] = useState('')
   const [removing, setRemoving] = useState<Removal | null>(null)
-  // The demo's days are shown (KV-18): nothing of a real person's goes into them.
-  const demo = personId === DEMO_PERSON_ID
+  // An export from before keys, asking whose it is before main writes it
+  // (KV-18): the question, until it is answered.
+  const [confirming, setConfirming] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [choosing, setChoosing] = useState(false)
   // A protected export waiting in main for its passphrase (KV-175).
@@ -97,9 +107,25 @@ export default function HistoryPanel({
     }
   }
 
+  /** What any restore came to, plain, protected or confirmed. */
+  const landed = async (result: RestoreResult): Promise<void> => {
+    if (!result.ok) {
+      // A question, not a refusal: main holds the file until it is answered.
+      if (result.refusal.kind === 'before-keys') {
+        setConfirming(describeRefusal(result.refusal, deviceDay))
+        return
+      }
+      setSaid(describeRefusal(result.refusal, deviceDay))
+      return
+    }
+    await onRestored(result.into)
+    setSaid(describeRestore(result.outcome, deviceDay) + describeAdded(result.into.added))
+  }
+
   const restore = (): Promise<void> =>
     step(async () => {
-      const result = await window.kinvue.restoreHistory(personId)
+      setConfirming(null)
+      const result = await window.kinvue.restoreHistory()
       if (result === null) return
       if ('needsPassphrase' in result) {
         setUnlocking(true)
@@ -110,29 +136,32 @@ export default function HistoryPanel({
       // passphrase field may outlive it (review of #187).
       setUnlocking(false)
       setPassphrase('')
-      if (!result.ok) {
-        setSaid(describeRefusal(result.refusal))
-        return
-      }
-      await onChanged()
-      setSaid(describeRestore(result.outcome, deviceDay))
+      await landed(result)
     }, 'The file could not be restored. Nothing has been changed.')
 
   const openProtected = (): Promise<void> =>
     step(async () => {
       const typed = passphrase
       setPassphrase('')
-      const result = await window.kinvue.restoreProtected(personId, typed)
-      if (!result.ok) {
-        // A wrong passphrase leaves the file waiting for another try.
-        if (result.refusal.kind !== 'wrong-passphrase') setUnlocking(false)
-        setSaid(describeRefusal(result.refusal))
-        return
-      }
-      setUnlocking(false)
-      await onChanged()
-      setSaid(describeRestore(result.outcome, deviceDay))
+      const result = await window.kinvue.restoreProtected(typed)
+      // A wrong passphrase leaves the file waiting for another try.
+      if (result.ok || result.refusal.kind !== 'wrong-passphrase') setUnlocking(false)
+      await landed(result)
     }, 'The file could not be restored. Nothing has been changed.')
+
+  const confirm = (): Promise<void> =>
+    step(async () => {
+      setConfirming(null)
+      await landed(await window.kinvue.restoreConfirmed())
+    }, 'The file could not be restored. Nothing has been changed.')
+
+  const cancelConfirming = (): void => {
+    setConfirming(null)
+    setSaid(null)
+    void window.kinvue.cancelRestore().catch((e: unknown) => {
+      console.error('Could not let go of the export waiting to be confirmed.', e)
+    })
+  }
 
   const cancelProtected = (): void => {
     setUnlocking(false)
@@ -207,25 +236,45 @@ export default function HistoryPanel({
       </div>
 
       <div className="mt-4">
-        {/* Not while a protected export waits for its passphrase: a second
-            restore would drop the file main is holding (review of #187). Nor
-            into the demo (KV-18): an export is a real person's, and every one
-            would be refused as someone else's — about the person's own file,
-            read just after seeding, when the demo is what is shown (review of
-            #200). */}
+        {/* Not while a file waits in main — for its passphrase, or to be told
+            whose it is: a second restore would drop it (review of #187).
+            Whoever is shown, the demo included: the file says whose it is
+            (KV-18), and goes into them. */}
         <button
           type="button"
-          disabled={busy || unlocking || demo}
+          disabled={busy || unlocking || confirming !== null}
           onClick={() => void restore()}
           className={BUTTON}
         >
           Restore from an export&hellip;
         </button>
-        {demo && (
-          <p className="mt-2 text-(--color-muted)">
-            An export is restored into a person&rsquo;s history, not the demo&rsquo;s. Choose
-            them at the top first.
-          </p>
+        <p className="mt-2 text-(--color-muted)">
+          An export goes back into the history of whoever it is, whoever is shown here.
+        </p>
+        {confirming !== null && (
+          <div role="group" aria-labelledby="restore-confirm" className="mt-3">
+            <p id="restore-confirm">{confirming}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {/* Cancel has the focus: nothing is written until this is answered. */}
+              <button
+                type="button"
+                autoFocus
+                disabled={busy}
+                onClick={cancelConfirming}
+                className={BUTTON}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void confirm()}
+                className={BUTTON}
+              >
+                Restore it
+              </button>
+            </div>
+          </div>
         )}
         {unlocking && (
           <div className="mt-3 flex flex-wrap items-center gap-2">

@@ -17,15 +17,17 @@ export interface PageEvents {
 }
 
 interface Held {
-  personId: string
   file: ProtectedExport
   page: PageEvents
   drop: () => void
 }
 
 export interface ProtectedRestores {
-  /** Holds `file` for `personId` until it is restored, cancelled, or the page goes. */
-  hold(page: PageEvents, personId: string, file: ProtectedExport): void
+  /**
+   * Holds `file` until it is restored, cancelled, or the page goes. Whose it is
+   * is the file's to say once opened (KV-18), not the screen's.
+   */
+  hold(page: PageEvents, file: ProtectedExport): void
   /** Lets go of whatever is held: Cancel, or another restore starting. */
   letGo(): void
   /** Whether a file is held — for the tests. */
@@ -35,7 +37,6 @@ export interface ProtectedRestores {
    * `restore`. A wrong passphrase keeps the file for another try.
    */
   unlock(
-    personId: string,
     passphrase: string,
     restore: (contents: unknown) => Promise<RestoreResult>,
   ): Promise<RestoreResult>
@@ -59,7 +60,7 @@ export function protectedRestores(
   }
 
   return {
-    hold(page, personId, file) {
+    hold(page, file) {
       letGo()
       // Not for the rest of the process's life (review of #187): a page that
       // reloads or closes has lost its passphrase field and its Cancel, so the
@@ -67,16 +68,16 @@ export function protectedRestores(
       const drop = (): void => letGo()
       page.on('did-navigate', drop)
       page.on('destroyed', drop)
-      held = { personId, file, page, drop }
+      held = { file, page, drop }
     },
     letGo,
     holding: () => held !== null,
-    unlock(personId, passphrase, restore) {
+    unlock(passphrase, restore) {
       const work = async (): Promise<RestoreResult> => {
         // Asked once its turn comes: a try queued behind one that restored
         // finds nothing held, and says so.
         const mine = held
-        if (mine === null || mine.personId !== personId) {
+        if (mine === null) {
           throw new Error('history:restoreProtected has no protected file waiting.')
         }
         const opened = await open(mine.file, passphrase)

@@ -15,7 +15,7 @@ export { MIN_PASSPHRASE_LENGTH, passphraseLength }
  * from Node's own `crypto`, with no new dependency.
  *
  * **Still a Kinvue export** (review of #186): the same `kind`, its container
- * `version` raised to 2, the scrypt parameters and the sealed bytes in place of
+ * `version` raised above every plain one, the scrypt parameters and the sealed bytes in place of
  * the records. A build that knows no protection refuses it as made by a newer
  * version — true — rather than "not a Kinvue export", about a file Kinvue made.
  *
@@ -23,8 +23,20 @@ export { MIN_PASSPHRASE_LENGTH, passphraseLength }
  * rules are tested in plain node.
  */
 
-/** The container version a protected export says. The plain one stays `EXPORT_VERSION`. */
-export const PROTECTED_EXPORT_VERSION = 2
+/**
+ * The container version a protected export says. Above every plain export
+ * version (`EXPORT_VERSION`), as it has been since KV-175, so a build that
+ * knows no protection refuses it as newer: raised to 3 when the plain export
+ * reached 2 (KV-18), which a protected one had said until then.
+ */
+export const PROTECTED_EXPORT_VERSION = 3
+
+/**
+ * The protected version from before the plain export said whose it was
+ * (KV-18). Still opened: what is inside is an export from before keys, which
+ * `whoseExport` asks about before anything is written.
+ */
+export const PROTECTED_BEFORE_KEYS = 2
 
 /**
  * scrypt at the cost recommended for interactive use (N = 2^17, r = 8, p = 1):
@@ -45,7 +57,7 @@ const MAX_COST = 4 * SCRYPT.N * SCRYPT.r * SCRYPT.p
 
 export interface ProtectedExport {
   kind: typeof EXPORT_KIND
-  version: typeof PROTECTED_EXPORT_VERSION
+  version: typeof PROTECTED_EXPORT_VERSION | typeof PROTECTED_BEFORE_KEYS
   protection: {
     kdf: 'scrypt'
     N: number
@@ -132,7 +144,7 @@ export function isProtected(file: unknown): file is ProtectedExport {
   return (
     isObject(file) &&
     file.kind === EXPORT_KIND &&
-    file.version === PROTECTED_EXPORT_VERSION &&
+    (file.version === PROTECTED_EXPORT_VERSION || file.version === PROTECTED_BEFORE_KEYS) &&
     isObject(file.protection) &&
     typeof file.sealed === 'string'
   )

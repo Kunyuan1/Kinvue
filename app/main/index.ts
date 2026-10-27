@@ -404,13 +404,6 @@ function registerIpc(
     if (id === null) throw new Error(`${channel} needs a person id.`);
     return id;
   };
-  // A restore is into a real person's history, never the demo's (second review
-  // of #200): the screens do not offer it, and main does not take their word.
-  const restoreFor = (channel: string, personId: unknown): string => {
-    const id = personFor(channel, personId);
-    if (id === DEMO_PERSON_ID) throw new Error(`${channel}: nothing is restored into the demo.`);
-    return id;
-  };
   // A passphrase is checked here as well as on screen: it is the whole defence
   // of a protected export (KV-175), so main does not take the renderer's word.
   const passphraseFor = (channel: string, passphrase: unknown): string => {
@@ -516,10 +509,23 @@ function registerIpc(
     },
   );
 
+  // An export from before keys, read, waiting for the screen to say whose it is
+  // (KV-18). Nothing is written until it does; any other restore, or Cancel,
+  // lets it go. In main, as a protected export is, so the renderer never holds
+  // the file.
+  let unconfirmed: unknown = null;
+  // Every restore, plain or protected: whose it is is the file's to say, never
+  // the screen's (KV-18), so no person is passed.
+  const restoring = async (contents: unknown): Promise<RestoreResult> => {
+    unconfirmed = null;
+    const result = await store.restore(contents);
+    if (!result.ok && result.refusal.kind === "before-keys") unconfirmed = contents;
+    return result;
+  };
+
   handle(
     "history:restore",
-    async (event, personId: unknown): Promise<RestoreStep | null> => {
-      const id = restoreFor("history:restore", personId);
+    async (event): Promise<RestoreStep | null> => {
       const options = {
         title: "Restore check-in history",
         properties: ["openFile" as const],
@@ -538,35 +544,41 @@ function registerIpc(
         return { ok: false, refusal: { kind: "unopenable", code: file.code } };
       }
       if (isProtected(file.contents)) {
-        waiting.hold(event.sender, id, file.contents);
+        unconfirmed = null;
+        waiting.hold(event.sender, file.contents);
         return { needsPassphrase: true };
       }
       waiting.letGo();
-      const plan = await store.restore(id, file.contents);
-      // The outcome, not the merged history: the screen reads the history the
-      // way it always does.
-      return plan.ok ? { ok: true, outcome: plan.outcome } : { ok: false, refusal: plan.refusal };
+      // The outcome and whose it was, not the merged history: the screen reads
+      // the history the way it always does.
+      return await restoring(file.contents);
     },
   );
 
   handle(
     "history:restoreProtected",
-    (_e, personId: unknown, passphrase: unknown): Promise<RestoreResult> => {
-      const id = restoreFor("history:restoreProtected", personId);
+    (_e, passphrase: unknown): Promise<RestoreResult> => {
       if (typeof passphrase !== "string") {
         throw new Error("history:restoreProtected needs a passphrase.");
       }
-      return waiting.unlock(id, passphrase, async (contents) => {
-        const plan = await store.restore(id, contents);
-        return plan.ok
-          ? { ok: true, outcome: plan.outcome }
-          : { ok: false, refusal: plan.refusal };
-      });
+      return waiting.unlock(passphrase, restoring);
     },
   );
 
+  // The screen's yes to an export from before keys (KV-18): the file read a
+  // moment ago, written now.
+  handle("history:restoreConfirmed", async (): Promise<RestoreResult> => {
+    const contents = unconfirmed;
+    if (contents === null) {
+      throw new Error("history:restoreConfirmed has no file waiting to be confirmed.");
+    }
+    unconfirmed = null;
+    return await store.restore(contents, { confirmed: true });
+  });
+
   handle("history:cancelRestore", (): void => {
     waiting.letGo();
+    unconfirmed = null;
   });
 
   handle(
@@ -612,7 +624,7 @@ function registerIpc(
     "people:remove",
     async (_e, personId: unknown): Promise<number> => {
       const id = personFor("people:remove", personId);
-      // Said for what it is, as `restoreFor` says it (review of #206).
+      // Said for what it is (review of #206).
       if (id === DEMO_PERSON_ID) {
         throw new Error(
           "people:remove: the demo is not a person on the list; its days are deleted as a history.",

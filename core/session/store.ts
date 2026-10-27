@@ -11,9 +11,11 @@ import {
   exportOf,
   planRestore,
   remove as removeFrom,
+  whoseExport,
   type HistoryExport,
   type Removal,
-  type RestorePlan,
+  type RestoredInto,
+  type RestoreResult,
 } from './lifecycle'
 import {
   checkName,
@@ -107,10 +109,13 @@ export interface SessionStore {
   /** When `personId`'s history was last exported, or null for never. */
   lastExported(personId: string): Promise<string | null>
   /**
-   * Restores an export into `personId`'s history: everything it accepts, in one
-   * write, or nothing (KV-21). Returns what it did, or why it refused.
+   * Restores an export into the history of whoever it says it is (KV-18,
+   * `whoseExport`): everything it accepts, in one write, or nothing (KV-21).
+   * Someone not on this computer is added in that same write. An export from
+   * before keys is written only `confirmed`; until then it comes back as the
+   * question to ask. Returns what it did and whose it was, or why it refused.
    */
-  restore(personId: string, file: unknown): Promise<RestorePlan>
+  restore(file: unknown, options?: { confirmed?: boolean }): Promise<RestoreResult>
   /**
    * Seals a plain history with the cipher, where the cipher encrypts, in one
    * write (KV-175): at start, so an install only read from does not stay plain.
@@ -1070,7 +1075,14 @@ export function createJsonSessionStore(
       })
     },
     async exportFor(personId, at) {
-      return exportOf(historyOf(await reading()), personId, at)
+      const data = await reading()
+      const person = data.people.find((p) => p.id === personId)
+      // Only someone on the list (KV-18): the export carries their key, and
+      // the demo has none — it is never exported.
+      if (person === undefined) {
+        throw new Error(`There is nobody with the id ${personId} on this computer to export.`)
+      }
+      return exportOf(historyOf(data), person, at)
     },
     markExported(personId, at) {
       return exclusive(async () => {
@@ -1086,20 +1098,51 @@ export function createJsonSessionStore(
       const at = (await reading()).lastExported?.[personId]
       return isInstant(at) ? at : null
     },
-    restore(personId, file) {
-      return exclusive(async () => {
+    restore(file, { confirmed = false } = {}) {
+      return exclusive(async (): Promise<RestoreResult> => {
         const data = await current()
-        const plan = planRestore(historyOf(data), personId, file)
+        // Read whole as an export, under the id it says, before it decides
+        // anything: whose it is rests on a file already checked (KV-21).
+        const said = isObject(file) ? file.personId : undefined
+        const plan = planRestore(historyOf(data), typeof said === 'string' ? said : '', file)
         if (!plan.ok) return plan
+        const whose = whoseExport(
+          file as Record<string, unknown>,
+          data.people,
+          data.removedPeople ?? [],
+          confirmed,
+        )
+        if (whose.kind === 'refused') return { ok: false, refusal: whose.refusal }
+
+        // Someone not here is added in the same write as their check-ins
+        // (KV-18): under the file's id and key, a fresh key for an export from
+        // before keys, and the file's name if it holds here and nobody has it —
+        // otherwise none, and the setup screen asks rather than merging two
+        // people under one name.
+        let people = data.people
+        let added: RestoredInto['added'] = null
+        if (whose.kind === 'new') {
+          const held = whose.name === null ? null : checkName(whose.name, people)
+          const name = held?.ok === true && held.name === whose.name ? whose.name : null
+          people = [
+            ...people,
+            {
+              id: whose.personId,
+              key: whose.key ?? randomUUID(),
+              name,
+              addedAt: now().toISOString(),
+            },
+          ]
+          added = name === null ? 'unnamed' : 'named'
+        }
+
         const newTombstones = plan.history.removed.length > historyOf(data).removed.length
         // One write, whole — or none, when nothing would change. Never a deletion:
         // a restore only adds check-ins, and tombstones that block (review of #185).
-        // The person comes with their check-ins, in the same write (KV-18).
-        if (plan.outcome.restored > 0 || newTombstones) {
-          const people = withPeopleFor(data.people, plan.history.sessions, randomUUID, now())
+        if (plan.outcome.restored > 0 || newTombstones || added !== null) {
           await write(path, { ...withHistory(data, plan.history), people }, cipher)
         }
-        return plan
+        return { ok: true, outcome: plan.outcome, into: { personId: whose.personId, added } }
       })
     },
     /**

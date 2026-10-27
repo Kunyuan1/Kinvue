@@ -1275,6 +1275,7 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     restoreHistory.mockResolvedValueOnce({
       ok: true,
       outcome: { restored: 0, alreadyHere: 0, stayDeleted: 2, deletedAt: [], deletedThere: 0 },
+      into: { personId: DEMO_PERSON_ID, added: null },
     })
     const loads = listSessions.mock.calls.length
     fireEvent.click(screen.getByText(/Restore from an export/))
@@ -1538,11 +1539,13 @@ describe('encryption at rest and protected exports (KV-175)', () => {
     restoreProtected.mockResolvedValueOnce({
       ok: true,
       outcome: { restored: 3, alreadyHere: 0, stayDeleted: 0, deletedAt: [], deletedThere: 0 },
+      into: { personId: DEMO_PERSON_ID, added: null },
     })
     fireEvent.change(screen.getByLabelText('Passphrase'), { target: { value: 'blue kettle' } })
     fireEvent.click(screen.getByText('Open and restore'))
     expect(await screen.findByText('Restored 3 check-ins.')).toBeTruthy()
-    expect(restoreProtected).toHaveBeenLastCalledWith(DEMO_PERSON_ID, 'blue kettle')
+    // Only the passphrase: whose the file is, it says itself once opened (KV-18).
+    expect(restoreProtected).toHaveBeenLastCalledWith('blue kettle')
     expect(screen.queryByText('Open and restore')).toBeNull()
   })
 
@@ -2138,7 +2141,7 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
     expect(screen.getByRole('heading', { level: 1, name: 'Before the first reading' })).toBeTruthy()
   })
 
-  it('offers no restore into the demo, and says where one goes (review of #200)', async () => {
+  it('offers restore whoever is shown, the demo included: the file says whose it is (KV-18)', async () => {
     listPeople.mockResolvedValue({
       people: [{ id: DEMO_PERSON_ID, name: DEMO_PERSON_NAME }],
       demo: true, checkedIn: true,
@@ -2154,13 +2157,16 @@ describe('whose check-ins: the person, named, and the demo apart (KV-18)', () =>
     const restore = await screen.findByRole('button', { name: 'Restore from an export…' })
     expect((restore as HTMLButtonElement).disabled).toBe(false)
 
+    // Refused into the demo once (review of #200), when a restore went into
+    // whoever was shown. It goes into whoever the file is now, so the demo
+    // being shown changes nothing about it.
     fireEvent.click(screen.getByRole('button', { name: 'The demo' }))
     await screen.findByRole('heading', { level: 1, name: DEMO_HEADING })
     expect(
       (screen.getByRole('button', { name: 'Restore from an export…' }) as HTMLButtonElement)
         .disabled,
-    ).toBe(true)
-    expect(screen.getByText(/restored into a person’s history, not the demo’s/)).toBeTruthy()
+    ).toBe(false)
+    expect(screen.getByText(/goes back into the history of whoever it is/)).toBeTruthy()
   })
 
   it('offers the switch only when there is a demo to show', async () => {
@@ -2440,6 +2446,96 @@ describe('more than one person: who is taking the reading, and whose check-ins a
     await dashboard('Bill')
     expect(screen.queryByLabelText(/^New name/)).toBeNull()
     expect(renamePerson).not.toHaveBeenCalled()
+  })
+
+  describe('restoring, into whoever the file is (KV-18)', () => {
+    const outcome = { restored: 3, alreadyHere: 0, stayDeleted: 0, deletedAt: [], deletedThere: 0 }
+
+    it('shows whoever the file went into, though someone else was shown', async () => {
+      two()
+      render(<App />)
+      await dashboard('Ann')
+      restoreHistory.mockResolvedValueOnce({
+        ok: true,
+        outcome,
+        into: { personId: BILL.id, added: null },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Restore from an export…' }))
+
+      await dashboard('Bill')
+      expect(restoreHistory).toHaveBeenCalledWith()
+      expect(await screen.findByText('Restored 3 check-ins.')).toBeTruthy()
+    })
+
+    it('says when it added them, and offers to name someone who came without a name', async () => {
+      two()
+      render(<App />)
+      await dashboard('Ann')
+      const CORA = { id: 'p-cora', name: null }
+      restoreHistory.mockResolvedValueOnce({
+        ok: true,
+        outcome,
+        into: { personId: CORA.id, added: 'unnamed' },
+      })
+      listPeople.mockResolvedValue({ people: [ANN, BILL, CORA], demo: false, checkedIn: true })
+      fireEvent.click(screen.getByRole('button', { name: 'Restore from an export…' }))
+
+      expect(await screen.findByText(/^Restored 3 check-ins\. They were not on this computer, so they have been added, without a name/)).toBeTruthy()
+      await screen.findByRole('heading', { level: 1, name: 'Check-ins' })
+      fireEvent.click(screen.getByRole('button', { name: 'Name this person…' }))
+      expect(screen.getByLabelText('New name for This person')).toBeTruthy()
+    })
+
+    it('asks whose an export from before keys is, and restores it only once told', async () => {
+      two()
+      const restoreConfirmed = vi.fn(() =>
+        Promise.resolve({ ok: true as const, outcome, into: { personId: ANN.id, added: null } }),
+      )
+      Object.assign(window.kinvue, { restoreConfirmed })
+      render(<App />)
+      await dashboard('Ann')
+      restoreHistory.mockResolvedValueOnce({
+        ok: false,
+        refusal: { kind: 'before-keys', into: 'Ann' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Restore from an export…' }))
+
+      const asked = await screen.findByRole('group', {
+        name: /^This file is from before Kinvue could tell people apart\. Restore it into Ann’s/,
+      })
+      // Nothing written yet; the choice that writes nothing has the focus, and
+      // no second restore may drop the file main is holding.
+      expect(restoreConfirmed).not.toHaveBeenCalled()
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Cancel' }))
+      expect(
+        (screen.getByRole('button', { name: 'Restore from an export…' }) as HTMLButtonElement)
+          .disabled,
+      ).toBe(true)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Restore it' }))
+      expect(await screen.findByText('Restored 3 check-ins.')).toBeTruthy()
+      expect(restoreConfirmed).toHaveBeenCalledTimes(1)
+      expect(asked.isConnected).toBe(false)
+    })
+
+    it('lets go of an export from before keys on Cancel, writing nothing', async () => {
+      two()
+      const restoreConfirmed = vi.fn()
+      Object.assign(window.kinvue, { restoreConfirmed })
+      render(<App />)
+      await dashboard('Ann')
+      restoreHistory.mockResolvedValueOnce({
+        ok: false,
+        refusal: { kind: 'before-keys', into: 'someone new' },
+      })
+      fireEvent.click(screen.getByRole('button', { name: 'Restore from an export…' }))
+      await screen.findByText(/Restore it as someone new on this computer/)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(screen.queryByText(/Restore it as someone new/)).toBeNull()
+      expect(cancelRestore).toHaveBeenCalled()
+      expect(restoreConfirmed).not.toHaveBeenCalled()
+    })
   })
 
   describe('deleting a person', () => {

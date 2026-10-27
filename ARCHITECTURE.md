@@ -1544,6 +1544,44 @@ Second, deleting a person (`store.removePerson`, `ConfirmPersonRemoval.tsx`):
   history for everyone", and its notice says the old file kept everyone's check-ins and
   names.
 
+Third, restore matched by key (`whoseExport`, `store.restore`), which finishes KV-18:
+
+- **An export says whose it is.** Export version 2 adds `person: { key, name }`; the key
+  leaves the device here and nowhere else. Only someone on the list is exported: the demo
+  has no key. Version 1 is still read.
+- **Restore is the household's, not the shown person's.** The file says whose it is, so
+  *Restore from an export* takes no person, is offered whoever is shown — the demo
+  included, which reverses the two bullets above that kept restore away from the demo:
+  they were about a restore that went into whoever was shown — and the dashboard moves to
+  whoever the file went into.
+- **Whose, decided before anything is merged** (`whoseExport`), in the order decided
+  above: a key with a person tombstone here is refused ("…deleted on this computer on 3
+  October, with their person, and stay deleted"); a key a person here has is theirs, and
+  KV-21's merge runs as it did; an id a person here has under another key is someone
+  else's, never merged; neither is someone new, added in the same write as their
+  check-ins, under the file's id, key and name. A name already used here, or one this
+  build cannot hold, is not merged: they are added without one, and named under *People
+  on this computer* or on the setup screen before the next reading.
+- **An export from before keys asks first.** It is matched by id, and nothing is written
+  until the screen has asked "This file is from before Kinvue could tell people apart.
+  Restore it into Ann's check-ins only if they are Ann's." and been told yes — *Cancel*
+  has the focus. Main holds the file meanwhile, as it holds a protected one (KV-175), and
+  lets it go on Cancel or another restore. With nobody here under its id — a backup
+  brought to a new computer — it asks to add them as someone new, with a fresh key and no
+  name.
+- **Protected exports move to container version 3,** so they stay above every plain
+  export, as they have been since KV-175: the plain export reaching 2 would otherwise have
+  shared their number. Version 2 is still opened; what is inside is an export from before
+  keys. A test opens one made by the build before this.
+- **Who is unnamed is still asked before anyone's reading** (the question #203 left
+  here). A restore is now how an unnamed person can arrive beside others, and asking
+  straight away — the dashboard stays, saying what the restore did and offering to name
+  them; a reading asks first — costs one name, once, against a reading filed under nobody.
+  Scoping it to whoever sits down would let readings go on while someone's check-ins sat
+  under no name. So it stays the household's.
+- **A file claiming the demo's id is refused as unreadable,** before it could add a person
+  the history file would then refuse to hold.
+
 ---
 
 ## The cared-for person's path, sized for them (KV-20)

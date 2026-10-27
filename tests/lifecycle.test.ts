@@ -1,16 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { DEMO_PERSON_ID } from '@core/session/people'
+import { DEMO_PERSON_ID, type Person } from '@core/session/people'
 import {
   chosenFor,
+  describeAdded,
   describeLastExport,
   describeRefusal,
   describeRestore,
+  EXPORT_BEFORE_KEYS,
   EXPORT_KIND,
   EXPORT_VERSION,
   exportOf,
   parseRemoval,
   planRestore,
   remove,
+  whoseExport,
   type History,
   type RestoreOutcome,
 } from '@core/session/lifecycle'
@@ -24,6 +27,13 @@ import { session } from './helpers'
  */
 
 const PERSON = 'test-person'
+/** The person `PERSON` is: an export carries their key and name (KV-18). */
+const ME: Person = {
+  id: PERSON,
+  key: '11111111-1111-4111-8111-111111111111',
+  name: 'Ann',
+  addedAt: '2026-09-01T09:00:00.000Z',
+}
 const NOW = new Date('2026-10-05T12:00:00.000Z')
 /** One of this person's check-ins, `day` days after 1 September. */
 const on = (day: number, over: Parameters<typeof session>[0] = {}): SessionRecord =>
@@ -132,12 +142,13 @@ describe('exportOf: a person’s history as a restorable file (KV-21)', () => {
         { id: 'theirs', personId: 'another-person', removedAt: NOW.toISOString() },
       ],
     }
-    const file = exportOf(history, PERSON, NOW)
+    const file = exportOf(history, ME, NOW)
     expect(file).toEqual({
       kind: EXPORT_KIND,
       version: EXPORT_VERSION,
       exportedAt: NOW.toISOString(),
       personId: PERSON,
+      person: { key: ME.key, name: 'Ann' },
       records: [record],
       removed: [{ id: 'gone', personId: PERSON, removedAt: NOW.toISOString() }],
     })
@@ -146,7 +157,7 @@ describe('exportOf: a person’s history as a restorable file (KV-21)', () => {
 
 describe('planRestore: everything it accepts, or nothing, and in this order (KV-21)', () => {
   const file = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
-    ...exportOf(historyOf([on(0), on(1), on(2)]), PERSON, NOW),
+    ...exportOf(historyOf([on(0), on(1), on(2)]), ME, NOW),
     ...over,
   })
   const refusal = (f: unknown, history: History = historyOf([])): unknown => {
@@ -215,7 +226,7 @@ describe('planRestore: everything it accepts, or nothing, and in this order (KV-
   })
 
   it('restores into an empty history exactly what was exported', () => {
-    const exported = exportOf(historyOf([on(0), on(1)]), PERSON, NOW)
+    const exported = exportOf(historyOf([on(0), on(1)]), ME, NOW)
     const plan = planRestore(historyOf([]), PERSON, JSON.parse(JSON.stringify(exported)))
     expect(plan.ok && plan.history.sessions).toEqual([on(0), on(1)])
     expect(plan.ok && plan.outcome).toMatchObject({ restored: 2, alreadyHere: 0, stayDeleted: 0 })
@@ -232,7 +243,7 @@ describe('planRestore: everything it accepts, or nothing, and in this order (KV-
   it('export, delete everything, restore: nothing comes back, and it says why', () => {
     // The order the confirm screen offers (review of #184).
     const start = historyOf([on(0), on(1), on(2)])
-    const exported = exportOf(start, PERSON, NOW)
+    const exported = exportOf(start, ME, NOW)
     const on3October = new Date('2026-10-03T10:00:00.000Z')
     const deleted = remove(start, PERSON, { kind: 'all' }, on3October).history
     const plan = planRestore(deleted, PERSON, exported)
@@ -248,7 +259,7 @@ describe('planRestore: everything it accepts, or nothing, and in this order (KV-
 
   it('restores what was not deleted, and keeps deleted what was', () => {
     const start = historyOf([on(0), on(1), on(2)])
-    const exported = exportOf(start, PERSON, NOW)
+    const exported = exportOf(start, ME, NOW)
     const afterOne = remove(start, PERSON, { kind: 'one', id: 'd-1' }, NOW).history
     const emptied: History = { sessions: [], removed: afterOne.removed }
     const plan = planRestore(emptied, PERSON, exported)
@@ -259,7 +270,7 @@ describe('planRestore: everything it accepts, or nothing, and in this order (KV-
   it('never deletes: a tombstone in the file for a check-in held here is ignored', () => {
     // Device A deleted d-1 and exported; device B still holds d-1 (review of #185).
     const there = remove(historyOf([on(0), on(1)]), PERSON, { kind: 'one', id: 'd-1' }, NOW).history
-    const plan = planRestore(historyOf([on(0), on(1)]), PERSON, exportOf(there, PERSON, NOW))
+    const plan = planRestore(historyOf([on(0), on(1)]), PERSON, exportOf(there, ME, NOW))
     expect(plan.ok && plan.history.sessions.map((r) => r.id)).toEqual(['d-0', 'd-1'])
     expect(plan.ok && plan.history.removed).toEqual([])
     expect(plan.ok && plan.outcome).toMatchObject({ alreadyHere: 1, restored: 0 })
@@ -267,9 +278,9 @@ describe('planRestore: everything it accepts, or nothing, and in this order (KV-
 
   it('keeps a file\u2019s tombstone for one not held here: an older export cannot bring it', () => {
     const start = historyOf([on(0), on(1)])
-    const older = exportOf(start, PERSON, NOW)
+    const older = exportOf(start, ME, NOW)
     const pruned = remove(start, PERSON, { kind: 'one', id: 'd-1' }, NOW).history
-    const newer = exportOf(pruned, PERSON, NOW)
+    const newer = exportOf(pruned, ME, NOW)
     // A new device restores the newer export, then the older one.
     const first = planRestore(historyOf([]), PERSON, newer)
     if (!first.ok) throw new Error('refused')
@@ -280,7 +291,7 @@ describe('planRestore: everything it accepts, or nothing, and in this order (KV-
   })
 
   it('does not restore a check-in the file itself says was deleted, and says where', () => {
-    const file = exportOf(historyOf([on(0)]), PERSON, NOW)
+    const file = exportOf(historyOf([on(0)]), ME, NOW)
     const inconsistent = {
       ...file,
       removed: [{ id: 'd-0', personId: PERSON, removedAt: NOW.toISOString() }],
@@ -341,22 +352,22 @@ describe('what the screens say (KV-21)', () => {
   })
 
   it('says why a file was refused, and that nothing changed', () => {
-    expect(describeRefusal({ kind: 'newer', of: 'export', version: 2 })).toBe(
-      'That file was made by a newer version of Kinvue (export version 2; this one reads ' +
-        'version 1). Nothing has been changed. The newer version can restore it.',
+    expect(describeRefusal({ kind: 'newer', of: 'export', version: 3 }, day)).toBe(
+      'That file was made by a newer version of Kinvue (export version 3; this one reads ' +
+        'version 2). Nothing has been changed. The newer version can restore it.',
     )
-    expect(describeRefusal({ kind: 'newer', of: 'record', version: 3 })).toBe(
+    expect(describeRefusal({ kind: 'newer', of: 'record', version: 3 }, day)).toBe(
       'That file was made by a newer version of Kinvue (record format 3; this one reads ' +
         'format 1). Nothing has been changed. The newer version can restore it.',
     )
     // A file that would not open may open next time, and is not called "no export" (#185).
-    expect(describeRefusal({ kind: 'unopenable', code: 'EBUSY' })).toBe(
+    expect(describeRefusal({ kind: 'unopenable', code: 'EBUSY' }, day)).toBe(
       'That file could not be opened (EBUSY). Another program may be using it, or its ' +
         'permissions may need checking; it is worth another go. Nothing has been changed.',
     )
     const why = 'capturedAt is not a time'
     const entry = { kind: 'entry' as const, position: 3, total: 60, why }
-    expect(describeRefusal(entry)).toBe(
+    expect(describeRefusal(entry, day)).toBe(
       'Entry 3 of 60 in that file cannot be restored: capturedAt is not a time. ' +
         'Nothing has been changed.',
     )
@@ -369,5 +380,119 @@ describe('what the screens say (KV-21)', () => {
     expect(describeLastExport(at, sessions, day)).toBe(
       'Last exported 2026-09-02 (2 check-ins since).',
     )
+  })
+})
+
+describe('whose an export is: by key, never by id (KV-18)', () => {
+  const OTHER_KEY = '22222222-2222-4222-8222-222222222222'
+  const v2 = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+    ...exportOf(historyOf([on(0)]), ME, NOW),
+    ...over,
+  })
+  const v1 = (): Record<string, unknown> => {
+    const { person: _person, ...rest } = exportOf(historyOf([on(0)]), ME, NOW)
+    return { ...rest, version: EXPORT_BEFORE_KEYS }
+  }
+  const BILL: Person = { ...ME, id: 'p-bill', key: OTHER_KEY, name: 'Bill' }
+
+  it('is theirs when a person here has its key', () => {
+    expect(whoseExport(v2(), [BILL, ME], [], false)).toEqual({ kind: 'here', personId: PERSON })
+  })
+
+  it('is refused when its key was deleted here, saying when', () => {
+    const at = '2026-10-03T09:00:00.000Z'
+    expect(whoseExport(v2(), [], [{ key: ME.key, removedAt: at }], false)).toEqual({
+      kind: 'refused',
+      refusal: { kind: 'person-deleted', removedAt: at },
+    })
+    // Before a person with its id is even considered.
+    expect(whoseExport(v2(), [ME], [{ key: ME.key, removedAt: at }], false).kind).toBe('refused')
+  })
+
+  it('is someone else’s when a person here has its id under another key', () => {
+    const sameIdOtherHousehold: Person = { ...ME, key: OTHER_KEY }
+    expect(whoseExport(v2(), [sameIdOtherHousehold], [], false)).toEqual({
+      kind: 'refused',
+      refusal: { kind: 'someone-else' },
+    })
+  })
+
+  it('is someone new when nobody here has its key or its id, with its key and name', () => {
+    expect(whoseExport(v2(), [BILL], [], false)).toEqual({
+      kind: 'new',
+      personId: PERSON,
+      key: ME.key,
+      name: 'Ann',
+    })
+  })
+
+  it('asks before an export from before keys is matched, naming whom it would go into', () => {
+    expect(whoseExport(v1(), [ME], [], false)).toEqual({
+      kind: 'refused',
+      refusal: { kind: 'before-keys', into: 'Ann' },
+    })
+    expect(whoseExport(v1(), [{ ...ME, name: null }], [], false)).toEqual({
+      kind: 'refused',
+      refusal: { kind: 'before-keys', into: null },
+    })
+    expect(whoseExport(v1(), [BILL], [], false)).toEqual({
+      kind: 'refused',
+      refusal: { kind: 'before-keys', into: 'someone new' },
+    })
+  })
+
+  it('matches an export from before keys by id once asked, or adds them with no key or name', () => {
+    expect(whoseExport(v1(), [ME], [], true)).toEqual({ kind: 'here', personId: PERSON })
+    expect(whoseExport(v1(), [BILL], [], true)).toEqual({
+      kind: 'new',
+      personId: PERSON,
+      key: null,
+      name: null,
+    })
+  })
+
+  it('reads an export’s person before it is trusted, and never the demo’s', () => {
+    const refusal = (f: unknown): unknown => {
+      const plan = planRestore(historyOf([]), PERSON, f)
+      return plan.ok ? 'accepted' : plan.refusal
+    }
+    expect(refusal(v2({ person: undefined }))).toEqual({
+      kind: 'unreadable',
+      why: 'it does not say whose it is',
+    })
+    expect(refusal(v2({ person: { key: 'k', name: 'Ann' } }))).toEqual({
+      kind: 'unreadable',
+      why: 'its person’s key is not one',
+    })
+    expect(refusal(v2({ person: { key: ME.key, name: 5 } }))).toEqual({
+      kind: 'unreadable',
+      why: 'its person’s name is not one',
+    })
+    const demo = planRestore(historyOf([]), DEMO_PERSON_ID, v2({ personId: DEMO_PERSON_ID }))
+    expect(demo.ok ? 'accepted' : demo.refusal).toEqual({
+      kind: 'unreadable',
+      why: 'it says it is the demo’s, which is never exported',
+    })
+    // An export from before keys is still read as one.
+    expect(refusal(v1())).toBe('accepted')
+  })
+
+  it('says why, and what it is asking, in words', () => {
+    expect(
+      describeRefusal({ kind: 'person-deleted', removedAt: '2026-10-03T09:00:00.000Z' }, day),
+    ).toBe(
+      'These check-ins were deleted on this computer on 2026-10-03, with their person, and ' +
+        'stay deleted. Nothing has been changed.',
+    )
+    expect(describeRefusal({ kind: 'before-keys', into: 'Ann' }, day)).toBe(
+      'This file is from before Kinvue could tell people apart. Restore it into Ann’s ' +
+        'check-ins only if they are Ann’s.',
+    )
+    expect(describeRefusal({ kind: 'before-keys', into: 'someone new' }, day)).toMatch(
+      /Restore it as someone new on this computer only if they are not already here\.$/,
+    )
+    expect(describeAdded(null)).toBe('')
+    expect(describeAdded('named')).toBe(' They were not on this computer, so they have been added.')
+    expect(describeAdded('unnamed')).toMatch(/added, without a name/)
   })
 })

@@ -765,7 +765,7 @@ describe('exporting, restoring and deleting (KV-21)', () => {
 
     const { path } = await storeIn()
     const to = createJsonSessionStore(path)
-    const plan = await to.restore('test-person', exported)
+    const plan = await to.restore(exported)
     expect(plan.ok && plan.outcome).toMatchObject({ restored: 1 })
     expect(await to.list('test-person')).toEqual(await from.list('test-person'))
     expect((await onDisk(path)).removed).toEqual([
@@ -773,7 +773,7 @@ describe('exporting, restoring and deleting (KV-21)', () => {
     ])
 
     const after = await readFile(path, 'utf8')
-    const again = await to.restore('test-person', exported)
+    const again = await to.restore(exported)
     expect(again.ok && again.outcome).toMatchObject({ restored: 0, alreadyHere: 1 })
     expect(await readFile(path, 'utf8')).toBe(after)
   })
@@ -783,8 +783,8 @@ describe('exporting, restoring and deleting (KV-21)', () => {
     const store = createJsonSessionStore(path)
     await store.append(session({ id: 'a' }))
     const before = await readFile(path, 'utf8')
-    const plan = await store.restore('test-person', { kind: 'kinvue-history', version: 2 })
-    expect(plan).toEqual({ ok: false, refusal: { kind: 'newer', of: 'export', version: 2 } })
+    const plan = await store.restore({ kind: 'kinvue-history', version: 3 })
+    expect(plan).toEqual({ ok: false, refusal: { kind: 'newer', of: 'export', version: 3 } })
     expect(await readFile(path, 'utf8')).toBe(before)
   })
 
