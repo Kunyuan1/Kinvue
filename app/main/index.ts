@@ -490,11 +490,16 @@ function registerIpc(
         passphrase === undefined || passphrase === null
           ? null
           : passphraseFor("history:export", passphrase);
+      // Whose it is, in the name it suggests (KV-209): two people exported on one
+      // day must not be offered one name in one folder.
+      const name = (await store.people()).find((p) => p.id === id)?.name ?? null;
       const options = {
         title: "Export check-in history",
         // A suggestion, from when the dialog opened; the person can change it.
-        defaultPath: exportFileName(new Date(), secret !== null),
+        defaultPath: exportFileName(new Date(), name, secret !== null),
         filters: [historyFilter],
+        // Windows and macOS ask before replacing a file; Linux only when told to.
+        properties: ["showOverwriteConfirmation" as const],
       };
       const window = BrowserWindow.fromWebContents(event.sender);
       const chosen =

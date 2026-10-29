@@ -1372,7 +1372,7 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     listSessions.mockResolvedValue(days())
     removeCheckIns.mockResolvedValue(3)
     render(<App />)
-    fireEvent.click(await screen.findByText(/Delete the whole history/))
+    fireEvent.click(await screen.findByText('Delete all of Margaret’s check-ins…'))
     expect(screen.getByText(/stays on this computer, so that an export made earlier/)).toBeTruthy()
     fireEvent.click(screen.getByText('Delete'))
     expect(await screen.findByText('Deleted 3 check-ins.')).toBeTruthy()
@@ -1405,7 +1405,7 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     )
     render(<App />)
     fireEvent.click(await screen.findByRole('button', { name: 'The demo' }))
-    fireEvent.click(await screen.findByText(/Delete the whole history/))
+    fireEvent.click(await screen.findByText('Delete all the demo’s days…'))
     expect(screen.queryByText(/stays on this computer/)).toBeNull()
     expect(screen.getByText('These are demo days, so nothing is kept of them.')).toBeTruthy()
   })
@@ -1414,10 +1414,65 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     listSessions.mockResolvedValue(days())
     removeCheckIns.mockRejectedValue(fromMain(new Error('EBUSY'), 'history:remove'))
     render(<App />)
-    fireEvent.click(await screen.findByText(/Delete the whole history/))
+    fireEvent.click(await screen.findByText('Delete all of Margaret’s check-ins…'))
     fireEvent.click(screen.getByText('Delete'))
     expect(
       await screen.findByText('The check-ins could not be deleted. Nothing has been changed.'),
+    ).toBeTruthy()
+  })
+})
+
+describe('whose history the panel is: one person’s, never the household’s (KV-209)', () => {
+  const ANN = { id: 'p-ann', name: 'Ann' }
+  const BILL = { id: 'p-bill', name: 'Bill' }
+  const theirs = (personId: string): SessionRecord[] =>
+    history(3).map((r) => ({ ...r, id: `${personId}-${r.id}`, personId }))
+
+  it('names the person shown, and the next one when the switcher moves', async () => {
+    listPeople.mockResolvedValue({ people: [ANN, BILL], demo: false, checkedIn: true })
+    listSessions.mockImplementation((id: string) => Promise.resolve(theirs(id)))
+    render(<App />)
+    expect(await screen.findByRole('region', { name: 'Ann’s history' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Bill' }))
+    expect(await screen.findByRole('region', { name: 'Bill’s history' })).toBeTruthy()
+    expect(screen.queryByRole('region', { name: 'Ann’s history' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete all of Bill’s check-ins…' }))
+    expect(
+      screen.getByRole('group', { name: /^Delete all of Bill’s check-ins, the last taken / }),
+    ).toBeTruthy()
+    fireEvent.click(screen.getByText('Delete'))
+    await vi.waitFor(() => expect(removeCheckIns).toHaveBeenCalledWith(BILL.id, { kind: 'all' }))
+  })
+
+  it('calls someone not yet named this person, as the dashboard does', async () => {
+    listPeople.mockResolvedValue({ people: [{ ...ANN, name: null }], demo: false, checkedIn: true })
+    listSessions.mockResolvedValue(theirs(ANN.id))
+    render(<App />)
+    // Past the setup screen, which asks for the name first.
+    fireEvent.click(await screen.findByText('Go to the check-ins'))
+    expect(await screen.findByRole('region', { name: 'This person’s history' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete all of this person’s check-ins…' }))
+    expect(
+      screen.getByRole('group', { name: /^Delete all of this person’s check-ins, the last / }),
+    ).toBeTruthy()
+  })
+
+  it('says the demo’s are its days, not a person’s', async () => {
+    listPeople.mockResolvedValue({ people: [ANN], demo: true, checkedIn: true })
+    listSessions.mockImplementation((id: string) =>
+      Promise.resolve(
+        id === THE_DEMO
+          ? history(3).map((r) => ({ ...r, seeded: true as const, personId: THE_DEMO }))
+          : theirs(id),
+      ),
+    )
+    render(<App />)
+    fireEvent.click(await screen.findByRole('button', { name: 'The demo' }))
+    expect(await screen.findByRole('region', { name: 'The demo’s days' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'Delete all the demo’s days…' }))
+    expect(
+      screen.getByRole('group', { name: /^Delete all the demo’s days, the last taken / }),
     ).toBeTruthy()
   })
 })
@@ -2403,7 +2458,7 @@ describe('more than one person: who is taking the reading, and whose check-ins a
     await dashboard('Ann')
     const take = screen.getByRole('button', { name: 'Take a reading' })
     const people = screen.getByRole('region', { name: 'People on this computer' })
-    const history = screen.getByRole('region', { name: 'Your history' })
+    const history = screen.getByRole('region', { name: 'Ann’s history' })
     const after = (a: Node, b: Node): boolean =>
       (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
     expect(after(take, people)).toBe(true)

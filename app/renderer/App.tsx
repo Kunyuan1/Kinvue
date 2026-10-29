@@ -1093,6 +1093,7 @@ function Dashboard(): React.JSX.Element {
               <ConfirmRemoval
                 sessions={sessions ?? []}
                 personId={viewedId}
+                name={viewedName}
                 which={{ kind: 'one', id: session.id }}
                 onExport={exportHistory}
                 onCancel={() => setDeleting(null)}
@@ -1132,6 +1133,7 @@ function Dashboard(): React.JSX.Element {
         >
           <HistoryPanel
             personId={viewedId}
+            name={viewedName}
             sessions={sessions}
             lastExported={lastExported}
             protection={protection}
