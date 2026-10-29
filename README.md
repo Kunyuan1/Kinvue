@@ -705,13 +705,14 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   An encrypted history (KV-175) cannot be read at all by a build from before it, which
   says so in the same words. And an encrypted history is bound to the account: a new
   profile or another computer cannot open it — an export is the way across.
-- **An export's file name does not say whose it is.** Exports are one person's each
-  (KV-18), but the name suggested is `kinvue-history-<day>.json` for everyone, so
-  exporting two people on one day suggests the same name in the same folder. On Windows
-  and macOS the save dialog asks before replacing a file, and a yes there loses the first
-  person's export; on Linux it does not ask.
-  Rename each file as it is saved; which person a file holds is inside it
-  (`person.name`), not in its name.
+- **A protected export's file name does not say whose it is** (KV-209). A plain export
+  is named for its person — `kinvue-history-Ann-<day>.json`, the name made safe for a file
+  name and cut at 60 bytes, or the day alone for someone not yet named. A protected one
+  keeps `kinvue-history-<day>-protected.json`: the passphrase covers the name inside the
+  file but not the file's own name, so it is left out. Two protected exports on one day
+  are therefore offered the same name in the same folder. The save dialog asks before
+  replacing a file on every system, and a yes there loses the first export: rename each
+  as it is saved. Which person a file holds is inside it (`person.name`).
 - **`@smartspectra/node-sdk` depends on all four platform runtimes**, not just the host's
   — install pulls Windows, macOS and both Linux binaries regardless of platform.
 - **Windows, macOS (Apple Silicon) and Linux only.** There is no `darwin-x64` runtime, so
