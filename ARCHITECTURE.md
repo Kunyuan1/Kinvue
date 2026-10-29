@@ -1555,10 +1555,13 @@ Third, restore matched by key (`whoseExport`, `store.restore`), which finishes K
   one name in one folder. The name stays in its own script; Windows' reserved characters,
   control characters and spaces become hyphens, and it is cut between characters at 60
   bytes of UTF-8, short of the 255 a whole file name may take. Someone not yet named, or a
-  name with nothing a file name can hold, gets the day alone. On a protected export the
-  name is outside the encryption, as the file name always was; the dialog shows it and it
-  can be changed there. The save dialog asks before replacing a file on Linux as well,
-  where Electron asks only when told to. The history panel says whose it is the same way:
+  name with nothing a file name can hold, gets the day alone. **A protected export never
+  says whose** (decided by the owner in #210): a passphrase covers everything inside the
+  file, the name included, but not the file's own name, and whoever chose one chose
+  privacy. So it keeps `kinvue-history-2026-10-05-protected.json`, and two on one day are
+  offered one name, the cost taken. The save dialog asks before replacing a file on Linux
+  as well, where Electron asks only when told to, so that offer replaces nothing
+  unasked. The history panel says whose it is the same way:
   "Ann's history", "Delete all of Ann's check-ins…", the demo's days for the demo.
 - **Restore is the household's, not the shown person's.** The file says whose it is, so
   *Restore from an export* takes no person, is offered whoever is shown — the demo

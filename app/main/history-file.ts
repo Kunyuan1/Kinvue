@@ -88,14 +88,17 @@ export function nameForFile(name: string): string {
  * hold, gets the day alone, as every export did before (KV-209).
  *
  * A protected export says so in its name (review of #187) —
- * `kinvue-history-Ann-2026-10-05-protected.json` — so the copy whose passphrase
- * must be remembered can be told from a plain one without opening it. Its
- * name is outside the encryption, as the file name always was; the dialog
- * shows it before anything is written, and it can be changed there.
+ * `kinvue-history-2026-10-05-protected.json` — so the copy whose passphrase
+ * must be remembered can be told from a plain one without opening it. It
+ * never says whose: a passphrase covers everything inside the file, the name
+ * included, but not the file's own name, and whoever chose one chose privacy
+ * (decided by the owner in #210). The cost, taken on purpose: two protected
+ * exports on one day are offered one name, and the dialog asks before
+ * replacing on every system.
  */
 export function exportFileName(now: Date, name: string | null, isProtected = false): string {
   const pad = (n: number): string => String(n).padStart(2, '0')
   const day = `${String(now.getFullYear())}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
-  const whose = name === null ? '' : nameForFile(name)
+  const whose = name === null || isProtected ? '' : nameForFile(name)
   return `kinvue-history-${whose === '' ? '' : `${whose}-`}${day}${isProtected ? '-protected' : ''}.json`
 }

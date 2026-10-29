@@ -72,7 +72,12 @@ describe('exportFileName', () => {
     const day = new Date(2026, 9, 5, 9, 0)
     expect(exportFileName(day, 'Ann')).toBe('kinvue-history-Ann-2026-10-05.json')
     expect(exportFileName(day, 'Bill')).toBe('kinvue-history-Bill-2026-10-05.json')
-    expect(exportFileName(day, 'Ann', true)).toBe('kinvue-history-Ann-2026-10-05-protected.json')
+  })
+
+  it('never says whose a protected export is: its name is outside the passphrase (#210)', () => {
+    const day = new Date(2026, 9, 5, 9, 0)
+    expect(exportFileName(day, 'Ann', true)).toBe('kinvue-history-2026-10-05-protected.json')
+    expect(exportFileName(day, 'Bill', true)).toBe('kinvue-history-2026-10-05-protected.json')
   })
 })
 
