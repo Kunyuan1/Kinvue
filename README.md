@@ -20,8 +20,9 @@ It should be enough to understand how the system fits together and where to make
 > breathing and HRV from a webcam (KV-1) — on one machine, in one room, which corrected
 > several assumptions this code was built on. What the SDK sends to Presage has been
 > measured (KV-65): a licence meter, not the video. Since KV-18 one check-in computer can
-> hold a household — several people, each named, each with their own baseline, asked who
-> is taking each reading. Nothing here has been used by anyone it was built for.
+> hold a household — several people, each with their own baseline, and, where more than
+> one takes readings, asked before each reading who is taking it. Nothing here has been
+> used by anyone it was built for.
 
 ---
 
@@ -398,7 +399,7 @@ same file keeps the people they belong to (KV-18), and what is kept of anyone de
 | `CheckInAnswers` | `mood`, `sleep`, `skippedMeal`, `painReported` (+ optional `painNote`). All four are required: there is no way to say "not asked", so the flow collects all of them or stores nothing. The meal answer is one of two, never both and never neither (`MealAnswer`): a record from before KV-16 has `eatenToday` in place of `skippedMeal`, and is read by the question it was asked, except a seeded one, which is read as the question asked now. |
 | `FiredRule` | `id`, `title`, `explanation`, `severity`. One per rule that fired. |
 | `Assessment` | `flag`, `firedRules`, `summary`, `baselineSessions`, plus the optional `baselineSeededSessions`, `baselineRefusedSessions`, `baselineSpan`, `uncomparedMetrics`, `withheld` and `rulesVersion`. Written by the scorer. `rulesVersion` says which version of the rules gave the verdict (KV-30); absent on one scored before it, and read as unknown. `baselineSpan` is the `capturedAt` of the oldest and newest check-in the baseline was built from, so a card can say when its usual had gone stale (KV-154). Like `uncomparedMetrics` it is **absent for two different reasons** — with no baseline sessions (only on a verdict that compared nothing, where absence is correct) and on a verdict scored before KV-154 (unknown) — so read it as unknown only where the card compared something. `baselineRefusedSessions` counts the earlier check-ins refused as unusable — the refusals `baselineSessions` excluded, across the whole history (not everything it leaves out: it is also capped at the window) — so a card still learning can say why its count is low (KV-100); absent on a verdict scored before it, and read as unknown. `withheld` says why an `insufficient-signal` verdict was withheld — an unusable capture (which of the four), a baseline still learning, or an uncompared metric — so the card's sentence is composed from a fact rather than re-decided later (KV-138 review); absent on any other verdict and on one scored before it existed. `uncomparedMetrics` lists the metrics measured at the check-in with too few readings of their own to have a usual, each with how many readings it had and how many were needed, and, when it had any, what they averaged; a would-be `normal` with any entry is withheld (KV-87). It is written only when the check-in was compared against a baseline at all, so it is **absent for two different reasons**: on an unusable capture or a baseline still learning, where nothing was compared and absence is correct, and on a verdict scored before KV-87, where absence means unknown. Read it as unknown only on a `normal` or `elevated` verdict. |
-| `Person` | `id`, `key`, `name`, `addedAt` (KV-18). `id` is what each `SessionRecord.personId` names. `key` is a random UUID that tells this person from anyone else on any computer — an id need not, since `demo-margaret` is the same on every install that ever ran the old demo — and a restore matches by it. It leaves the computer only inside that person's own export. `name` is `null` until someone has been told whose the check-ins are. The demo is never a `Person`. |
+| `Person` | `id`, `key`, `name`, `addedAt` (KV-18). `id` is what each real `SessionRecord.personId` names; a record with `seeded: true` is the demo's whatever its `personId` says (`ownerOf`), so days seeded under `demo-margaret` before KV-18 never count in that person's baseline, export or deletion. `key` is a random UUID that tells this person from anyone else on any computer — an id need not, since `demo-margaret` is the same on every install that ever ran the old demo — and a restore matches by it. It leaves the computer only inside that person's own export. `name` is `null` until they are named: a history from before KV-18, someone restored whose name was taken here or does not hold under the name rule, or a name this build could not hold when it read the file. The demo is never a `Person`. |
 | `PersonTombstone` | `key`, `id`, `removedAt` (KV-18): what is kept of a person deleted here — no name, nothing of their check-ins — so an export made earlier cannot bring them back. The `id` is there because an export from before keys says only an id; tombstones written before it was added carry none. |
 | `SessionRecord` | The above plus `format`, `id`, `personId`, `capturedAt` (UTC), `timeZone`, and `seeded` for demo history. `format` is the record format it was written in (KV-30), so a record read somewhere else says how to read it; absent on a record from before it, which is format 1. |
 
@@ -467,21 +468,27 @@ them checkable:
   now (it may be locked; try again), or the key that sealed it is not this account's —
   then, and only then, *Start a new history* is offered, keeping the old file.
 - **A history is kept until the person deletes it, and they can.** There is no automatic
-  retention window. At the foot of the dashboard a person can export their history,
-  restore an export, delete one check-in, every check-in before a date, or the whole
-  history (KV-21):
+  retention window. At the foot of the dashboard, for the person shown, someone can export
+  their history, restore an export, delete one check-in, every check-in before a date, or
+  all of that person's check-ins (KV-21), and delete the person themselves (KV-18). Each of
+  these is one person's, never the household's: in a household, an export of one person
+  is not a backup of the others, so each is exported on their own:
   - **An export can be protected with a passphrase** (KV-175): scrypt, then AES-256-GCM.
     Forget it, and that copy cannot be opened; the history on the device is unaffected.
     The suggested name ends `-protected.json`, so it can be told from a plain one.
-    **Without one, an export is the whole history in plain JSON** — every check-in, pain
-    notes included, readable wherever it is saved — and the screen says so. It also shows
+    **Without one, an export is that person's whole history in plain JSON** — every
+    check-in of theirs, pain notes included, readable wherever it is saved — and the screen
+    says so. It also shows
     when the last one was made. Demo days are not exported.
   - **Restoring writes everything it accepts, or nothing, and never deletes.** Every
     check-in in the file is checked first; one this app cannot read refuses the file, and
     nothing changes. A restore only adds: deleting is always the person's own action.
   - **A restore goes back into whoever the file says it is,** matched by their key, never
     by whoever is shown (KV-18). Someone not on this computer is added with it, under
-    their own name unless that name is already used here. Someone deleted here is refused.
+    the file's name — or with none, to be named afterwards, when that name is already used
+    here or does not hold under the name rule as it is stored (too long, an invisible
+    character or a joiner at either end, or not trimmed and in Unicode NFC as names are
+    kept). Someone deleted here is refused.
     An export made before keys existed can only say an id, which two households may share,
     so when someone here has that id the screen asks whose it is before anything is
     written.
@@ -490,9 +497,11 @@ them checkable:
     answer, no note — so an export made earlier cannot bring it back (nor, once sharing
     exists, a caregiver's copy). That note survives deleting everything. Verdicts on other
     cards are not rescored.
-  - **Deleting a person deletes them, and they stay deleted** (KV-18). Their name and every
-    check-in go in one write; what is kept is a note of their key, their id and when — no
-    name, no readings — so restoring an export of them is refused. The demo, which has
+  - **Deleting a person deletes them, and they stay deleted** (KV-18). Their name, every
+    check-in, and when they were last exported go in one write. What is kept is a note of
+    their key, their id and when — no name, no readings — so restoring an export of them
+    is refused; and, as for any deleted check-in, a note of each of theirs, which carries
+    their id too. The demo, which has
     none of these, can be seeded again.
   - **"Deleted" means gone from the app, not from the disk.** The old file's blocks are
     released, not overwritten — ciphertext where the history is encrypted, plain where it
@@ -507,7 +516,8 @@ them checkable:
   That holds inside a household too (KV-18): several people on one account share one
   history file, and each can see, export or delete the others' check-ins. Who is taking a
   reading is asked, not detected — a reading taken under the wrong name is deleted, not
-  moved, since moving it would change two baselines.
+  moved: moving it would change two baselines and every verdict already compared against
+  them, without a sign on any card that it had (ARCHITECTURE.md).
 - **Opt-in by design.** Capture runs only when someone presses the button. There is no
   background monitoring and no always-on camera.
 
@@ -684,12 +694,24 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   history holding a record in a format this build does not know is refused the same way.
   The file says the oldest version that can hold what is in it (KV-18): 2 with a people
   list, 3 only once someone has been deleted, so a household that never deleted anyone
-  can still go back a build. Exports are versioned apart — 2 since they carry their
-  person, and 3 for a passphrase-protected one — and an earlier build refuses a newer one
-  as newer, rather than as no export.
+  can still go back a build. Exports have their own number, and the rule that matters is
+  that **a passphrase-protected export's number stays above every plain one**
+  (`core/session/protect.ts`): a build that knows no protection then refuses it as newer,
+  rather than as no export. Plain exports are at 2 since they carry their person, and
+  protected ones moved to 3 to stay above them. The numbers do overlap — protected
+  exports said 2 before that, and are still opened — so what tells the two kinds apart is
+  the `sealed` field, never the number. Raising the plain export to 3 is not free: the
+  protected number has to move above it first.
   An encrypted history (KV-175) cannot be read at all by a build from before it, which
   says so in the same words. And an encrypted history is bound to the account: a new
   profile or another computer cannot open it — an export is the way across.
+- **An export's file name does not say whose it is.** Exports are one person's each
+  (KV-18), but the name suggested is `kinvue-history-<day>.json` for everyone, so
+  exporting two people on one day suggests the same name in the same folder. On Windows
+  and macOS the save dialog asks before replacing a file, and a yes there loses the first
+  person's export; on Linux it does not ask.
+  Rename each file as it is saved; which person a file holds is inside it
+  (`person.name`), not in its name.
 - **`@smartspectra/node-sdk` depends on all four platform runtimes**, not just the host's
   — install pulls Windows, macOS and both Linux binaries regardless of platform.
 - **Windows, macOS (Apple Silicon) and Linux only.** There is no `darwin-x64` runtime, so
