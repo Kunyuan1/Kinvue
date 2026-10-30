@@ -1550,6 +1550,19 @@ Third, restore matched by key (`whoseExport`, `store.restore`), which finishes K
 - **An export says whose it is.** Export version 2 adds `person: { key, name }`; the key
   leaves the device here and nowhere else. Only someone on the list is exported: the demo
   has no key. Version 1 is still read.
+- **Its suggested name says whose it is too** (KV-209):
+  `kinvue-history-Ann-2026-10-05.json`, so two people exported on one day are not offered
+  one name in one folder. The name stays in its own script; Windows' reserved characters,
+  control characters and spaces become hyphens, and it is cut between characters at 60
+  bytes of UTF-8, short of the 255 a whole file name may take. Someone not yet named, or a
+  name with nothing a file name can hold, gets the day alone. **A protected export never
+  says whose** (decided by the owner in #210): a passphrase covers everything inside the
+  file, the name included, but not the file's own name, and whoever chose one chose
+  privacy. So it keeps `kinvue-history-2026-10-05-protected.json`, and two on one day are
+  offered one name, the cost taken. The save dialog asks before replacing a file on Linux
+  as well, where Electron asks only when told to, so that offer replaces nothing
+  unasked. The history panel says whose it is the same way:
+  "Ann's history", "Delete all of Ann's check-ins…", the demo's days for the demo.
 - **Restore is the household's, not the shown person's.** The file says whose it is, so
   *Restore from an export* takes no person, is offered whoever is shown — the demo
   included, which reverses the two bullets above that kept restore away from the demo:

@@ -11,7 +11,7 @@ import {
   type RestoreResult,
 } from '@core/session/lifecycle'
 import type { Protection } from '../../shared/protection'
-import ConfirmRemoval from './ConfirmRemoval'
+import ConfirmRemoval, { whoseHistory } from './ConfirmRemoval'
 import ExportChoice from './ExportChoice'
 
 // Dimmed, with no hover, when disabled (KV-175): a guard that looks live is no guard.
@@ -43,8 +43,10 @@ export const deviceDay = (instant: string): string =>
  * The export line says when the last one was made and how many check-ins have
  * come since, so how much a dead device would take is visible without a prompt
  * or a schedule. Exporting asks first whether to protect the file with a
- * passphrase (KV-175, T16); without one it is the whole history, pain notes
- * included, readable wherever it is put, and the note beside it says so.
+ * passphrase (KV-175, T16); without one it is that person's whole history,
+ * pain notes included, readable wherever it is put, and the note beside it
+ * says so. An export, and deleting everything, are the person shown's, never
+ * the household's (KV-18), and the heading and button name them (KV-209).
  *
  * It also says whether the history here is encrypted with this computer's key
  * (KV-175), and what that does not cover — or that it is not encrypted, where
@@ -52,6 +54,7 @@ export const deviceDay = (instant: string): string =>
  */
 export default function HistoryPanel({
   personId,
+  name,
   sessions,
   lastExported,
   protection,
@@ -61,6 +64,8 @@ export default function HistoryPanel({
   onFailure,
 }: {
   personId: string
+  /** The person shown's name; null when they have not been named yet. */
+  name: string | null
   sessions: readonly SessionRecord[]
   /** When the last export was made, null for never, undefined until known. */
   lastExported: string | null | undefined
@@ -95,6 +100,7 @@ export default function HistoryPanel({
   const [unlocking, setUnlocking] = useState(false)
   const [passphrase, setPassphrase] = useState('')
   const real = sessions.filter((r) => r.seeded !== true)
+  const whose = whoseHistory(personId, name)
 
   const step = async (run: () => Promise<void>, fallback: string): Promise<void> => {
     setBusy(true)
@@ -200,7 +206,7 @@ export default function HistoryPanel({
       className="mt-10 border-t border-(--color-line) pt-6 text-sm"
     >
       <h2 id="history-heading" className="text-base font-semibold">
-        Your history
+        {whose.heading}
       </h2>
 
       {protection !== undefined && (
@@ -341,7 +347,7 @@ export default function HistoryPanel({
             }}
             className={`mt-3 ${BUTTON}`}
           >
-            Delete the whole history&hellip;
+            Delete {whose.all}&hellip;
           </button>
         </div>
       )}
@@ -350,6 +356,7 @@ export default function HistoryPanel({
         <ConfirmRemoval
           sessions={sessions}
           personId={personId}
+          name={name}
           which={removing}
           onExport={onExport}
           onCancel={() => setRemoving(null)}

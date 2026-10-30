@@ -1,5 +1,6 @@
 import type { SessionRecord } from '@core/session/types'
 import { chosenFor, type Removal } from '@core/session/lifecycle'
+import { DEMO_PERSON_ID } from '@core/seed/persona'
 import ConfirmDeletion from './ConfirmDeletion'
 
 /** A moment on this device, for the confirm screen: "3 October, 23:40". */
@@ -10,6 +11,23 @@ const moment = (instant: string): string =>
     hour: 'numeric',
     minute: '2-digit',
   })
+
+/**
+ * Whose a history is, as the history panel's heading, its delete-everything
+ * button and this step's heading say it: one person's since KV-18, never the
+ * household's. The demo's are its days, as its own heading says, not a
+ * person's, whatever name is passed; someone not yet named is "this person",
+ * as the dashboard calls them (KV-209).
+ */
+export const whoseHistory = (
+  personId: string,
+  name: string | null,
+): { heading: string; all: string } => {
+  if (personId === DEMO_PERSON_ID) return { heading: 'The demo’s days', all: 'all the demo’s days' }
+  return name === null
+    ? { heading: 'This person’s history', all: 'all of this person’s check-ins' }
+    : { heading: `${name}’s history`, all: `all of ${name}’s check-ins` }
+}
 
 /**
  * The step before a deletion (KV-21): what will go, and what deleting means,
@@ -29,6 +47,7 @@ const moment = (instant: string): string =>
 export default function ConfirmRemoval({
   sessions,
   personId,
+  name,
   which,
   onExport,
   onDone,
@@ -37,6 +56,8 @@ export default function ConfirmRemoval({
 }: {
   sessions: readonly SessionRecord[]
   personId: string
+  /** The person shown's name; null when they have not been named yet. */
+  name: string | null
   which: Removal
   /** Makes an export first, resolving to what to say, or null (`ConfirmDeletion`). */
   onExport: (passphrase?: string) => Promise<string | null>
@@ -57,7 +78,7 @@ export default function ConfirmRemoval({
   return (
     <ConfirmDeletion
       heading={
-        (which.kind === 'all' ? 'Delete the whole history' : `Delete ${count}`) +
+        (which.kind === 'all' ? `Delete ${whoseHistory(personId, name).all}` : `Delete ${count}`) +
         (chosen.length > 1 ? `, the last taken ${moment(last.capturedAt)}?` : '?')
       }
       deleteLabel="Delete"
