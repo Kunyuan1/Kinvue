@@ -55,7 +55,9 @@ describe('readExport', () => {
 
 describe('exportFileName', () => {
   it('names the local day it was made, which is what someone looks for among several', () => {
-    expect(exportFileName(new Date(2026, 9, 5, 23, 30), null)).toBe('kinvue-history-2026-10-05.json')
+    expect(exportFileName(new Date(2026, 9, 5, 23, 30), null)).toBe(
+      'kinvue-history-2026-10-05.json',
+    )
     expect(exportFileName(new Date(2026, 0, 2, 0, 5), null)).toBe('kinvue-history-2026-01-02.json')
   })
 

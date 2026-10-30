@@ -100,5 +100,6 @@ export function exportFileName(now: Date, name: string | null, isProtected = fal
   const pad = (n: number): string => String(n).padStart(2, '0')
   const day = `${String(now.getFullYear())}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
   const whose = name === null || isProtected ? '' : nameForFile(name)
-  return `kinvue-history-${whose === '' ? '' : `${whose}-`}${day}${isProtected ? '-protected' : ''}.json`
+  const part = whose === '' ? '' : `${whose}-`
+  return `kinvue-history-${part}${day}${isProtected ? '-protected' : ''}.json`
 }
