@@ -1723,7 +1723,8 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
 - **Consent comes before anything leaves the device.** Who has access is visible on the
   check-in device, and access can be revoked from it. Remote visibility of someone's daily
   physiology without consent is surveillance, however well meant. It is the person's own
-  consent; a path for someone who cannot give it waits on legal advice (#35). See
+  consent; a path for someone who cannot give it is unsupported until qualified advice
+  says what valid consent looks like (KV-35, tripwire 3). See
   *Who sees it, and how it is taken back* below.
 - **What leaves the device is decided in one place** — `toShared` in `core/share/`,
   with every field of a session explicitly classified. Each shape that leaves has a table
@@ -1744,7 +1745,8 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
   calibrating the rule thresholds (#22), which pools caregiver-confirmed outcomes (#47)
   across people. That is opt-in, asked for separately from sharing with a caregiver —
   approving a viewer (KV-31) is not consent to it, and that decision did not consider it —
-  and its own consent must be designed, and clear #35, before any session is used for it.
+  and its own consent must be designed, and qualified advice taken (KV-35, tripwire 4),
+  before any session is used for it.
 - **`core/` stays framework-free**, so that it can be imported by more than one app. One
   will be: KV-34 decided a caregiver client built on it, which #42 builds. Until then
   nothing checks that `core/` runs outside Electron, beyond the lint rule that keeps
@@ -1869,9 +1871,9 @@ a remote viewer, is on no list and cannot be revoked; that is the device's own b
 - **Viewers cannot see each other.** Who else has access is the person's business.
 - **Only the person's own consent, for now.** Dementia and cognitive decline are common in
   exactly the people this is for. Whether a guardian or power of attorney may approve
-  viewers, and what that looks like, is a legal question (#35), and it is not guessed at
-  here: until it is answered, someone who cannot agree at their own device is not shared
-  with anyone. **Deliberately unsupported**, not overlooked.
+  viewers, and what that looks like, is a legal question, and it is not guessed at here:
+  until qualified advice answers it (KV-35, tripwire 3), someone who cannot agree at their
+  own device is not shared with anyone. **Deliberately unsupported**, not overlooked.
 
 **What this model cannot do** (review of #174), stated as limits rather than listed as
 defences:
@@ -2768,15 +2770,73 @@ blocks are left on the disk, the residue described above. A capture and its ques
 take longer than the gap, so it is unlikely; it is not impossible. Where the computer
 offers no key store, it holds only as a limit, and the dashboard says so.
 
-### What is still open
+### The scope it is built for (KV-35)
 
-One decision is left, and as KV-31 to KV-34 were, it must be closed and written into this
-file before remote code is written. Unlike them, it is open for want of qualified legal
-advice, not by choice: it is not one this project can answer for itself.
+Decided 2026-10-31 with the owner. **This is reasoning, not legal advice:** no qualified
+advice was taken, because a personal project has no one to take it from. What it does
+instead is fix the scope the design is built for, say why that scope is the one where
+most health-data obligations do not arise, and name the changes that leave it — each of
+which needs qualified advice first. It closes #35 for that scope only.
 
-| Question | Ticket |
-|---|---|
-| What legal and regulatory obligations sending health data brings — and whether a guardian or power of attorney may consent for someone who cannot (KV-31 left this open) | #35 |
+- **Kinvue is household software, not a service.** One household builds and runs it for
+  itself: the check-in computer, the people on it (KV-18), and the family who follow
+  them. It is not published (#19's release is deferred), not offered to anyone outside
+  that household, and nothing is sold or charged for.
+- **The relay is the household's own.** Remote access (Phase 5) runs through a relay the
+  household sets up and runs for itself, on a server it controls — not a Kinvue service
+  that others sign up to, and not one run for it by someone else. #33's design does not
+  change: the relay still holds only sealed envelopes. "The operator" in T3 and T4 is the
+  household, which narrows those threats rather than removing them — a breach of the
+  household's server is still a breach.
+- **Why this scope, by the regimes #35 named.** Each is a reading of where the rule is
+  aimed, not a ruling on it:
+  - **EU and UK.** GDPR does not apply to processing by a natural person in the course
+    of a purely personal or household activity (Article 2(2)(c); the UK GDPR keeps it). A
+    family keeping and sharing its own check-ins among itself is the case that exemption
+    describes. It does not reach a party outside the household that processes the data
+    for others — which is why the relay is the household's own.
+  - **United States.** HIPAA covers healthcare providers, health plans and those who work
+    for them; none is involved. The FTC's Health Breach Notification Rule is aimed at
+    vendors of personal health records and those around them; a household running
+    software for itself offers one to no one. State consumer-health-data laws
+    (Washington's My Health My Data Act among them) are written about entities doing
+    business with consumers; how any would read a household's own use is not
+    established here.
+  - **Medical-device rules** attach to placing a product with a medical purpose on a
+    market. Kinvue is placed on none. "Not a diagnosis, not an emergency alert" stays the
+    product's framing because it is true, not as a defence.
+- **What holds under any reading.** Choices already made that shrink what any regime
+  would ask, kept whatever the scope: end-to-end encryption, so the relay can read
+  nothing (KV-33); what leaves decided field by field in one place, the pain note per
+  viewer (KV-32, KV-37); only the person's own consent, visible and revocable at their
+  device (KV-31); a calm daily summary, never a real-time alert (#43); no secondary use.
+- **The SDK's licence meter (T10)** stays accepted and disclosed. Under KV-19 each
+  household registers its own SmartSpectra key, so what the meter reports goes to the
+  vendor under that household's own account and that vendor's own terms, which the
+  household accepted when it registered. `README.md` says what it carries.
+- **The tripwires.** Each of these leaves the scope above, and needs qualified advice —
+  #35 reopened — **before** it happens, not after:
+  1. **Publishing Kinvue**, or anyone outside the household installing it (#19's release
+     resumed is the obvious case).
+  2. **A relay operated by anyone but the household** — a hosted service that runs it on
+     the household's behalf, or one relay serving more than one household.
+  3. **Consent for someone who cannot give it** — a guardian or power of attorney
+     approving viewers. It stays deliberately unsupported (KV-31) until advice says what
+     valid consent looks like.
+  4. **Pooling outcomes across people** to calibrate the thresholds (#22, #47). It already
+     needed its own consent; it needs qualified advice too, before any session is used
+     for it.
+  5. **Selling, charging for, or advertising** Kinvue in any form.
+- **What it changes in #31, #32, #33 and #46.** #31: nothing in the design — proxy consent
+  stays unsupported, now as tripwire 3 rather than a question awaiting an answer. #32:
+  nothing. #33: the relay's operator is the household, written above; the "no Kinvue
+  server" fallback it records stays the fallback. #46: running the relay becomes the
+  household's job — backups, monitoring, and a breach plan sized for one operator: revoke
+  the affected viewers (#45), rotate the keys, and tell the people whose check-ins were
+  on it. No regulator notice is assumed under this scope; crossing a tripwire is what
+  would add one.
+- **#39 is unblocked for this scope.** It builds the household's own relay, and its docs
+  say it is one.
 
 End-to-end encryption is decided (KV-33, above). It does not keep the privacy guarantees
 in `README.md` true: any sync ends *no network* and *session data is local*, encrypted or
@@ -2818,7 +2878,7 @@ to check a card against. Integrity is protected as deliberately as confidentiali
 | T7 | Data on the check-in device itself: `sessions.json` is plain JSON, readable by anyone with that operating-system account, its backups (File History, Time Machine, a sync client), or malware running as it | Others on the computer; malware; a backup service | **Decided (KV-175):** the whole history encrypted with the operating system's key (`safeStorage`), so a copy, a backup or a sync copy read under another account or machine, and the residue a deletion leaves, are ciphertext; where the operating system holds no key (Linux `basic_text`) it stays plain and the dashboard says so. **Built** (KV-175), checked by backend on Linux, so `basic_text` is never called encrypted. **Not covered:** anyone signed in as the same user, malware running as them, and a same-account rollback of the file from a backup, which still brings deleted check-ins back; a separate account for the person is the boundary (README). | #175 | Done (KV-175), where the operating system holds a key. Anyone on the same login, malware, a same-account rollback, and a computer with no key store, remain limits |
 | T8 | The renderer is compromised (a bug, a malicious dependency) and reaches the camera, the key's use or the history | Malicious code in the page | Sandbox, one page, IPC answered only for it, every handler through one checked wrapper, enforced by lint (KV-29). | #29 | Done |
 | T9 | A malicious release reaches installs through the update channel or a dependency | Supply-chain attacker | **Today:** Electron and the SDK pinned exactly, each bump alone and launched before merge (KV-131, KV-145). **Decided (KV-19):** installers signed with Microsoft's Artifact Signing from a release workflow whose credentials never reach a developer's machine, and updates installed only when signed by the publisher the running app was built to trust — a name the release build refuses to leave empty, since without it the updater checks nothing; a build that is not signed never updates itself, by a build-time flag only the signing workflow sets. **Not yet:** building that (#19); which dependencies may run install scripts (#147); and the caregiver app's native shell and its plugins — code on the phone holding the viewer's keys — pinned and reviewed, with its web code kept in the signed bundle (KV-34, #179). | #19, #147, #179 | Partly done; decided on #19, to be built; open on #147, #179 |
-| T10 | **The SDK's own traffic reveals the routine:** the licence meter carries each session's times and per-metric datapoint counts to the vendor, today, whatever Kinvue builds | The SDK vendor; whoever breaches it | Not mitigable in the app: a capture cannot run without it (KV-65). Established from the runtime's own schema, not by decrypting the traffic; *when* each report is sent is only partly known, but a report carrying the session's times says when the check-in happened whenever it arrives. `README.md` says so. Under KV-19 each household registers its own key, so the meter arrives under that household's registration rather than pooled under a developer's: the vendor can tie the routine to a named account (review of #192). Whether a third party receiving it is acceptable, and what users must be told, is a legal question. | #19, #35 | **Accepted, disclosed; → #35** |
+| T10 | **The SDK's own traffic reveals the routine:** the licence meter carries each session's times and per-metric datapoint counts to the vendor, today, whatever Kinvue builds | The SDK vendor; whoever breaches it | Not mitigable in the app: a capture cannot run without it (KV-65). Established from the runtime's own schema, not by decrypting the traffic; *when* each report is sent is only partly known, but a report carrying the session's times says when the check-in happened whenever it arrives. `README.md` says so. Under KV-19 each household registers its own key, so the meter arrives under that household's registration rather than pooled under a developer's: the vendor can tie the routine to a named account (review of #192). Under KV-35's scope the vendor's terms are the household's own, accepted when it registered; outside it, what users must be told is a question for qualified advice. | #19, #35 | **Accepted, disclosed; the household's own (KV-35)** |
 | T11 | The pain note, the most personal field, reaches people the person did not mean it for | Any viewer | Off by default; turned on per viewer by the person; the note field says who will read it as they type (KV-32). | #31, #37, #40 | Decided |
 | T12 | Data the person deleted, or withdrew, survives elsewhere | Any copy holder | Deletion travels as a tombstone; a revoked viewer's app deletes its copy on next contact, and one that never reconnects keeps it — a limit; partial deletion is tested as a flow because it looks like success. | #21, #45, #175 | Decided (KV-21: a tombstone wins over a copy coming back through restore or sync); #21, #45 to build. A rollback of the store file restores records and tombstones together — T7's limit |
 | T13 | **A delivered card is altered, fabricated, replayed or dropped**, so a viewer reads a day that did not happen, or misses one that did | The relay; a network attacker; whoever breaches the relay | A per-viewer envelope — viewer id, stream number, previous envelope's hash, record — signed by the check-in device (Ed25519) and verified on the viewer's device before it is shown, so drops, renumbering, replays and reordering show, and a gap is shown as one (with #44); the pairing code derived from all four public keys; the daily summary composed from verified records only (KV-33). **Rests on the check-in device's signing key**, which is protected only as T7's data is: malware running as the person can sign forgeries. | #33, #39, #40, #42, #43, #175 | Decided; rests on #175 |
