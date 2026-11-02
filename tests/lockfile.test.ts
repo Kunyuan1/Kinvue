@@ -32,9 +32,15 @@ type Entry = {
   link?: boolean
 }
 
-/** Installed entries: bundled ones ship inside their parent's tarball, links point at the tree. */
+/**
+ * Installed entries: bundled ones ship inside their parent's tarball, links point at the
+ * tree. The workspaces themselves (`core`, `app`, KV-38) are this repo, recorded under
+ * their own paths with no `node_modules/` in them and nothing to fetch. Anything installed
+ * is under a `node_modules/`, a workspace's own (`app/node_modules/…`) included.
+ */
 const installed = Object.entries(lock.packages as Record<string, Entry>).filter(
-  ([path, entry]) => path !== '' && entry.inBundle !== true && entry.link !== true,
+  ([path, entry]) =>
+    path.includes('node_modules/') && entry.inBundle !== true && entry.link !== true,
 )
 
 /** The package an entry installs: an alias records its real name, otherwise the path says it. */

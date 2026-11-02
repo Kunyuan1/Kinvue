@@ -25,14 +25,14 @@ import {
   DEFAULT_CAPTURE_SECONDS,
   LONGEST_REASONABLE_SECONDS,
   SHORTEST_USEFUL_SECONDS,
-} from '@core/capture/length'
+} from '@kinvue/core/capture/length'
 
 export {
   CAMERA_OPEN_ALLOWANCE_SECONDS,
   DEFAULT_CAPTURE_SECONDS,
   LONGEST_REASONABLE_SECONDS,
   SHORTEST_USEFUL_SECONDS,
-} from '@core/capture/length'
+} from '@kinvue/core/capture/length'
 
 /** Set this to run longer or shorter captures, e.g. for #63. */
 export const CAPTURE_SECONDS_ENV = 'KINVUE_CAPTURE_SECONDS'

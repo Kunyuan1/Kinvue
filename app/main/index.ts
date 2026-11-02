@@ -13,21 +13,21 @@ import {
   session,
   type IpcMainInvokeEvent,
 } from "electron";
-import { scoreSession } from "@core/scoring";
-import { createJsonSessionStore, type SessionStore } from "@core/session/store";
-import { createCheckIn } from "@core/session/checkin";
-import type { SessionRecord } from "@core/session/types";
-import { DEMO_PERSON_ID } from "@core/session/people";
-import { parseCheckInAnswers, parsePersonId } from "@core/session/validate";
-import { parseRemoval, type RestoreResult, type RestoreStep } from "@core/session/lifecycle";
+import { scoreSession } from "@kinvue/core/scoring";
+import { createJsonSessionStore, type SessionStore } from "@kinvue/core/session/store";
+import { createCheckIn } from "@kinvue/core/session/checkin";
+import type { SessionRecord } from "@kinvue/core/session/types";
+import { DEMO_PERSON_ID } from "@kinvue/core/session/people";
+import { parseCheckInAnswers, parsePersonId } from "@kinvue/core/session/validate";
+import { parseRemoval, type RestoreResult, type RestoreStep } from "@kinvue/core/session/lifecycle";
 import {
   isProtected,
   MIN_PASSPHRASE_LENGTH,
   passphraseLength,
   protect,
-} from "@core/session/protect";
-import { seedDemoHistory } from "@core/seed/persona";
-import { createGuidanceGate } from "@core/capture/guidance";
+} from "@kinvue/core/session/protect";
+import { seedDemoHistory } from "@kinvue/core/seed/persona";
+import { createGuidanceGate } from "@kinvue/core/capture/guidance";
 import { deviceTimeZone } from "./device";
 import { createFrameThrottle, toPreview } from "./frames";
 import { createInFlightCapture } from "./in-flight";
@@ -68,7 +68,10 @@ import { namedResult, shown, type NamedResult, type PeopleNow } from "../shared/
 let envError: unknown = null;
 if (!app.isPackaged) {
   try {
-    loadDotEnv(resolve(process.cwd(), ".env"));
+    // At the repo root, beside `.env.example`, rather than the working directory:
+    // since the split into workspaces (KV-38) `npm run dev` starts the app in
+    // `app/`, the app's own path, so `process.cwd()` is no longer the root.
+    loadDotEnv(resolve(app.getAppPath(), "..", ".env"));
   } catch (err) {
     // Reported after the app is ready, below: throwing here would exit with no
     // window and no message anywhere but a terminal.
@@ -125,7 +128,7 @@ app.on("web-contents-created", (_event, contents) => {
 
 /**
  * `ipcMain.handle`, answered only for Kinvue's own page. Every handler goes
- * through this; `tests/security.test.ts` fails if one is registered directly.
+ * through this; `app/tests/security.test.ts` fails if one is registered directly.
  * The renderer holds no key and no history, and reaches the camera, the key's
  * use and the store only through these calls, so a frame that is not ours —
  * a subframe, or a window that navigated away — is refused before any of it.

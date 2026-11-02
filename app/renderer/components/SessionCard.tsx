@@ -5,10 +5,10 @@ import {
   readingText,
   seededDisclosureFor,
   type Presentation,
-} from '@core/scoring'
-import { describeAnswers } from '@core/session/answers'
-import { knownZone } from '@core/session/time'
-import type { ComparedMetric, Flag, SessionRecord } from '@core/session/types'
+} from '@kinvue/core/scoring'
+import { describeAnswers } from '@kinvue/core/session/answers'
+import { knownZone } from '@kinvue/core/session/time'
+import type { ComparedMetric, Flag, SessionRecord } from '@kinvue/core/session/types'
 import { CARD_BOX } from './boxes'
 
 const FLAG_COLOR: Record<Flag, string> = {

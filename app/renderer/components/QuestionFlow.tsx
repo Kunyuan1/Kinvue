@@ -4,10 +4,10 @@ import {
   answeredCount,
   draftToAnswers,
   type AnswerDraft,
-} from '@core/session/answers'
-import type { SubmitFailure } from '@core/capture/failure'
-import type { CheckInAnswers } from '@core/session/types'
-import { MAX_PAIN_NOTE_LENGTH } from '@core/session/validate'
+} from '@kinvue/core/session/answers'
+import type { SubmitFailure } from '@kinvue/core/capture/failure'
+import type { CheckInAnswers } from '@kinvue/core/session/types'
+import { MAX_PAIN_NOTE_LENGTH } from '@kinvue/core/session/validate'
 import {
   PERSON_BUTTON,
   PERSON_CHOICE,

@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import semver from 'semver'
 import { describe, expect, it } from 'vitest'
 import pkg from '../package.json'
+import desktop from '../app/package.json'
 import lock from '../package-lock.json'
 
 /**
@@ -22,22 +23,24 @@ import lock from '../package-lock.json'
  */
 
 type Deps = Record<string, string>
-const root = lock.packages[''] as { dependencies?: Deps; devDependencies?: Deps }
+// The three pins are the desktop app's, which since KV-38 is the `app` workspace: its
+// manifest declares them, and the lockfile records them under its own path.
+const app = lock.packages['app'] as { dependencies?: Deps; devDependencies?: Deps }
 const installed = lock.packages as Record<string, { version?: string } | undefined>
 
 const PINNED: [name: string, declared: string | undefined, locked: string | undefined][] = [
-  ['electron', (pkg.devDependencies as Deps).electron, root.devDependencies?.electron],
+  ['electron', (desktop.devDependencies as Deps).electron, app.devDependencies?.electron],
   // KV-19: it packages, fuses and (later) signs the app, so a range would let
   // a release change what is shipped and how without anyone deciding to.
   [
     'electron-builder',
-    (pkg.devDependencies as Deps)['electron-builder'],
-    root.devDependencies?.['electron-builder'],
+    (desktop.devDependencies as Deps)['electron-builder'],
+    app.devDependencies?.['electron-builder'],
   ],
   [
     '@smartspectra/node-sdk',
-    (pkg.dependencies as Deps)['@smartspectra/node-sdk'],
-    root.dependencies?.['@smartspectra/node-sdk'],
+    (desktop.dependencies as Deps)['@smartspectra/node-sdk'],
+    app.dependencies?.['@smartspectra/node-sdk'],
   ],
 ]
 
@@ -104,17 +107,22 @@ describe('exact version pins (KV-131)', () => {
  */
 describe('the declared Node range (KV-134)', () => {
   const declared = (pkg as { engines: { node: string } }).engines.node
+  // Every workspace's toolchain, not just the root's: the range is the repo's.
+  // A workspace's own package (`@kinvue/core`) is no toolchain and has no engines.
   const deps = {
-    ...(pkg.dependencies as Deps),
     ...(pkg.devDependencies as Deps),
+    ...(desktop.dependencies as Deps),
+    ...(desktop.devDependencies as Deps),
   }
-  const toolchain = Object.keys(deps).flatMap((name) => {
-    const manifest = JSON.parse(
-      readFileSync(join('node_modules', name, 'package.json'), 'utf8'),
-    ) as { engines?: { node?: string } }
-    const node = manifest.engines?.node
-    return node === undefined ? [] : [{ name, node }]
-  })
+  const toolchain = Object.keys(deps)
+    .filter((name) => !name.startsWith('@kinvue/'))
+    .flatMap((name) => {
+      const manifest = JSON.parse(
+        readFileSync(join('node_modules', name, 'package.json'), 'utf8'),
+      ) as { engines?: { node?: string } }
+      const node = manifest.engines?.node
+      return node === undefined ? [] : [{ name, node }]
+    })
   const minors = Array.from({ length: 13 }, (_, i) => i + 18).flatMap((major) =>
     Array.from({ length: 41 }, (_, minor) => `${major}.${minor}.0`),
   )

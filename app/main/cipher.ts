@@ -1,5 +1,5 @@
 import { readFile } from 'node:fs/promises'
-import type { AtRest, StoreCipher } from '@core/session/store'
+import type { AtRest, StoreCipher } from '@kinvue/core/session/store'
 import type { Protection } from '../shared/protection'
 
 /**

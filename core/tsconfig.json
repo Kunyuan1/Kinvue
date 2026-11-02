@@ -1,0 +1,10 @@
+{
+  // No DOM: core/ runs on Node (the desktop main process, and the relay, #39) as well as in
+  // a page, so a browser global here is a typecheck error rather than a crash on the relay.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

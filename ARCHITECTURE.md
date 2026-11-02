@@ -21,7 +21,7 @@ be more work.
 - **The output has to be explainable to a family member,** not to a data scientist. A
   caregiver deciding whether to drive over needs to know *what* changed. `firedRules` is
   that, directly, with the values in the sentence.
-- **Rules are testable.** `tests/scoring.test.ts` pins the behaviour that matters,
+- **Rules are testable.** `core/tests/scoring.test.ts` pins the behaviour that matters,
   including the specific combination the product exists to catch. A model would need an
   evaluation harness and a dataset before it could be said to work at all.
 
@@ -503,9 +503,9 @@ said rather than on what was measured stays inside both lines the product does n
 it names no condition, and it is not an alert.
 
 What made this a decision rather than an accident is that it is now pinned.
-`tests/scoring.test.ts` lists the six combinations that flag, so a weight change that adds
-or removes one fails a test and has to be argued for. The weights themselves are still
-judgement (#22).
+`core/tests/scoring.test.ts` lists the six combinations that flag, so a weight change that
+adds or removes one fails a test and has to be argued for. The weights themselves are
+still judgement (#22).
 
 **Poor sleep weighs, lightly** (KV-91). Until then, "slept poorly" without pain produced
 nothing at all: no severity and no line on the card. `poor-sleep` now fires at 0.05, and
@@ -552,10 +552,10 @@ pulse or breathing rule carries half its peak the moment it fires at 2 standard 
 (KV-9). So one rate, however far out, cannot reach 0.6 alone. **Two camera rules together
 can**: pulse and breathing each 3 standard deviations out sum to about 0.64, and a quarter
 drop in HRV beside breathing at 3 to about 0.62. Both just past 2 sum to about 0.44, and do
-not. `tests/scoring.test.ts` pins which camera-only days flag, so this paragraph and the
-weights cannot drift apart silently. Whether one large vitals deviation should flag on its
-own is the other half of the same balance; #9 answered only the direction, so the magnitude
-question belongs with #22.
+not. `core/tests/scoring.test.ts` pins which camera-only days flag, so this paragraph and
+the weights cannot drift apart silently. Whether one large vitals deviation should flag on
+its own is the other half of the same balance; #9 answered only the direction, so the
+magnitude question belongs with #22.
 
 ---
 
@@ -608,9 +608,9 @@ and Node/Electron, and the Node package binds a platform-specific native runtime
 `koffi` (FFI). A pure web app was therefore never available; Electron is the shortest path
 that still lets the UI be written as a web app.
 
-`externalizeDepsPlugin()` in `electron.vite.config.ts` keeps `@smartspectra/node-sdk` out
-of the bundle. Bundling it breaks the native runtime lookup at require time. That line is
-load-bearing.
+`externalizeDepsPlugin()` in `app/electron.vite.config.ts` keeps `@smartspectra/node-sdk`
+out of the bundle. Bundling it breaks the native runtime lookup at require time. That line
+is load-bearing.
 
 ### What the SDK actually emits
 
@@ -691,7 +691,7 @@ one that mattered. Why each level is enough:
 
 - **A launch proves the SDK *loads*.** `app/main/index.ts` statically imports `./vitals`,
   which statically imports `@smartspectra/node-sdk`, whose import loads the native runtime
-  through koffi — so a window on screen means it loaded. `tests/sdk-load.test.ts` pins
+  through koffi — so a window on screen means it loaded. `app/tests/sdk-load.test.ts` pins
   both imports. **If either is ever deferred, the launch stops proving the load and the
   lighter level stops being enough**; that test fails first so the rule is revisited, not
   silently weakened.
@@ -753,8 +753,8 @@ The last of those is the one that makes it a rule about direction rather than a 
 today's offenders. Banning the packages alone left the shortest route to them open: a
 relative `../../app/main/metrics` is not any of the restricted names, and that module
 imports the SDK, so a test touching the core file that imported it would need hardware.
-It is also the likelier accident rather than the exotic one, because `@core/*` and
-`@renderer/*` have tsconfig aliases and `app/main` has none — a relative path is the only
+It is also the likelier accident rather than the exotic one, because `@kinvue/core/*` is
+a package name and `@renderer/*` a tsconfig alias, and `app/main` has neither — a relative path is the only
 spelling available to someone who wants a type from it. Type-only imports are restricted too — `import type` is
 erased and would not break the suite, but a React type in a signature couples `core/` to
 the framework just as firmly, and the next value import would then be a one-word change
@@ -827,7 +827,7 @@ Electron's security checklist, item by item:
 | 1 | Only load secure content | Done: only the local page. There is no remote content to load. In development that page is a plain-`http` local origin, the looser case above. |
 | 2 | No Node integration for remote content | Done: `nodeIntegration: false`. |
 | 3 | Context isolation | Done: `contextIsolation: true`. |
-| 4 | Process sandboxing | Done: `sandbox: true`, and `app.enableSandbox()` for any renderer that ever exists. The preload needs only `contextBridge` and `ipcRenderer`, and bundles the rest. A lint rule holds the window's security options to literals across `app/main/`, and `tests/security.test.ts` checks both are there, from the syntax tree. |
+| 4 | Process sandboxing | Done: `sandbox: true`, and `app.enableSandbox()` for any renderer that ever exists. The preload needs only `contextBridge` and `ipcRenderer`, and bundles the rest. A lint rule holds the window's security options to literals across `app/main/`, and `app/tests/security.test.ts` checks both are there, from the syntax tree. |
 | 5 | Handle permission requests | Done: every request and every check is refused. The camera runs in main through the SDK, and the self-view reaches the page as pictures over IPC. |
 | 6 | Keep `webSecurity` | Done: never turned off. |
 | 7 | Content Security Policy | Done: `default-src 'self'` in `index.html`. `style-src` allows inline styles, which the charts' positioning uses. |
@@ -1748,11 +1748,19 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
   approving a viewer (KV-31) is not consent to it, and that decision did not consider it —
   and its own consent must be designed, and qualified advice taken (KV-35, tripwire 4),
   before any session is used for it.
-- **`core/` stays framework-free**, so that it can be imported by more than one app. One
-  will be: KV-34 decided a caregiver client built on it, which #42 builds. Until then
-  nothing checks that `core/` runs outside Electron, beyond the lint rule that keeps
-  Electron and React out of it. `core/session/store.ts` is already the exception — it
-  imports `node:fs` — and #38 decides where it lives when the repo is split. (#15, #38)
+- **`core/` stays framework-free**, so that it can be imported by more than one app. Two
+  will: the relay (#39), on Node, and the caregiver client KV-34 decided, which #42
+  builds. Since KV-38 it is a package of its own, `@kinvue/core`, with no dependencies,
+  which the desktop app imports by name and bundles. Its tests run as their own project,
+  in plain node, and it is typechecked with no DOM in its library, so a browser global in
+  it fails before the relay would. The lint rule keeps Electron, React, the SDK and `app/`
+  out of it. (#15, #38)
+- **`core/session/store.ts` and `protect.ts` stay in `core/`** (KV-38). They are the two
+  that import Node's own modules — the file, and its cipher — which is what made #38 ask
+  where they belong. Plain Node is not Electron: their tests need no harness, and the
+  relay runs on Node. The caregiver client imports `core/` a module at a time, so it pulls
+  in neither unless it asks for one. Nothing checks that yet; a guard that the caregiver
+  client reaches no `node:` module is #42's to add, when there is a client to guard.
 
 ### What leaves the device (KV-32)
 
@@ -2105,12 +2113,12 @@ code that wrote it. What #30 asked, and what was decided:
   it a caregiver reading last year's flag could not tell it came from rules the app no
   longer has; with it, #42 can say so where the check-in device says it with a drift line
   (KV-138). It is bumped whenever the scorer would store something different for the same
-  check-in and history, and `tests/rules-version.test.ts` makes that a check rather than a
-  rule someone remembers: it scores a fixed set of check-ins, straddling each comparison
-  rule's line, and pins a hash of what comes out beside the version. A change to a
-  threshold, weight, rule or sentence fails until both move together. It catches what that
-  set exercises, which is why it straddles the lines. Verdicts from before it carry none,
-  and read as unknown: several earlier scorers gave them, and which is not recorded.
+  check-in and history, and `core/tests/rules-version.test.ts` makes that a check rather
+  than a rule someone remembers: it scores a fixed set of check-ins, straddling each
+  comparison rule's line, and pins a hash of what comes out beside the version. A change
+  to a threshold, weight, rule or sentence fails until both move together. It catches what
+  that set exercises, which is why it straddles the lines. Verdicts from before it carry
+  none, and read as unknown: several earlier scorers gave them, and which is not recorded.
 - **Person identity was settled by KV-32.** `personId` never leaves the device — the
   share's own opaque id replaces it (KV-37) — so a readable local id like `demo-margaret`
   is sent nowhere, and the global uniqueness the ticket asked for is the share id's. A
@@ -2648,9 +2656,9 @@ from the owner:
    pinned for the difference.
 
 **Built: the installer (PR 1).** `npm run dist` builds `dist/Kinvue-Setup-<version>.exe`,
-about 157 MB, from `electron-builder.config.ts` — TypeScript, so `tsc` checks it against
-electron-builder's own types and `tests/packaging.test.ts` reads what the build reads.
-Found building it:
+about 157 MB, from `app/electron-builder.config.ts` — TypeScript, so `tsc` checks it
+against electron-builder's own types and `app/tests/packaging.test.ts` reads what the
+build reads. Found building it:
 
 - **`boot.ts` owns everything before `ready`; `index.ts` everything from `ready` on.** The
   SDK loads its runtime the moment it is imported, and the bundle hoists every

@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { MAX_NAME_LENGTH, NAME_PROBLEM, normalName } from '@core/session/people'
+import { MAX_NAME_LENGTH, NAME_PROBLEM, normalName } from '@kinvue/core/session/people'
 import type { NamedResult, PersonShown } from '../../shared/people'
 
 const BUTTON =

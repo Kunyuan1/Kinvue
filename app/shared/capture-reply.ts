@@ -1,5 +1,5 @@
-import { failureTag } from '@core/capture/failure'
-import type { CaptureResult } from '@core/session/types'
+import { failureTag } from '@kinvue/core/capture/failure'
+import type { CaptureResult } from '@kinvue/core/session/types'
 
 /**
  * What `checkin:capture` sends back over IPC, as opposed to what `capture`

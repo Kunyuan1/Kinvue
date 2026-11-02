@@ -1,5 +1,5 @@
 import { useId, useState } from 'react'
-import { MIN_PASSPHRASE_LENGTH, passphraseLength } from '@core/session/lifecycle'
+import { MIN_PASSPHRASE_LENGTH, passphraseLength } from '@kinvue/core/session/lifecycle'
 
 // Dimmed, with no hover, when disabled (KV-175): a guard that looks live is no guard.
 const BUTTON = 'rounded-lg border border-(--color-line) px-4 py-2' +

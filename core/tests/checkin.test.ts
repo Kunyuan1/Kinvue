@@ -1,0 +1,370 @@
+import { describe, expect, it } from 'vitest'
+import { RULES_VERSION, scoreSession } from '@kinvue/core/scoring'
+import { RECORD_FORMAT } from '@kinvue/core/session/format'
+import { classifyCaptureError, classifySubmitError } from '@kinvue/core/capture/failure'
+import {
+  createCheckIn,
+  PENDING_CAPTURE_TTL_MS,
+  type CheckInDeps,
+} from '@kinvue/core/session/checkin'
+import type { CheckInAnswers, SessionRecord, Vitals } from '@kinvue/core/session/types'
+import { session } from './helpers'
+
+const PERSON = 'test-person'
+const ANSWERS: CheckInAnswers = session().answers
+const READING: Vitals = session().vitals
+const START = new Date('2026-09-15T09:00:00.000Z')
+
+/** A check-in over an in-memory store, with a clock and ids the test controls. */
+function setup(overrides: Partial<CheckInDeps> = {}) {
+  const stored: SessionRecord[] = []
+  let clock = START.getTime()
+  let next = 0
+  const deps: CheckInDeps = {
+    store: {
+      list: async (personId) => stored.filter((s) => s.personId === personId),
+      append: async (record) => {
+        stored.push(record)
+      },
+    },
+    score: scoreSession,
+    now: () => new Date(clock),
+    newId: () => `id-${next++}`,
+    timeZone: () => 'Europe/London',
+    ...overrides,
+  }
+  return {
+    checkIn: createCheckIn(deps),
+    stored,
+    advance: (ms: number) => {
+      clock += ms
+    },
+  }
+}
+
+const measure = (vitals: Vitals = READING) => async (): Promise<Vitals> => vitals
+const failing = async (): Promise<Vitals> => {
+  throw new Error('camera busy')
+}
+
+describe('createCheckIn', () => {
+  it('stores the vitals main measured, under the person they were taken for', async () => {
+    const { checkIn, stored } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    const record = await checkIn.submit(PERSON, captureId, ANSWERS)
+
+    expect(stored).toEqual([record])
+    expect(record.vitals).toEqual(READING)
+    expect(record.personId).toBe(PERSON)
+    expect(record.capturedAt).toBe(START.toISOString())
+    expect(record.assessment).toBeDefined()
+  })
+
+  it('stores a check-in only for someone still on the list, asked of the store as it writes (review of #206)', async () => {
+    const asked: unknown[] = []
+    const { checkIn } = setup({
+      store: {
+        list: async () => [],
+        append: async (_record, options) => {
+          asked.push(options)
+        },
+      },
+    })
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+    // Decided in the store's own turn, not by a look at the list beforehand,
+    // which a deletion could land between.
+    expect(asked).toEqual([{ onlyIfListed: true }])
+  })
+
+  it('says on the record which format it is in and which rules scored it (KV-30)', async () => {
+    const { checkIn, stored } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+
+    expect(stored[0]?.format).toBe(RECORD_FORMAT)
+    expect(stored[0]?.assessment?.rulesVersion).toBe(RULES_VERSION)
+  })
+
+  it('records the zone the capture was taken in', async () => {
+    const { checkIn, stored } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+
+    expect(stored[0]?.timeZone).toBe('Europe/London')
+  })
+
+  it('leaves the zone off when the device cannot say', async () => {
+    // Missing is not zero, and a guessed zone cannot be told from a real one.
+    const { checkIn, stored } = setup({ timeZone: () => undefined })
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+
+    expect(stored[0]).not.toHaveProperty('timeZone')
+  })
+
+  it('does not latch the capture lock when reading the zone throws', async () => {
+    const { checkIn } = setup({
+      timeZone: () => {
+        throw new Error('no tzdata')
+      },
+    })
+
+    await expect(checkIn.capture(PERSON, measure())).rejects.toThrow('no tzdata')
+    // A latched lock would make every later capture fail about a camera that
+    // nothing is using, until the app restarts.
+    await expect(checkIn.capture(PERSON, measure())).rejects.toThrow('no tzdata')
+  })
+
+  it('stores a double submit once', async () => {
+    const { checkIn, stored } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    const results = await Promise.allSettled([
+      checkIn.submit(PERSON, captureId, ANSWERS),
+      checkIn.submit(PERSON, captureId, ANSWERS),
+    ])
+
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected'])
+    expect(stored).toHaveLength(1)
+  })
+
+  it('rejects a capture that a newer one replaced', async () => {
+    const { checkIn, stored } = setup()
+    const first = await checkIn.capture(PERSON, measure())
+    const second = await checkIn.capture(PERSON, measure())
+
+    await expect(checkIn.submit(PERSON, first.captureId, ANSWERS)).rejects.toThrow('newer')
+    await checkIn.submit(PERSON, second.captureId, ANSWERS)
+    expect(stored).toHaveLength(1)
+  })
+
+  it('rejects a second capture while one is running', async () => {
+    const { checkIn } = setup()
+    let finish: (v: Vitals) => void = () => undefined
+    const running = checkIn.capture(PERSON, () => new Promise<Vitals>((r) => (finish = r)))
+
+    await expect(checkIn.capture(PERSON, measure())).rejects.toThrow('already running')
+    finish(READING)
+    await running
+  })
+
+  it('keeps the earlier reading when a retake fails', async () => {
+    const { checkIn, stored } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+
+    await expect(checkIn.capture(PERSON, failing)).rejects.toThrow('camera busy')
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+    expect(stored).toHaveLength(1)
+  })
+
+  it('rejects a submit for a different person, and does not refile the reading', async () => {
+    const { checkIn, stored } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+
+    await expect(checkIn.submit('someone-else', captureId, ANSWERS)).rejects.toThrow(
+      'different person',
+    )
+    expect(stored).toEqual([])
+    // The mismatch was a caller bug; the reading still belongs to its person.
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+    expect(stored.map((s) => s.personId)).toEqual([PERSON])
+  })
+
+  it('rejects a reading older than the TTL, and will not take it afterwards either', async () => {
+    const { checkIn, stored, advance } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    advance(PENDING_CAPTURE_TTL_MS + 1)
+
+    await expect(checkIn.submit(PERSON, captureId, ANSWERS)).rejects.toThrow('too old')
+    await expect(checkIn.submit(PERSON, captureId, ANSWERS)).rejects.toThrow()
+    expect(stored).toEqual([])
+  })
+
+  it('accepts a reading exactly at the TTL', async () => {
+    const { checkIn, stored, advance } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    advance(PENDING_CAPTURE_TTL_MS)
+
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+    expect(stored).toHaveLength(1)
+  })
+
+  it('keeps the reading submittable when storing it fails', async () => {
+    let failNext = true
+    const stored: SessionRecord[] = []
+    const { checkIn } = setup({
+      store: {
+        list: async () => [],
+        append: async (record) => {
+          if (failNext) {
+            failNext = false
+            throw new Error('disk full')
+          }
+          stored.push(record)
+        },
+      },
+    })
+    const { captureId } = await checkIn.capture(PERSON, measure())
+
+    await expect(checkIn.submit(PERSON, captureId, ANSWERS)).rejects.toThrow('disk full')
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+    expect(stored).toHaveLength(1)
+  })
+
+  it('does not bring back a failed submit once a newer capture has succeeded', async () => {
+    // The newer capture is also submitted before the older save fails, so
+    // nothing is pending when the failure lands — restoring whenever nothing is
+    // pending would make the replaced reading submittable again.
+    let failAppend: () => void = () => undefined
+    let appends = 0
+    const { checkIn } = setup({
+      store: {
+        list: async () => [],
+        append: () => {
+          appends++
+          if (appends > 1) return Promise.resolve()
+          return new Promise<void>((_resolve, reject) => {
+            failAppend = () => reject(new Error('disk full'))
+          })
+        },
+      },
+    })
+    const first = await checkIn.capture(PERSON, measure())
+    const submitting = checkIn.submit(PERSON, first.captureId, ANSWERS)
+    // Let the submit reach append before the newer capture lands.
+    await new Promise((r) => setTimeout(r, 0))
+    const second = await checkIn.capture(PERSON, measure())
+    await checkIn.submit(PERSON, second.captureId, ANSWERS)
+    failAppend()
+
+    await expect(submitting).rejects.toThrow('disk full')
+    await expect(checkIn.submit(PERSON, first.captureId, ANSWERS)).rejects.toThrow('newer')
+  })
+
+  it('brings a failed submit back when the retake during it also failed', async () => {
+    let failAppend: () => void = () => undefined
+    let appends = 0
+    const { checkIn } = setup({
+      store: {
+        list: async () => [],
+        append: () => {
+          appends++
+          if (appends > 1) return Promise.resolve()
+          return new Promise<void>((_resolve, reject) => {
+            failAppend = () => reject(new Error('disk full'))
+          })
+        },
+      },
+    })
+    const first = await checkIn.capture(PERSON, measure())
+    const submitting = checkIn.submit(PERSON, first.captureId, ANSWERS)
+    await new Promise((r) => setTimeout(r, 0))
+    await expect(checkIn.capture(PERSON, failing)).rejects.toThrow('camera busy')
+    failAppend()
+
+    await expect(submitting).rejects.toThrow('disk full')
+    await expect(checkIn.submit(PERSON, first.captureId, ANSWERS)).resolves.toBeDefined()
+  })
+
+  it('rejects an id that was never captured', async () => {
+    const { checkIn } = setup()
+    await expect(checkIn.submit(PERSON, 'made-up', ANSWERS)).rejects.toThrow('latest capture')
+  })
+})
+
+/**
+ * The tag is the contract, and it lives in the thrown message.
+ *
+ * `app/tests/failure.test.ts` only proves the classifier can read a tag back out
+ * of a string the test wrote itself. That is `String.includes`. What actually
+ * reaches the screen depends on every throw in here carrying one — and an
+ * untagged throw is not a type error, not a lint error, and not visible until
+ * a person is told the camera failed when a timer did.
+ *
+ * So: classify what `createCheckIn` really throws, never a handmade string.
+ * Drop a tag from any refusal below and one of these goes red (KV-7).
+ */
+describe('createCheckIn tags every refusal it can raise', () => {
+  /**
+   * Each path is read by its own classifier (KV-75), which is the stricter
+   * check: a submit-path tag put on a capture-path throw would now come back
+   * `unknown` rather than quietly passing.
+   */
+  const thrownBy = async (p: Promise<unknown>): Promise<unknown> => {
+    // The sentinel must not be something a classifier can answer for. Returning
+    // an untagged Error here made "it resolved" and "it threw without a tag"
+    // both read as `unknown`, so a refusal could stop happening altogether and
+    // the assertions below would stay green — the block's whole claim is that
+    // dropping a tag turns one of them red.
+    const resolved = Symbol('resolved')
+    const settled: unknown = await p.then(
+      () => resolved,
+      (err: unknown) => err,
+    )
+    if (settled === resolved) throw new Error('expected a rejection, but the promise resolved')
+    return settled
+  }
+  const submitFailureOf = async (p: Promise<unknown>): Promise<string> =>
+    classifySubmitError(await thrownBy(p))
+  const captureFailureOf = async (p: Promise<unknown>): Promise<string | null> =>
+    classifyCaptureError(await thrownBy(p))
+
+  it('tags an id that was never captured', async () => {
+    const { checkIn } = setup()
+    expect(await submitFailureOf(checkIn.submit(PERSON, 'made-up', ANSWERS))).toBe('no-capture')
+  })
+
+  it('tags a capture that was already submitted', async () => {
+    const { checkIn } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    await checkIn.submit(PERSON, captureId, ANSWERS)
+    expect(await submitFailureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('no-capture')
+  })
+
+  it('tags a capture taken for a different person', async () => {
+    const { checkIn } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    expect(await submitFailureOf(checkIn.submit('someone-else', captureId, ANSWERS))).toBe('no-capture')
+  })
+
+  it('tags a reading that outlived its TTL', async () => {
+    const { checkIn, advance } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    advance(PENDING_CAPTURE_TTL_MS + 1)
+    expect(await submitFailureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('expired')
+  })
+
+  it('still says expired when Save is pressed a second time', async () => {
+    // One state, one sentence. Before this the second press fell through to
+    // "that is not the latest capture" and said something else entirely.
+    const { checkIn, advance } = setup()
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    advance(PENDING_CAPTURE_TTL_MS + 1)
+    await submitFailureOf(checkIn.submit(PERSON, captureId, ANSWERS))
+    expect(await submitFailureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('expired')
+  })
+
+  it('tags a second capture started while one is running', async () => {
+    const { checkIn } = setup()
+    let release: (v: Vitals) => void = () => undefined
+    const slow = async (): Promise<Vitals> =>
+      await new Promise<Vitals>((resolve) => {
+        release = resolve
+      })
+    const running = checkIn.capture(PERSON, slow)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(await captureFailureOf(checkIn.capture(PERSON, measure()))).toBe('capture-in-progress')
+    release(READING)
+    await running
+  })
+
+  it('does not tag a failure that came from the store, so it stays unknown', async () => {
+    // The store and the scorer carry no tag, and must not be guessed at: the
+    // screen says a short honest line rather than blaming the camera.
+    const { checkIn } = setup({
+      store: { list: async () => [], append: async () => Promise.reject(new Error('disk full')) },
+    })
+    const { captureId } = await checkIn.capture(PERSON, measure())
+    expect(await submitFailureOf(checkIn.submit(PERSON, captureId, ANSWERS))).toBe('unknown')
+  })
+})

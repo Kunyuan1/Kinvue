@@ -1,5 +1,5 @@
-import type { RestoreResult } from '@core/session/lifecycle'
-import { unprotect, type ProtectedExport, type Unprotected } from '@core/session/protect'
+import type { RestoreResult } from '@kinvue/core/session/lifecycle'
+import { unprotect, type ProtectedExport, type Unprotected } from '@kinvue/core/session/protect'
 
 /**
  * A protected export waiting in main for its passphrase (KV-175), and the tries

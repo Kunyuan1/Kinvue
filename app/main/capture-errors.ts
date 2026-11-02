@@ -1,6 +1,6 @@
-import { failureTag, type TaggedFailure } from '@core/capture/failure'
-import { hasScorableVitals } from '@core/session/usable'
-import type { Vitals } from '@core/session/types'
+import { failureTag, type TaggedFailure } from '@kinvue/core/capture/failure'
+import { hasScorableVitals } from '@kinvue/core/session/usable'
+import type { Vitals } from '@kinvue/core/session/types'
 
 /**
  * The errors the capture throws, and what the SDK's own error codes mean.

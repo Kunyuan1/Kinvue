@@ -29,7 +29,7 @@
  * `.env.example` says to quote a value containing `#` for that reason.
  *
  * `process.loadEnvFile` also leaves variables that are already set alone, so a
- * key exported in the shell wins over a stale `.env` in the working directory.
+ * key exported in the shell wins over a stale `.env` at the repo root.
  * A test pins that, because it is behaviour this relies on rather than provides.
  */
 export function loadDotEnv(path: string): boolean {

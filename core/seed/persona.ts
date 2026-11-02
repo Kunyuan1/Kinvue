@@ -62,7 +62,7 @@ function rng(seed: number): () => number {
  * contributes its whole minimum the first time it fires on a stored day — at
  * least 0.2 for KV-9's `pulse-low` and `breathing-low`, twice the margin. The
  * redraw cannot help, since it only runs when a fortnight is seeded. What
- * protects stored demos from a new rule is `tests/seed.test.ts` re-scoring the
+ * protects stored demos from a new rule is `core/tests/seed.test.ts` re-scoring the
  * fortnight installs already hold, frozen there rather than regenerated.
  * Only the default seed is ever stored (`demo:seed` passes no arguments), so
  * that one fortnight is the whole of the exposure.
@@ -126,7 +126,7 @@ export function seedDemoHistory(
     // an audience. Until KV-101 that held by luck: across 2000 seeds, 18.4% of
     // fortnights had an elevated day, and this seed's worst sat 0.03 below the
     // line. Now it holds by construction — a day whose rules reach
-    // DEMO_DAY_CEILING is drawn again — and `tests/seed.test.ts` checks it
+    // DEMO_DAY_CEILING is drawn again — and `core/tests/seed.test.ts` checks it
     // across seeds, not only this one.
     const jitter = (spread: number): number => (r() - 0.5) * 2 * spread
 
@@ -193,7 +193,7 @@ export function seedDemoHistory(
  *
  * The dashboard gets the same verdicts from `presentAll`, which scores a seeded
  * card itself so no caller has to run this first (KV-138 review);
- * `tests/seed.test.ts` pins that the two agree.
+ * `core/tests/seed.test.ts` pins that the two agree.
  */
 export function withSeededVerdicts(records: readonly SessionRecord[]): SessionRecord[] {
   const byTime = [...records].sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
