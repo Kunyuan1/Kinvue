@@ -16,7 +16,7 @@
     "react-dom": "^19.3.0"
   },
   "devDependencies": {
-    "@kinvue/core": "0.1.0",
+    "@kinvue/core": "*",
     "@swc/core": "^1.16.2",
     "@tailwindcss/vite": "^4.3.3",
     "@testing-library/dom": "^10.4.2",

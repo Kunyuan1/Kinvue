@@ -8,9 +8,18 @@ import tailwindcss from '@tailwindcss/vite'
 // as the @kinvue/core workspace (KV-38), so every entry is named explicitly
 // below. See ARCHITECTURE.md for why core/ is kept out of app/.
 //
-// @kinvue/core is a devDependency of this app, never a dependency: the plugin
-// below externalises dependencies, and core is TypeScript source with no build
-// of its own, so it has to be bundled. `tests/workspaces.test.ts` pins it.
+// Run it from app/, as the root's scripts do (`-w app`). electron-vite reads
+// package.json from the working directory, not from beside this file, so from
+// the root it finds no `main` and no dependencies, and the plugin below then
+// bundles the SDK it exists to keep out.
+//
+// @kinvue/core is bundled, since it is TypeScript source with no build of its
+// own, and the plugin below leaves every `dependencies` entry as a runtime
+// require. Listing core as a devDependency is how it is bundled here; that is a
+// choice, not the only way: `externalizeDepsPlugin({ exclude: [...] })` would
+// bundle it as a dependency too, at the price of core's sources in the archive
+// unless the builder's `files` left them out (review of #214). It keeps the
+// installer the same as before the split. `tests/workspaces.test.ts` pins it.
 
 export default defineConfig({
   main: {

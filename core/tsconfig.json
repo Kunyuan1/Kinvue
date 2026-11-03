@@ -1,10 +1,13 @@
 {
   // No DOM: core/ runs on Node (the desktop main process, and the relay, #39) as well as in
-  // a page, so a browser global here is a typecheck error rather than a crash on the relay.
+  // a page, so a DOM global here (`document`, `window`) is a typecheck error rather than a
+  // crash on the relay. The web globals Node itself provides — `fetch`, `URL`, `navigator`
+  // and the rest, declared by @types/node — are not, and need no guard to run there.
+  // `tests/workspaces.test.ts` pins the lib (review of #214).
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2023"]
   },
-  "include": ["**/*.ts"],
+  "include": ["**/*.ts", "**/*.tsx"],
   "exclude": ["node_modules"]
 }

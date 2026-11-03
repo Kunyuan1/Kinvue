@@ -209,9 +209,10 @@ app/                     the desktop app (its package is still named `kinvue`, b
   tests/                 the app's: the screens (jsdom, opted into per file), main's
                          modules, the bridge, packaging and the trust boundary
 
-core/                    `@kinvue/core`. Plain TypeScript, no dependencies, no DOM: no
-                         Electron, no React — unit-testable, and typechecked without a
-                         browser's types, since the relay will run it on Node.
+core/                    `@kinvue/core`. Plain TypeScript, no dependencies: no Electron,
+                         no React — unit-testable, and typechecked without the DOM's
+                         types (`document`, `window`), since the relay will run it on
+                         Node; the web globals Node has itself still typecheck.
   session/
     types.ts             Vitals, CheckInAnswers, FiredRule, Assessment, SessionRecord
     store.ts             JSON session store (MAIN PROCESS ONLY — imports node:fs)
@@ -362,22 +363,25 @@ Everything is env-driven and read in the main process only.
 | `KINVUE_CAPTURE_SECONDS` | `30` | Seconds of capture. Clamped to `SHORTEST_USEFUL_SECONDS`–`LONGEST_REASONABLE_SECONDS`; a value outside that, or one that cannot be read, is replaced and the replacement is printed at startup. The countdown and the sentence under the button both follow it. Raising this is how #63 gets the timings it needs — HRV did not arrive at 43s of capture and did at 58s. |
 | `KINVUE_LOG_CAPTURE` | unset | Any non-empty value prints how long the camera took to close after each capture — `[capture] camera release: released in 340ms`. That figure is what `DEVICE_RELEASE_TIMEOUT_MS` is guessing at, and #63 is where it gets settled. A release that failed or outran the wait prints whether or not this is set. |
 
-`app/main/env.ts` loads `.env` into `process.env` at startup, **in development only** — a
-packaged app is launched from wherever its shortcut points, and reading whatever `.env`
-happens to sit there is not a route into the process that owns the camera and the key.
-An installed copy gets its key from the setup screen instead (KV-19), and ignores
-`SMARTSPECTRA_API_KEY` even when it is set in its environment.
+`app/main/env.ts` loads `.env` into `process.env` at startup, **in development only**,
+from the **repo root**, beside `.env.example` — found from the app's own path (`app/`),
+not from the folder the app was started in (KV-38). A packaged app reads no `.env` at
+all: a dotfile there would be a route into the process that owns the camera and the key
+for whatever could write one beside it. An installed copy gets its key from the setup
+screen instead (KV-19), and ignores `SMARTSPECTRA_API_KEY` even when it is set in its
+environment.
 
 A variable already set in the environment wins over the file. A missing `.env` is normal
-— the app starts and asks for a key on its setup screen. A `.env` that cannot be read is
-reported at startup instead.
+— the app starts and asks for a key on its setup screen, and the terminal says where it
+looked, so a `.env` in the wrong folder does not pass for none. A `.env` that cannot be
+read is reported at startup instead.
 
 **Quote a key containing `#`** (`SMARTSPECTRA_API_KEY="ab#cd"`). Node's `.env` parser
 treats an unquoted `#` as the start of a comment and drops the rest of the value
 silently, which then looks like a key the SDK rejects.
 
 **The key is deliberately unprefixed.** A `MAIN_VITE_` name would be replaced into
-`out/main` at build time, which writes the key into a built file in plain text.
+`app/out/main` at build time, which writes the key into a built file in plain text.
 
 There is no environment variable for seeding the demo history. Seeding happens when
 someone presses the button on the dashboard, which is the only way it should be possible

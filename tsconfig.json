@@ -1,5 +1,5 @@
 {
   // The repo-wide tests and config at the root. Each workspace has its own: core/ and app/.
   "extends": "./tsconfig.base.json",
-  "include": ["tests/**/*.ts", "*.config.ts"]
+  "include": ["tests/**/*.ts", "tests/**/*.tsx", "*.config.ts"]
 }

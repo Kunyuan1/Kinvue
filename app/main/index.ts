@@ -70,8 +70,14 @@ if (!app.isPackaged) {
   try {
     // At the repo root, beside `.env.example`, rather than the working directory:
     // since the split into workspaces (KV-38) `npm run dev` starts the app in
-    // `app/`, the app's own path, so `process.cwd()` is no longer the root.
-    loadDotEnv(resolve(app.getAppPath(), "..", ".env"));
+    // `app/`, the app's own path, so `process.cwd()` is no longer the root. That
+    // assumes the app's path is `app/` itself; `ELECTRON_ENTRY` pointed at a file
+    // would move it, and the line below is what says so.
+    const envPath = resolve(app.getAppPath(), "..", ".env");
+    // No file is normal and stays quiet on screen: the setup screen asks for the
+    // key. Saying where it looked, in the terminal only, keeps a wrong path from
+    // passing for no file at all (review of #214).
+    if (!loadDotEnv(envPath)) console.info(`No .env at ${envPath}.`);
   } catch (err) {
     // Reported after the app is ready, below: throwing here would exit with no
     // window and no message anywhere but a terminal.

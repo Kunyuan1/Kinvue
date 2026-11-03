@@ -29,6 +29,14 @@ const config = {
   // be loaded from inside an archive at all, so it goes beside it, below. koffi
   // ships its native module for eighteen platforms, 1.5 MB each; only Windows
   // x64's is ever loaded here.
+  //
+  // These two patterns are relative to the archive's own `node_modules`, not to
+  // a folder on disk, which is why they kept no `../` when this file moved into
+  // `app/` and `from` below gained one (KV-38). Shown, not assumed, in the review
+  // of #214: built without them, the unpacked app was 857 MB with all four
+  // runtimes and koffi's eighteen builds; with them, 481 MB, none of the four, one
+  // build. `app/tests/packaging.test.ts` can only check the text; a change to
+  // either is checked by building once without it, the same way.
   files: [
     'out/**/*',
     'package.json',

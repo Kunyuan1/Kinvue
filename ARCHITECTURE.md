@@ -754,11 +754,11 @@ today's offenders. Banning the packages alone left the shortest route to them op
 relative `../../app/main/metrics` is not any of the restricted names, and that module
 imports the SDK, so a test touching the core file that imported it would need hardware.
 It is also the likelier accident rather than the exotic one, because `@kinvue/core/*` is
-a package name and `@renderer/*` a tsconfig alias, and `app/main` has neither — a relative path is the only
-spelling available to someone who wants a type from it. Type-only imports are restricted too — `import type` is
-erased and would not break the suite, but a React type in a signature couples `core/` to
-the framework just as firmly, and the next value import would then be a one-word change
-with nothing objecting.
+a package name and `@renderer/*` a tsconfig alias, and `app/main` has neither — a
+relative path is the only spelling available to someone who wants a type from it.
+Type-only imports are restricted too — `import type` is erased and would not break the
+suite, but a React type in a signature couples `core/` to the framework just as firmly,
+and the next value import would then be a one-word change with nothing objecting.
 
 It was enforced socially until then, which was the risk: the day it broke would be the
 day the tests started needing a harness, and nothing would have announced it. The rule
@@ -966,10 +966,10 @@ independent lines of evidence are enough for the plan as it stands. If the gap e
 more than it does now, a proxy run or an answer from Presage is how it closes.
 
 The key reaches the main process from `.env`, read at startup by `app/main/env.ts` and
-only when the app is not packaged. It is
-deliberately not named with one of electron-vite's `VITE_` prefixes: prefixed variables
-are replaced into the bundle at build time, so the convenient-looking fix would write the
-key into `out/main` in plain text and ship it. Reading it at runtime keeps it out of every
+only when the app is not packaged. It is deliberately not named with one of
+electron-vite's `VITE_` prefixes: prefixed variables are replaced into the bundle at build
+time, so the convenient-looking fix would write the key into `app/out/main` in plain text
+and ship it. Reading it at runtime keeps it out of every
 built file. Where the key lives for a packaged install, where there is no dotfile to edit,
 is still open (KV-19).
 
@@ -1752,9 +1752,18 @@ are cheap to honour today and expensive to retrofit once real check-ins exist.
   will: the relay (#39), on Node, and the caregiver client KV-34 decided, which #42
   builds. Since KV-38 it is a package of its own, `@kinvue/core`, with no dependencies,
   which the desktop app imports by name and bundles. Its tests run as their own project,
-  in plain node, and it is typechecked with no DOM in its library, so a browser global in
-  it fails before the relay would. The lint rule keeps Electron, React, the SDK and `app/`
-  out of it. (#15, #38)
+  in plain node, and it is typechecked with no DOM in its library, so a DOM global in it
+  (`document`, `window`) fails before the relay would. That is all it catches: the web
+  globals Node provides itself — `fetch`, `URL`, `navigator` among them — are declared
+  by `@types/node` and still typecheck, as they should, since the relay has them too
+  (review of #214). The lint rule keeps Electron, React, the SDK and `app/` out of it.
+  (#15, #38)
+- **What `@kinvue/core` exports is, for now, every file in it** but its tests: the
+  exports map ends in `"./*"`. With one consumer that describes the filesystem rather
+  than a surface anyone chose, and it cannot keep a module internal. Naming what the
+  relay may import is #39's to decide when it imports anything, and the caregiver
+  client's is #42's; each narrows the map, so that widening it afterwards is a change
+  someone has to make on purpose, as a new route past KV-15 is (review of #214).
 - **`core/session/store.ts` and `protect.ts` stay in `core/`** (KV-38). They are the two
   that import Node's own modules — the file, and its cipher — which is what made #38 ask
   where they belong. Plain Node is not Electron: their tests need no harness, and the
@@ -2655,8 +2664,9 @@ from the owner:
    tested, but the config and the binary are two things, and a pinned electron-builder is
    pinned for the difference.
 
-**Built: the installer (PR 1).** `npm run dist` builds `dist/Kinvue-Setup-<version>.exe`,
-about 157 MB, from `app/electron-builder.config.ts` — TypeScript, so `tsc` checks it
+**Built: the installer (PR 1).** `npm run dist` builds
+`app/dist/Kinvue-Setup-<version>.exe` (at the root's `dist/` until KV-38), about 157 MB,
+from `app/electron-builder.config.ts` — TypeScript, so `tsc` checks it
 against electron-builder's own types and `app/tests/packaging.test.ts` reads what the
 build reads. Found building it:
 
@@ -2691,7 +2701,8 @@ build reads. Found building it:
   Windows's camera settings by name, and lint refuses `shell` and `openExternal` anywhere
   else in `app/main/`.
 
-Checked in the packaged app (`dist/win-unpacked`, against copies of the real history): the
+Checked in the packaged app (`app/dist/win-unpacked` since KV-38, against copies of the
+real history): the
 page at `app://kinvue/index.html` with the origin `app://kinvue`, its bundle loaded under
 the CSP, IPC answered, the history listed, the camera read as allowed; the fuses read back
 from the binary; and a history the development build had sealed opened, whole. **Not

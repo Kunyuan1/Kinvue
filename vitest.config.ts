@@ -13,6 +13,11 @@ import { defineConfig } from 'vitest/config'
 // reach, and the failure copy is user-facing output rather than a detail — so
 // an app `.tsx` test may opt itself into jsdom with a `@vitest-environment`
 // docblock.
+// The same pattern in every project, `.tsx` included, so no test file is left that no
+// project collects (review of #214). A `.tsx` test under core/ still runs in node, and
+// the lint rule refuses React there, so it could not render anything.
+const TESTS = ['tests/**/*.test.ts', 'tests/**/*.test.tsx']
+
 export default defineConfig({
   test: {
     projects: [
@@ -21,7 +26,7 @@ export default defineConfig({
           name: 'core',
           root: resolve(__dirname, 'core'),
           environment: 'node',
-          include: ['tests/**/*.test.ts'],
+          include: TESTS,
         },
       },
       {
@@ -30,7 +35,7 @@ export default defineConfig({
           name: 'app',
           root: resolve(__dirname, 'app'),
           environment: 'node',
-          include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
+          include: TESTS,
         },
       },
       {
@@ -38,7 +43,7 @@ export default defineConfig({
           name: 'repo',
           root: __dirname,
           environment: 'node',
-          include: ['tests/**/*.test.ts'],
+          include: TESTS,
         },
       },
     ],
