@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import pkg from '../package.json'
 import lock from '../package-lock.json'
 
 /**
@@ -32,9 +33,16 @@ type Entry = {
   link?: boolean
 }
 
-/** Installed entries: bundled ones ship inside their parent's tarball, links point at the tree. */
+/**
+ * Installed entries: bundled ones ship inside their parent's tarball, links point at the
+ * tree. The root (`''`) and the workspaces it names (`core`, `app`, KV-38) are this repo,
+ * recorded under their own paths with nothing to fetch. Those are skipped by name, from
+ * `workspaces` — not by the shape of a path — so any other entry, a `file:` dependency
+ * or a vendored folder included, is still checked, and fails (review of #214).
+ */
+const ours = new Set(['', ...pkg.workspaces])
 const installed = Object.entries(lock.packages as Record<string, Entry>).filter(
-  ([path, entry]) => path !== '' && entry.inBundle !== true && entry.link !== true,
+  ([path, entry]) => !ours.has(path) && entry.inBundle !== true && entry.link !== true,
 )
 
 /** The package an entry installs: an alias records its real name, otherwise the path says it. */

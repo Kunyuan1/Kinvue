@@ -1,4 +1,4 @@
-import type { NameProblem, Person } from '@core/session/people'
+import type { NameProblem, Person } from '@kinvue/core/session/people'
 
 /**
  * A person as the screens see them (KV-18): who, and what they are called. Not

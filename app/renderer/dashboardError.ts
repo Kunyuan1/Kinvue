@@ -2,7 +2,7 @@ import {
   classifyDashboardError,
   failureDetail,
   type DashboardFailure,
-} from '@core/capture/failure'
+} from '@kinvue/core/capture/failure'
 
 /**
  * What to say for a store failure that somehow arrives without its sentence.

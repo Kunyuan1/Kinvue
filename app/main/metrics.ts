@@ -1,4 +1,4 @@
-import type { Vitals } from '@core/session/types'
+import type { Vitals } from '@kinvue/core/session/types'
 
 /**
  * Reducing the SDK's sample stream to one `Vitals`.

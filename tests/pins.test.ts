@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import semver from 'semver'
 import { describe, expect, it } from 'vitest'
 import pkg from '../package.json'
+import desktop from '../app/package.json'
 import lock from '../package-lock.json'
 
 /**
@@ -22,26 +23,37 @@ import lock from '../package-lock.json'
  */
 
 type Deps = Record<string, string>
-const root = lock.packages[''] as { dependencies?: Deps; devDependencies?: Deps }
+// The three pins are the desktop app's, which since KV-38 is the `app` workspace: its
+// manifest declares them, and the lockfile records them under its own path. Read, not
+// cast: a lockfile that records the workspace elsewhere fails the test below by name,
+// and every pin then reads as missing, rather than throwing at import (review of #214).
+type Workspace = { dependencies?: Deps; devDependencies?: Deps }
+const app: Workspace = (lock.packages as Record<string, Workspace | undefined>)['app'] ?? {}
 const installed = lock.packages as Record<string, { version?: string } | undefined>
 
 const PINNED: [name: string, declared: string | undefined, locked: string | undefined][] = [
-  ['electron', (pkg.devDependencies as Deps).electron, root.devDependencies?.electron],
+  ['electron', (desktop.devDependencies as Deps).electron, app.devDependencies?.electron],
   // KV-19: it packages, fuses and (later) signs the app, so a range would let
   // a release change what is shipped and how without anyone deciding to.
   [
     'electron-builder',
-    (pkg.devDependencies as Deps)['electron-builder'],
-    root.devDependencies?.['electron-builder'],
+    (desktop.devDependencies as Deps)['electron-builder'],
+    app.devDependencies?.['electron-builder'],
   ],
   [
     '@smartspectra/node-sdk',
-    (pkg.dependencies as Deps)['@smartspectra/node-sdk'],
-    root.dependencies?.['@smartspectra/node-sdk'],
+    (desktop.dependencies as Deps)['@smartspectra/node-sdk'],
+    app.dependencies?.['@smartspectra/node-sdk'],
   ],
 ]
 
 describe('exact version pins (KV-131)', () => {
+  it('reads them from the app workspace in the lockfile', () => {
+    expect(Object.keys(lock.packages), 'the lockfile has no `app` workspace entry').toContain(
+      'app',
+    )
+  })
+
   it.each(PINNED)('pins %s to one version, not a range', (_name, declared) => {
     expect(declared).toMatch(/^\d+\.\d+\.\d+$/)
   })
@@ -58,7 +70,7 @@ describe('exact version pins (KV-131)', () => {
     // Each package left out of the group is a PR of its own, standing open
     // beside the group's; past the limit Dependabot opens nothing and says
     // nothing. Pinning another package must raise the limit with it.
-    const yml = readFileSync('.github/dependabot.yml', 'utf8')
+    const yml = readFileSync(join(__dirname, '../.github/dependabot.yml'), 'utf8')
     const excluded = /minor-and-patch:[\s\S]*?exclude-patterns: \[([^\]]*)\]/.exec(yml)?.[1] ?? ''
     const alone = excluded.split(',').filter((p) => p.trim() !== '').length
     const limit = Number(/open-pull-requests-limit: (\d+)/.exec(yml)?.[1])
@@ -69,7 +81,7 @@ describe('exact version pins (KV-131)', () => {
   it.each(PINNED)('keeps %s out of the routine group, so each bump arrives alone', (name) => {
     // A pinned package bumped inside the group's PR is a version change in a
     // chore nobody reads as one — the thing the pin is for (dependabot.yml).
-    const yml = readFileSync('.github/dependabot.yml', 'utf8')
+    const yml = readFileSync(join(__dirname, '../.github/dependabot.yml'), 'utf8')
     const excluded = /minor-and-patch:[\s\S]*?exclude-patterns: \[([^\]]*)\]/.exec(yml)?.[1] ?? ''
     const pattern = name.startsWith('@smartspectra/') ? '"@smartspectra/*"' : `"${name}"`
     expect(excluded).toContain(pattern)
@@ -104,17 +116,22 @@ describe('exact version pins (KV-131)', () => {
  */
 describe('the declared Node range (KV-134)', () => {
   const declared = (pkg as { engines: { node: string } }).engines.node
+  // Every workspace's toolchain, not just the root's: the range is the repo's.
+  // A workspace's own package (`@kinvue/core`) is no toolchain and has no engines.
   const deps = {
-    ...(pkg.dependencies as Deps),
     ...(pkg.devDependencies as Deps),
+    ...(desktop.dependencies as Deps),
+    ...(desktop.devDependencies as Deps),
   }
-  const toolchain = Object.keys(deps).flatMap((name) => {
-    const manifest = JSON.parse(
-      readFileSync(join('node_modules', name, 'package.json'), 'utf8'),
-    ) as { engines?: { node?: string } }
-    const node = manifest.engines?.node
-    return node === undefined ? [] : [{ name, node }]
-  })
+  const toolchain = Object.keys(deps)
+    .filter((name) => !name.startsWith('@kinvue/'))
+    .flatMap((name) => {
+      const manifest = JSON.parse(
+        readFileSync(join(__dirname, '..', 'node_modules', name, 'package.json'), 'utf8'),
+      ) as { engines?: { node?: string } }
+      const node = manifest.engines?.node
+      return node === undefined ? [] : [{ name, node }]
+    })
   const minors = Array.from({ length: 13 }, (_, i) => i + 18).flatMap((major) =>
     Array.from({ length: 41 }, (_, minor) => `${major}.${minor}.0`),
   )
@@ -148,7 +165,8 @@ describe('the declared Node range (KV-134)', () => {
   })
 
   it('is the range the README tells a contributor', () => {
-    expect(readFileSync('README.md', 'utf8')).toContain(`Needs Node \`${declared}\``)
+    const readme = readFileSync(join(__dirname, '../README.md'), 'utf8')
+    expect(readme).toContain(`Needs Node \`${declared}\``)
   })
 })
 
@@ -211,7 +229,8 @@ function required(value: string | undefined, what: string): string {
 
 describe('@types/node follows Electron’s Node (review of #150, KV-159)', () => {
   const ceiling = `<=${TYPES_NODE_MAJOR}.${TYPES_NODE_MINOR}.x`
-  const dependabot = (): string => readFileSync('.github/dependabot.yml', 'utf8')
+  const dependabot = (): string =>
+    readFileSync(join(__dirname, '../.github/dependabot.yml'), 'utf8')
 
   it('declares and installs that major', () => {
     const declared = required((pkg.devDependencies as Deps)['@types/node'], 'declared @types/node')

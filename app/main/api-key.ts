@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import type { StoreCipher } from '@core/session/store'
+import type { StoreCipher } from '@kinvue/core/session/store'
 import type { KeyStatus } from '../shared/api-key'
 
 export type { KeyStatus }

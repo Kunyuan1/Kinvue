@@ -111,11 +111,14 @@ const DYNAMIC: Probe[] = [
 
 const ALL = [...STATIC, ...DYNAMIC]
 
-/** Imports core/ may use. `@core/*` is not a live spelling inside core/ yet; it is here in case it becomes one. */
+/**
+ * Imports core/ may use. `@kinvue/core/*` is not a live spelling inside core/; it is here
+ * in case it becomes one.
+ */
 const ALLOWED: [string][] = [
   ["import { readFile } from 'node:fs/promises'"],
   ["import { computeBaseline } from '../baseline'"],
-  ["import { scoreSession } from '@core/scoring'"],
+  ["import { scoreSession } from '@kinvue/core/scoring'"],
 ]
 
 beforeAll(async () => {

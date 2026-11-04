@@ -26,7 +26,7 @@ export const PERSON_BUTTON =
  * hover cannot brighten the edge as `PERSON_BUTTON`'s does; it fills instead,
  * as both buttons did before KV-20 (review of #196). Disabled while Finish is
  * saving: ink at half opacity still clears 4.5:1, which
- * tests/accessibility.test.tsx computes rather than assumes.
+ * app/tests/accessibility.test.tsx computes rather than assumes.
  */
 export const PERSON_PRIMARY =
   'min-h-12 rounded-lg border-2 border-(--color-ink) px-6 py-2 text-lg font-medium ' +

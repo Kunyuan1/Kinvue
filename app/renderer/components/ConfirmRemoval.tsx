@@ -1,6 +1,6 @@
-import type { SessionRecord } from '@core/session/types'
-import { chosenFor, type Removal } from '@core/session/lifecycle'
-import { DEMO_PERSON_ID } from '@core/seed/persona'
+import type { SessionRecord } from '@kinvue/core/session/types'
+import { chosenFor, type Removal } from '@kinvue/core/session/lifecycle'
+import { DEMO_PERSON_ID } from '@kinvue/core/seed/persona'
 import ConfirmDeletion from './ConfirmDeletion'
 
 /** A moment on this device, for the confirm screen: "3 October, 23:40". */

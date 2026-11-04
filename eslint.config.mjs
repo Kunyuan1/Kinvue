@@ -6,7 +6,7 @@ import js from '@eslint/js'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['out/**', 'dist/**', 'release/**', 'node_modules/**'] },
+  { ignores: ['**/out/**', '**/dist/**', '**/release/**', '**/node_modules/**'] },
   js.configs.recommended,
   // The non-type-aware preset: there is no `projectService`, so no rule that
   // needs type information runs — `no-floating-promises` and
@@ -112,10 +112,10 @@ export default tseslint.config(
               // lint-clean and imports the SDK, so a test touching that core
               // module needs hardware without tripping any entry above.
               //
-              // It is the likelier accident, not the exotic one. `@core/*` and
-              // `@renderer/*` have tsconfig aliases; `app/main` has none, so a
-              // relative path is the only spelling available to someone in
-              // core/ who wants a type from it.
+              // It is the likelier accident, not the exotic one.
+              // `@kinvue/core/*` is a package name and `@renderer/*` a tsconfig
+              // alias; `app/main` has neither, so a relative path is the only
+              // spelling available to someone in core/ who wants a type from it.
               group: ['**/app/**', '../app/**', '../../app/**'],
               message:
                 'core/ must not import from app/, in any spelling. The dependency runs the ' +

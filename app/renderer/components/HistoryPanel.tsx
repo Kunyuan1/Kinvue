@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import type { SessionRecord } from '@core/session/types'
+import type { SessionRecord } from '@kinvue/core/session/types'
 import {
   chosenFor,
   describeLastExport,
@@ -9,7 +9,7 @@ import {
   type Removal,
   type RestoredInto,
   type RestoreResult,
-} from '@core/session/lifecycle'
+} from '@kinvue/core/session/lifecycle'
 import type { Protection } from '../../shared/protection'
 import ConfirmRemoval, { whoseHistory } from './ConfirmRemoval'
 import ExportChoice from './ExportChoice'

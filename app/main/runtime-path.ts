@@ -9,7 +9,7 @@ import { join } from 'node:path'
  * (ARCHITECTURE.md, *Packaging and distribution*).
  *
  * The folder name is the `extraResources` destination in
- * `electron-builder.config.ts`; `tests/packaging.test.ts` holds the two to each
+ * `app/electron-builder.config.ts`; `app/tests/packaging.test.ts` holds the two to each
  * other.
  */
 export const RUNTIME_FOLDER = 'smartspectra-runtime'

@@ -128,8 +128,22 @@ The session being scored is **never** part of the baseline it is compared agains
 
 ## Repository Layout
 
+Two npm workspaces (KV-38): `core/` is the `@kinvue/core` package, and `app/` is the
+desktop app, which imports it by that name. The relay (#39) and the caregiver's app (#42)
+arrive as workspaces of their own. Every check is run once, from the root, over all of
+them.
+
 ```
-app/
+package.json             the workspace root: which workspaces there are, and the checks
+tsconfig.base.json       compiler options every workspace's tsconfig extends
+vitest.config.ts         one test run, a project per workspace
+
+app/                     the desktop app (its package is still named `kinvue`, because
+                         Electron names the history's folder after it)
+  electron.vite.config.ts
+                         main, preload and renderer, each bundled with core inside
+  electron-builder.config.ts
+                         the Windows installer (KV-19)
   main/
     boot.ts              the main process's first code: everything before `ready`, and
                          where the SDK's runtime is, then index.ts (KV-19)
@@ -192,8 +206,13 @@ app/
       person.ts          the sizes of the cared-for person's path, and where focus goes
                          as its screens change (KV-20)
     styles.css           Tailwind v4 theme tokens; their contrast is tested (KV-20)
+  tests/                 the app's: the screens (jsdom, opted into per file), main's
+                         modules, the bridge, packaging and the trust boundary
 
-core/                    Plain TypeScript. No Electron, no React — unit-testable.
+core/                    `@kinvue/core`. Plain TypeScript, no dependencies: no Electron,
+                         no React — unit-testable, and typechecked without the DOM's
+                         types (`document`, `window`), since the relay will run it on
+                         Node; the web globals Node has itself still typecheck.
   session/
     types.ts             Vitals, CheckInAnswers, FiredRule, Assessment, SessionRecord
     store.ts             JSON session store (MAIN PROCESS ONLY — imports node:fs)
@@ -221,11 +240,12 @@ core/                    Plain TypeScript. No Electron, no React — unit-testab
                          caregiver's own client draws the same thing (KV-4)
   share/index.ts         what may leave the device: every field classified, the
                          pain note per viewer, seeded records never (KV-37)
+  tests/                 core's: scoring, baseline, the store, export and restore,
+                         people, protection, check-in, time, validation. Plain node.
+    fixtures/            files made by an earlier build, which this one must still open
 
-tests/                   Vitest. Covers baseline, scoring, validation, check-in, time,
-                         device, guidance, frames, answers, failures, the capture reply,
-                         vitals and env.
-  fixtures/              files made by an earlier build, which this one must still open
+tests/                   the repo's: the lint guards, the lockfile, the pins, and the
+                         workspaces themselves (KV-38)
 ```
 
 ---
@@ -297,10 +317,10 @@ npm run dev
 Checks — these four are exactly what CI runs:
 
 ```bash
-npm run lint         # eslint
-npm run typecheck    # tsc --noEmit
-npm test             # vitest, node environment; seconds warm, longer on a cold start
-npm run build        # electron-vite build
+npm run lint         # eslint, one config over every workspace
+npm run typecheck    # tsc, once per workspace and once for the root
+npm test             # vitest, a project per workspace; seconds warm, longer cold
+npm run build        # electron-vite build, in app/
 ```
 
 `npm test` needs neither a camera nor an API key: `core/` is deliberately free of
@@ -313,13 +333,14 @@ Building the Windows installer (KV-19):
 npm run dist         # electron-vite build, then electron-builder
 ```
 
-It writes `dist/Kinvue-Setup-<version>.exe`, unsigned, and `dist/win-unpacked/`, the app
-it installs. **Installing it, or running `Kinvue.exe` without `--user-data-dir`, opens the
-real history in `%APPDATA%\kinvue`** — the same folder `npm run dev` uses — and, since
-KV-175, encrypts it at start. To try a build, run the unpacked app on a scratch folder:
+It writes `app/dist/Kinvue-Setup-<version>.exe`, unsigned, and `app/dist/win-unpacked/`,
+the app it installs. **Installing it, or running `Kinvue.exe` without `--user-data-dir`,
+opens the real history in `%APPDATA%\kinvue`** — the same folder `npm run dev` uses —
+and, since KV-175, encrypts it at start. To try a build, run the unpacked app on a scratch
+folder:
 
 ```powershell
-dist\win-unpacked\Kinvue.exe --user-data-dir="$env:TEMP\kinvue-try"
+app\dist\win-unpacked\Kinvue.exe --user-data-dir="$env:TEMP\kinvue-try"
 ```
 
 An unsigned build never updates itself, and nothing is published from this script; the
@@ -342,22 +363,25 @@ Everything is env-driven and read in the main process only.
 | `KINVUE_CAPTURE_SECONDS` | `30` | Seconds of capture. Clamped to `SHORTEST_USEFUL_SECONDS`–`LONGEST_REASONABLE_SECONDS`; a value outside that, or one that cannot be read, is replaced and the replacement is printed at startup. The countdown and the sentence under the button both follow it. Raising this is how #63 gets the timings it needs — HRV did not arrive at 43s of capture and did at 58s. |
 | `KINVUE_LOG_CAPTURE` | unset | Any non-empty value prints how long the camera took to close after each capture — `[capture] camera release: released in 340ms`. That figure is what `DEVICE_RELEASE_TIMEOUT_MS` is guessing at, and #63 is where it gets settled. A release that failed or outran the wait prints whether or not this is set. |
 
-`app/main/env.ts` loads `.env` into `process.env` at startup, **in development only** — a
-packaged app is launched from wherever its shortcut points, and reading whatever `.env`
-happens to sit there is not a route into the process that owns the camera and the key.
-An installed copy gets its key from the setup screen instead (KV-19), and ignores
-`SMARTSPECTRA_API_KEY` even when it is set in its environment.
+`app/main/env.ts` loads `.env` into `process.env` at startup, **in development only**,
+from the **repo root**, beside `.env.example` — found from the app's own path (`app/`),
+not from the folder the app was started in (KV-38). A packaged app reads no `.env` at
+all: a dotfile there would be a route into the process that owns the camera and the key
+for whatever could write one beside it. An installed copy gets its key from the setup
+screen instead (KV-19), and ignores `SMARTSPECTRA_API_KEY` even when it is set in its
+environment.
 
 A variable already set in the environment wins over the file. A missing `.env` is normal
-— the app starts and asks for a key on its setup screen. A `.env` that cannot be read is
-reported at startup instead.
+— the app starts and asks for a key on its setup screen, and the terminal says where it
+looked, so a `.env` in the wrong folder does not pass for none. A `.env` that cannot be
+read is reported at startup instead.
 
 **Quote a key containing `#`** (`SMARTSPECTRA_API_KEY="ab#cd"`). Node's `.env` parser
 treats an unquoted `#` as the start of a comment and drops the rest of the value
 silently, which then looks like a key the SDK rejects.
 
 **The key is deliberately unprefixed.** A `MAIN_VITE_` name would be replaced into
-`out/main` at build time, which writes the key into a built file in plain text.
+`app/out/main` at build time, which writes the key into a built file in plain text.
 
 There is no environment variable for seeding the demo history. Seeding happens when
 someone presses the button on the dashboard, which is the only way it should be possible
@@ -627,7 +651,7 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   fixed in place: close it and open one PR carrying the bump and the new floor together
   (#119 → KV-148).
 
-  Electron and the SDK are pinned to exact versions in `package.json` so that npm will
+  Electron and the SDK are pinned to exact versions in `app/package.json` so that npm will
   not pick up a new one on its own: a caret would let `npm update` move one inside
   lockfile churn, with none of those checks (KV-131). A test fails if either pin is
   relaxed. They are the only two pinned, because they are the only two whose risk CI
@@ -674,8 +698,8 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   to the line. Both are decisions, pinned in tests (KV-10, KV-91). On the camera side, no
   single rule flags a day by itself except an HRV drop of half or more; two camera rules
   together can. The arithmetic, and which camera-only days flag, is in `ARCHITECTURE.md`
-  and pinned in `tests/scoring.test.ts`. None of this is calibrated against outcomes, and
-  it should not be presented as if it were (KV-22).
+  and pinned in `core/tests/scoring.test.ts`. None of this is calibrated against outcomes,
+  and it should not be presented as if it were (KV-22).
 - **A JSON file is the store.** Correct at one small record per person per day, and it
   avoids a native rebuild against Electron's ABI. `SessionStore` in
   `core/session/store.ts` is the seam to swap if that stops being true.

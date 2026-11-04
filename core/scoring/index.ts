@@ -38,7 +38,7 @@ export const ELEVATED_SEVERITY_THRESHOLD = 0.6
  *
  * **Bumped whenever the scorer would store something different for the same
  * check-in and history**: a verdict, a fired rule, a severity, or the words of
- * a summary or explanation, since those are stored too. `tests/rules-version.test.ts`
+ * a summary or explanation, since those are stored too. `core/tests/rules-version.test.ts`
  * scores a fixed set of check-ins and pins what comes out, so a change that
  * moves any of it fails there until this is bumped with it. It catches what
  * that set exercises; a threshold moved by a hair between two of its cases can

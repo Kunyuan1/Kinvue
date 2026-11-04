@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { CaptureFailure } from '@core/capture/failure'
+import type { CaptureFailure } from '@kinvue/core/capture/failure'
 import { PERSON_BUTTON, PERSON_NOTE, useFocusWhenShown } from './person'
 
 /**

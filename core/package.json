@@ -1,0 +1,15 @@
+{
+  "name": "@kinvue/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The scorer, the baseline and the history file: framework-free, shared by every Kinvue app.",
+  "type": "module",
+  "exports": {
+    "./baseline": "./baseline/index.ts",
+    "./scoring": "./scoring/index.ts",
+    "./share": "./share/index.ts",
+    "./trend": "./trend/index.ts",
+    "./tests/*": null,
+    "./*": "./*.ts"
+  }
+}

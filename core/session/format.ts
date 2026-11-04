@@ -30,7 +30,7 @@ import type { SessionRecord } from './types'
  * stored, by an older build of the check-in app, and as it leaves
  * (`SharedRecord`), by a viewer. It is bumped when a reader of either would
  * misread the new — so a change to what leaves can need a bump with nothing
- * stored changing, and `tests/format.test.ts` pins the share tables beside
+ * stored changing, and `core/tests/format.test.ts` pins the share tables beside
  * this number to make that a decision rather than an oversight. The cost runs
  * the other way: a change to a field that never leaves bumps it too, and a
  * viewer then holds back records it could have read until it is updated. Rare,

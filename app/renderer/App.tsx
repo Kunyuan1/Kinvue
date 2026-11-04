@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
-import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@core/seed/persona'
-import { hasScorableVitals, learningStatus, presentAll, usualReachStatus } from '@core/scoring'
-import { DEFAULT_CAPTURE_SECONDS } from '@core/capture/length'
+import type { CaptureResult, CheckInAnswers, SessionRecord } from '@kinvue/core/session/types'
+import { DEMO_PERSON_ID, DEMO_PERSON_NAME } from '@kinvue/core/seed/persona'
+import {
+  hasScorableVitals,
+  learningStatus,
+  presentAll,
+  usualReachStatus,
+} from '@kinvue/core/scoring'
+import { DEFAULT_CAPTURE_SECONDS } from '@kinvue/core/capture/length'
 import {
   classifyCaptureError,
   classifyDashboardError,
@@ -10,7 +15,7 @@ import {
   type CaptureFailure,
   type DashboardFailure,
   type SubmitFailure,
-} from '@core/capture/failure'
+} from '@kinvue/core/capture/failure'
 import type { Protection } from '../shared/protection'
 import { CARD_BOX, CHART_BOX } from './components/boxes'
 import CaptureScreen from './components/CaptureScreen'

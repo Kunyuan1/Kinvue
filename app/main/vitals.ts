@@ -15,8 +15,8 @@ import { decodeMetrics } from '@smartspectra/node-sdk/messages'
 import { net } from 'electron'
 
 import { askedForCaptureLog, awaitRelease, releaseLogLine, teardown } from './release'
-import { DEFAULT_CAPTURE_SECONDS, SETTLE_AFTER_COMPLETE_SECONDS } from '@core/capture/length'
-import { unusableReason } from '@core/scoring'
+import { DEFAULT_CAPTURE_SECONDS, SETTLE_AFTER_COMPLETE_SECONDS } from '@kinvue/core/capture/length'
+import { unusableReason } from '@kinvue/core/scoring'
 import {
   CaptureCancelledError,
   MissingApiKeyError,
@@ -26,9 +26,9 @@ import {
   sdkFailure,
   setupFailure,
 } from './capture-errors'
-import type { CaptureGuidance } from '@core/capture/guidance'
+import type { CaptureGuidance } from '@kinvue/core/capture/guidance'
 import type { SdkFrame } from './frames'
-import type { Vitals } from '@core/session/types'
+import type { Vitals } from '@kinvue/core/session/types'
 import {
   createVitalsAccumulator,
   type HrvReading,

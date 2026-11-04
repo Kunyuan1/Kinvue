@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import type { ComparedMetric, SessionRecord } from '@core/session/types'
+import type { ComparedMetric, SessionRecord } from '@kinvue/core/session/types'
 import {
   TREND_METRICS,
   trendNotes,
@@ -11,9 +11,9 @@ import {
   type Trend,
   type TrendScale,
   type TrendPoint,
-} from '@core/trend'
-import { METRIC_NAME, READING_LABEL, READING_UNIT, readingText } from '@core/scoring'
-import { knownZone } from '@core/session/time'
+} from '@kinvue/core/trend'
+import { METRIC_NAME, READING_LABEL, READING_UNIT, readingText } from '@kinvue/core/scoring'
+import { knownZone } from '@kinvue/core/session/time'
 import { CHART_BOX } from './boxes'
 
 /**

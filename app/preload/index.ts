@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CaptureResult, CheckInAnswers, SessionRecord } from '@core/session/types'
-import type { Removal, RestoreResult, RestoreStep } from '@core/session/lifecycle'
+import type { CaptureResult, CheckInAnswers, SessionRecord } from '@kinvue/core/session/types'
+import type { Removal, RestoreResult, RestoreStep } from '@kinvue/core/session/lifecycle'
 import type { Protection } from '../shared/protection'
 import type { CameraAccess } from '../shared/camera-access'
 import type { KeyStatus, SetKeyResult } from '../shared/api-key'
