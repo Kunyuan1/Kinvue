@@ -128,10 +128,10 @@ The session being scored is **never** part of the baseline it is compared agains
 
 ## Repository Layout
 
-Two npm workspaces (KV-38): `core/` is the `@kinvue/core` package, and `app/` is the
-desktop app, which imports it by that name. The relay (#39) and the caregiver's app (#42)
-arrive as workspaces of their own. Every check is run once, from the root, over all of
-them.
+Three npm workspaces (KV-38): `core/` is the `@kinvue/core` package, `app/` is the
+desktop app, which imports it by that name, and `relay/` is the household's relay, being
+built (KV-39) and connected to nothing yet. The caregiver's app (#42) arrives as a
+workspace of its own. Every check is run once, from the root, over all of them.
 
 ```
 package.json             the workspace root: which workspaces there are, and the checks
@@ -240,9 +240,21 @@ core/                    `@kinvue/core`. Plain TypeScript, no dependencies: no E
                          caregiver's own client draws the same thing (KV-4)
   share/index.ts         what may leave the device: every field classified, the
                          pain note per viewer, seeded records never (KV-37)
+  sync/protocol.ts       how the devices and the relay talk: signed requests, envelopes
+                         the relay cannot open, and the retention KV-33 sets (KV-39)
   tests/                 core's: scoring, baseline, the store, export and restore,
                          people, protection, check-in, time, validation. Plain node.
     fixtures/            files made by an earlier build, which this one must still open
+
+relay/                   `@kinvue/relay`: the household's relay (KV-39), on Node, with
+                         core as its only dependency. Not yet run anywhere, and nothing
+                         is sent to it.
+  server.ts              the routes: envelopes in from the check-in device, out to the
+                         viewer they were sealed to; acknowledgements; when each viewer
+                         fetched; a viewer's sharing ended
+  store.ts               what it holds, in one file: keys, sealed envelopes, fetch times
+  keys.ts                checking a request's Ed25519 signature, with node:crypto
+  tests/                 over real HTTP, with real signatures
 
 tests/                   the repo's: the lint guards, the lockfile, the pins, and the
                          workspaces themselves (KV-38)

@@ -40,6 +40,14 @@ export default defineConfig({
       },
       {
         test: {
+          name: 'relay',
+          root: resolve(__dirname, 'relay'),
+          environment: 'node',
+          include: TESTS,
+        },
+      },
+      {
+        test: {
           name: 'repo',
           root: __dirname,
           environment: 'node',

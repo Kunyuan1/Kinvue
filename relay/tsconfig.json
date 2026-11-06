@@ -1,0 +1,9 @@
+{
+  // No DOM: the relay runs on Node, as core does (KV-38), and imports core's source.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"]
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules"]
+}

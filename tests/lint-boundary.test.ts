@@ -58,6 +58,8 @@ const IN_CORE = 'core/session/__lint_probe__.ts'
 /** The config's `core/**` glob covers `.tsx` too, though nothing there uses it yet. */
 const IN_CORE_TSX = 'core/ui/__lint_probe__.tsx'
 const OUTSIDE_CORE = 'app/main/__lint_probe__.ts'
+/** relay/ has an import guard of its own, with the same groups and its own reasons (KV-39). */
+const IN_RELAY = 'relay/__lint_probe__.ts'
 
 /** What it is, the source, and a fragment of the message it must produce. */
 type Probe = [what: string, source: string, says: string]
@@ -177,6 +179,35 @@ describe('the core/ import guard (KV-15)', () => {
     const unprobed = configured.filter(
       (message) => !ALL.some(([, , says]) => message.includes(says)),
     )
+    expect(unprobed, 'configured with no probe in this file').toEqual([])
+  })
+})
+
+describe('the relay/ import guard (KV-39)', () => {
+  it.each(STATIC)('reports %s', async (_what, source, says) => {
+    const reports = await guard(source, IN_RELAY)
+    expect(reports.some((m) => m.includes(says)), reports.join(' | ')).toBe(true)
+    // The relay's own reasons, not core's: the message says which guard it is.
+    expect(reports.every((m) => m.includes('relay/ must not')), reports.join(' | ')).toBe(true)
+  })
+
+  it('allows what the relay and the app share, and Node', async () => {
+    expect(await guard("import { ROUTES } from '@kinvue/core/sync/protocol'", IN_RELAY)).toEqual(
+      [],
+    )
+    expect(await guard("import { createServer } from 'node:http'", IN_RELAY)).toEqual([])
+  })
+
+  it('has a probe for every group the config holds', async () => {
+    const config = (await eslint.calculateConfigForFile(IN_RELAY)) as {
+      rules: Record<string, [unknown, ...unknown[]]>
+    }
+    const [, importOptions] = config.rules[IMPORTS] ?? []
+    const patterns = (importOptions as { patterns?: { message: string }[] } | undefined)?.patterns
+    expect(patterns?.length, `${IMPORTS} patterns`).toBeGreaterThan(0)
+    const unprobed = (patterns ?? [])
+      .map((p) => p.message)
+      .filter((message) => !STATIC.some(([, , says]) => message.includes(says)))
     expect(unprobed, 'configured with no probe in this file').toEqual([])
   })
 })

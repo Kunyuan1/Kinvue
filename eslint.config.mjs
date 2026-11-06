@@ -165,6 +165,57 @@ export default tseslint.config(
   },
   {
     /**
+     * relay/ is a server, and imports none of the desktop app (KV-39).
+     *
+     * It runs on a machine the household chose, on Node, with core's source and nothing
+     * else installed (`tests/workspaces.test.ts`). Electron, React, the renderer and the
+     * SDK are not there to load, and app/ is the other end of the wire: what the two share
+     * is `@kinvue/core/sync`, not each other's code. Type-only imports too, for core/'s
+     * reason above. `tests/lint-boundary.test.ts` checks every group fires here as well.
+     */
+    files: ['relay/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['electron', 'electron/*'],
+              message:
+                'relay/ must not import Electron, including its subpaths: it is a server, ' +
+                'and Electron is not installed where it runs.',
+            },
+            {
+              group: ['react', 'react-dom', 'react/*', 'react-dom/*'],
+              message:
+                'relay/ must not import React or anything named for it: it serves sealed ' +
+                'envelopes, and draws nothing.',
+            },
+            {
+              group: ['@renderer', '@renderer/*'],
+              message:
+                'relay/ must not reach into the renderer. What the relay and the app share ' +
+                'lives in @kinvue/core/sync.',
+            },
+            {
+              group: ['@smartspectra/node-sdk', '@smartspectra/node-sdk/*'],
+              message:
+                'relay/ must not import the SDK: it never sees a capture, and the package ' +
+                'loads a native runtime the server does not have.',
+            },
+            {
+              group: ['**/app/**', '../app/**', '../../app/**'],
+              message:
+                'relay/ must not import from app/, in any spelling. What the relay and the ' +
+                'app share lives in @kinvue/core/sync.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    /**
      * The preload and the renderer never import from `app/main` (review of
      * #187), type-only imports included, for the reason core/'s are banned
      * above: `import type` is erased today, and the next value import is a
