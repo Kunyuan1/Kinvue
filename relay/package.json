@@ -1,0 +1,10 @@
+{
+  "name": "@kinvue/relay",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The household's own relay: sealed envelopes stored and forwarded, never read (KV-33, KV-39).",
+  "type": "module",
+  "dependencies": {
+    "@kinvue/core": "*"
+  }
+}

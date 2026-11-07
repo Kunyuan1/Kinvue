@@ -4,12 +4,13 @@ import { describe, expect, it } from 'vitest'
 import pkg from '../package.json'
 import core from '../core/package.json'
 import desktop from '../app/package.json'
+import relay from '../relay/package.json'
 import config from '../vitest.config'
 
 /**
- * The repo is split into workspaces (KV-38): `core` as the `@kinvue/core` package, and
- * the desktop app as `app`. What #38 said must survive the move, and nothing else
- * would notice going wrong, is held here.
+ * The repo is split into workspaces (KV-38): `core` as the `@kinvue/core` package, the
+ * desktop app as `app`, and the household's relay as `relay` (KV-39). What #38 said must
+ * survive the move, and nothing else would notice going wrong, is held here.
  */
 
 type Manifest = {
@@ -20,10 +21,25 @@ type Manifest = {
 }
 
 describe('the workspaces (KV-38)', () => {
-  it('are core and the desktop app', () => {
-    // A new workspace is a decision (the relay, #39; the caregiver app, #42), and the
-    // checks below have to learn it, so adding one fails here first.
-    expect(pkg.workspaces).toEqual(['core', 'app'])
+  it('are core, the desktop app and the relay', () => {
+    // A new workspace is a decision (the caregiver app, #42, is the next), and the checks
+    // below have to learn it, so adding one fails here first.
+    expect(pkg.workspaces).toEqual(['core', 'app', 'relay'])
+  })
+
+  it('leave the relay depending on core alone', () => {
+    // The relay runs core's source on Node, so core is a runtime dependency here, unlike
+    // the desktop app, which bundles it. Nothing else: a server holding a household's
+    // envelopes takes on no supply chain without that being decided (KV-39). `*`, for
+    // the reason the desktop app's is.
+    const { dependencies, devDependencies, peerDependencies, optionalDependencies } =
+      relay as Manifest
+    expect({ dependencies, devDependencies, peerDependencies, optionalDependencies }).toEqual({
+      dependencies: { '@kinvue/core': '*' },
+      devDependencies: undefined,
+      peerDependencies: undefined,
+      optionalDependencies: undefined,
+    })
   })
 
   it('leave core depending on nothing, an app least of all', () => {
@@ -56,12 +72,13 @@ describe('the workspaces (KV-38)', () => {
     expect(devDependencies?.['@kinvue/core']).toBe('*')
   })
 
-  it('typecheck core with no DOM in its library', () => {
-    // core/tsconfig.json says so, and README and ARCHITECTURE.md repeat it. Without this,
-    // adding "DOM" back, or deleting the override so the base's DOM is inherited, passes
-    // every check while the docs go on claiming it (review of #214). The file is JSONC,
-    // so it is read rather than imported; its comments are whole lines.
-    const text = readFileSync(resolve(__dirname, '../core/tsconfig.json'), 'utf8')
+  it.each(['core', 'relay'])('typecheck %s with no DOM in its library', (workspace) => {
+    // core/tsconfig.json says so, and README and ARCHITECTURE.md repeat it; the relay runs
+    // on Node as well (KV-39). Without this, adding "DOM" back, or deleting the override so
+    // the base's DOM is inherited, passes every check while the docs go on claiming it
+    // (review of #214). The file is JSONC, so it is read rather than imported; its
+    // comments are whole lines.
+    const text = readFileSync(resolve(__dirname, `../${workspace}/tsconfig.json`), 'utf8')
     const tsconfig = JSON.parse(text.replace(/^\s*\/\/.*$/gm, '')) as {
       compilerOptions?: { lib?: string[] }
     }
