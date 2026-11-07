@@ -183,12 +183,18 @@ describe('the core/ import guard (KV-15)', () => {
   })
 })
 
+/** What only the relay's guard refuses: core reached round its package (review of #216). */
+const RELAY_ONLY: Probe[] = [
+  ['core/ by a relative path', "import { x } from '../core/session/store'", 'core/ by a relative'],
+  ['core/ two levels up', "import { x } from '../../core/sync/protocol'", 'core/ by a relative'],
+]
+
 describe('the relay/ import guard (KV-39)', () => {
-  it.each(STATIC)('reports %s', async (_what, source, says) => {
+  it.each([...STATIC, ...DYNAMIC, ...RELAY_ONLY])('reports %s', async (_what, source, says) => {
     const reports = await guard(source, IN_RELAY)
     expect(reports.some((m) => m.includes(says)), reports.join(' | ')).toBe(true)
     // The relay's own reasons, not core's: the message says which guard it is.
-    expect(reports.every((m) => m.includes('relay/ must not')), reports.join(' | ')).toBe(true)
+    expect(reports.every((m) => m.includes('relay/ ')), reports.join(' | ')).toBe(true)
   })
 
   it('allows what the relay and the app share, and Node', async () => {
@@ -198,16 +204,25 @@ describe('the relay/ import guard (KV-39)', () => {
     expect(await guard("import { createServer } from 'node:http'", IN_RELAY)).toEqual([])
   })
 
-  it('has a probe for every group the config holds', async () => {
+  it('has a probe for every group and every banned syntax the config holds', async () => {
     const config = (await eslint.calculateConfigForFile(IN_RELAY)) as {
       rules: Record<string, [unknown, ...unknown[]]>
     }
     const [, importOptions] = config.rules[IMPORTS] ?? []
     const patterns = (importOptions as { patterns?: { message: string }[] } | undefined)?.patterns
+    const [, ...syntaxOptions] = config.rules[SYNTAX] ?? []
+    // A shape this cannot read is a loud failure, not an empty list that passes.
     expect(patterns?.length, `${IMPORTS} patterns`).toBeGreaterThan(0)
-    const unprobed = (patterns ?? [])
-      .map((p) => p.message)
-      .filter((message) => !STATIC.some(([, , says]) => message.includes(says)))
+    expect(syntaxOptions.length, `${SYNTAX} selectors`).toBeGreaterThan(0)
+    const probes = [...STATIC, ...DYNAMIC, ...RELAY_ONLY]
+    const unprobed = [
+      ...(patterns ?? []).map((p) => p.message),
+      ...(syntaxOptions as { message: string }[]).map((s) => s.message),
+    ].filter((message) => !probes.some(([, , says]) => message.includes(says)))
     expect(unprobed, 'configured with no probe in this file').toEqual([])
+  })
+
+  it.each(RELAY_ONLY)('does not report %s from app/', async (_what, source) => {
+    expect(await guard(source, OUTSIDE_CORE)).toEqual([])
   })
 })

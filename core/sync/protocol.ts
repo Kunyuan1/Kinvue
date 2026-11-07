@@ -92,9 +92,38 @@ export interface Envelope {
   sealed: string
 }
 
+/**
+ * **Where a viewer's stream stands, and who says so** (review of #216). Three rules, each
+ * needed by the others:
+ *
+ * - **The relay is the authority on what a viewer acknowledged** (`ackedThrough`), and
+ *   says it in `Deliveries`. The device resumes from there — after a reinstall, an older
+ *   backup, or envelopes expiring in the relay — rather than from what it believes it sent.
+ * - **An acknowledgement is contiguous.** `through` means the viewer holds every stream up
+ *   to it, so an ack past a stream the relay never held for them is refused: acknowledged
+ *   anyway, that stream could never be delivered, and neither side would know.
+ * - **The device may send any stream again until it is acknowledged.** A stream still
+ *   waiting is replaced by the new bytes — resealing gives different bytes every time, and
+ *   it is the same sender correcting its own undelivered mail. A stream already
+ *   acknowledged is not taken again, and the answer counts it as such (`acknowledged`),
+ *   apart from what was added.
+ */
+
 /** POST /v1/envelopes. */
 export interface PostEnvelopes {
   envelopes: Envelope[]
+}
+
+/** What a POST /v1/envelopes did with each envelope it was sent. */
+export interface Posted {
+  /** New in a mailbox. */
+  added: number
+  /** Took the place of different bytes at a stream still waiting: a reseal. */
+  replaced: number
+  /** Already there, byte for byte: a resend. */
+  held: number
+  /** At or below the viewer's acknowledged stream: not taken, since they hold it. */
+  acknowledged: number
 }
 
 /** An envelope waiting for its viewer, as they fetch it. */
@@ -114,9 +143,20 @@ export interface Ack {
   through: number
 }
 
-/** GET /v1/deliveries: when each viewer fetched, inside the access-history window. */
+/** One viewer, as GET /v1/deliveries gives them to the check-in device. */
+export interface ViewerStanding {
+  viewer: string
+  /** When the relay delivered envelopes to them, inside the access-history window. */
+  fetchedAt: number[]
+  /** Every stream up to this one is acknowledged; 0 before the first. */
+  ackedThrough: number
+  /** The highest stream waiting for them, or null when nothing is. */
+  highestWaiting: number | null
+}
+
+/** GET /v1/deliveries: each viewer's deliveries, and where their stream stands. */
 export interface Deliveries {
-  viewers: { viewer: string; fetchedAt: number[] }[]
+  viewers: ViewerStanding[]
 }
 
 /**
@@ -126,14 +166,44 @@ export interface Deliveries {
 export const ENDED = { status: 'ended' } as const
 export type Ended = typeof ENDED
 
-/** The largest sealed envelope accepted, in base64url characters: a record is a few KB. */
-export const MAX_SEALED_CHARS = 256 * 1024
+/**
+ * **The limits on a post, stated in terms of each other** (review of #216), so a sender
+ * that keeps to the first two can never be refused by the third.
+ *
+ * A sealed record is a few KB, the pain note included; 64K characters is far past any.
+ * Six weeks offline is 42 days of one person's check-ins for one viewer, so 64 envelopes
+ * a post sends it in one; a device with more to send sends more posts. The body allows
+ * the largest such post, with room for each envelope's JSON around its bytes.
+ */
+export const MAX_SEALED_CHARS = 64 * 1024
+
+/** The most envelopes in one POST /v1/envelopes. */
+export const MAX_ENVELOPES_PER_POST = 64
+
+/** What one envelope's JSON adds around its sealed bytes: its key, stream and quoting. */
+const ENVELOPE_JSON_CHARS = 128
+
+/** The largest body the relay reads: the largest post the two limits above allow. */
+export const MAX_BODY_BYTES = MAX_ENVELOPES_PER_POST * (MAX_SEALED_CHARS + ENVELOPE_JSON_CHARS) + 64
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/
 
-/** An Ed25519 or X25519 public key: 32 bytes, base64url without padding. */
+/**
+ * The base64url characters whose two low bits are zero: the only ones that can end 32
+ * bytes. The 43rd character carries the last four bits of the key and two spare ones.
+ */
+const KEY_LAST = /[AEIMQUYcgkosw048]$/
+
+/**
+ * An Ed25519 or X25519 public key: 32 bytes, base64url without padding, **spelled the one
+ * way that encodes them** (review of #216). Every lookup is by this string, so a key that
+ * could also be written three other ways would have three other names: a removed viewer
+ * coming back under one would be "not enrolled" rather than told sharing ended, and a
+ * keypair could be enrolled twice. Checked by the alphabet, not by decoding, so core needs
+ * no `Buffer`.
+ */
 export const isKey = (value: unknown): value is string =>
-  typeof value === 'string' && value.length === 43 && BASE64URL.test(value)
+  typeof value === 'string' && value.length === 43 && BASE64URL.test(value) && KEY_LAST.test(value)
 
 /** A request's nonce: 16 to 64 base64url characters, at least 96 random bits. */
 export const isNonce = (value: unknown): value is string =>
@@ -143,7 +213,15 @@ export const isNonce = (value: unknown): value is string =>
 export const isSignature = (value: unknown): value is string =>
   typeof value === 'string' && value.length === 86 && BASE64URL.test(value)
 
-const isStream = (value: unknown): value is number =>
+/** A sealed envelope's bytes as sent: base64url, not empty, no longer than the limit. */
+export const isSealed = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length > 0 &&
+  value.length <= MAX_SEALED_CHARS &&
+  BASE64URL.test(value)
+
+/** A stream number: a whole number from 1. */
+export const isStream = (value: unknown): value is number =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 1
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
@@ -153,16 +231,19 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 export function checkPostEnvelopes(value: unknown): string | null {
   if (!isObject(value) || !Array.isArray(value.envelopes)) return 'envelopes: not a list'
   if (value.envelopes.length === 0) return 'envelopes: empty'
+  if (value.envelopes.length > MAX_ENVELOPES_PER_POST) {
+    return `envelopes: more than ${MAX_ENVELOPES_PER_POST}`
+  }
   for (const [i, envelope] of value.envelopes.entries()) {
     const at = `envelopes[${i}]`
     if (!isObject(envelope)) return `${at}: not an object`
     if (!isKey(envelope.viewer)) return `${at}.viewer: not a key`
     if (!isStream(envelope.stream)) return `${at}.stream: not a whole number from 1`
     const { sealed } = envelope
-    if (typeof sealed !== 'string' || sealed.length === 0 || !BASE64URL.test(sealed)) {
-      return `${at}.sealed: not base64url`
+    if (typeof sealed === 'string' && sealed.length > MAX_SEALED_CHARS) {
+      return `${at}.sealed: longer than ${MAX_SEALED_CHARS}`
     }
-    if (sealed.length > MAX_SEALED_CHARS) return `${at}.sealed: longer than ${MAX_SEALED_CHARS}`
+    if (!isSealed(sealed)) return `${at}.sealed: not base64url`
   }
   return null
 }

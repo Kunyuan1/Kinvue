@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   checkAck,
@@ -8,6 +9,8 @@ import {
   isKey,
   isNonce,
   isSignature,
+  MAX_BODY_BYTES,
+  MAX_ENVELOPES_PER_POST,
   MAX_SEALED_CHARS,
   requestBytes,
   REQUEST_WINDOW_MS,
@@ -67,6 +70,25 @@ describe('keys, nonces and signatures', () => {
     expect(isKey(null)).toBe(false)
   })
 
+  it('reads one keypair under one spelling only (review of #216)', () => {
+    // 43 characters carry 258 bits for a 256-bit key; the last one's low two bits are
+    // spare. Allowed to vary, one key has four names, and a lookup by name misses three.
+    const canonical = '3Y58F-UXL_AhxDeWCiU1wo3qehCnYrYaIfsFA7LGDeA'
+    expect(isKey(canonical)).toBe(true)
+    for (const last of ['B', 'C', 'D']) expect(isKey(canonical.slice(0, -1) + last)).toBe(false)
+    expect(isKey(canonical.slice(0, -1) + 'E')).toBe(true)
+  })
+
+  it('agrees with decoding: every 32 bytes pass, and nothing that decodes elsewhere', () => {
+    for (let i = 0; i < 500; i += 1) {
+      const text = randomBytes(32).toString('base64url')
+      expect(isKey(text), text).toBe(true)
+      const variant = text.slice(0, -1) + (text.endsWith('A') ? 'B' : 'A')
+      const roundTrip = Buffer.from(variant, 'base64url').toString('base64url')
+      expect(isKey(variant), variant).toBe(roundTrip === variant)
+    }
+  })
+
   it('reads a nonce as 16 to 64 characters', () => {
     expect(isNonce('a'.repeat(15))).toBe(false)
     expect(isNonce('a'.repeat(16))).toBe(true)
@@ -103,6 +125,27 @@ describe('checkPostEnvelopes', () => {
     ],
   ])('refuses %s', (_what, body, says) => {
     expect(checkPostEnvelopes(body)).toContain(says)
+  })
+})
+
+describe('the limits on a post (review of #216)', () => {
+  it('fit the largest post the envelope limits allow inside the body limit', () => {
+    const sealedBytes = 'a'.repeat(MAX_SEALED_CHARS)
+    const envelope = { viewer: KEY, stream: Number.MAX_SAFE_INTEGER, sealed: sealedBytes }
+    const largest = { envelopes: Array.from({ length: MAX_ENVELOPES_PER_POST }, () => envelope) }
+    expect(checkPostEnvelopes(largest)).toBeNull()
+    expect(Buffer.byteLength(JSON.stringify(largest))).toBeLessThanOrEqual(MAX_BODY_BYTES)
+  })
+
+  it('send six weeks of one viewer’s check-ins in one post', () => {
+    expect(MAX_ENVELOPES_PER_POST).toBeGreaterThanOrEqual(42)
+  })
+
+  it('refuses a post with more envelopes than that', () => {
+    const envelope = { viewer: KEY, stream: 1, sealed: 'a' }
+    const length = MAX_ENVELOPES_PER_POST + 1
+    const tooMany = { envelopes: Array.from({ length }, () => envelope) }
+    expect(checkPostEnvelopes(tooMany)).toBe(`envelopes: more than ${MAX_ENVELOPES_PER_POST}`)
   })
 })
 

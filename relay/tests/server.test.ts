@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Server } from 'node:http'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ENDED, REQUEST_WINDOW_MS, ROUTES } from '@kinvue/core/sync/protocol'
-import { createRelayServer, MAX_BODY_BYTES } from '../server'
+import { ENDED, MAX_BODY_BYTES, REQUEST_WINDOW_MS, ROUTES } from '@kinvue/core/sync/protocol'
+import { createRelayServer } from '../server'
 import { createRelayStore, type RelayStore } from '../store'
 import { call, identity, listening, receiveKey, sealed, type Identity } from './helpers'
 
@@ -50,7 +50,10 @@ describe('store and forward', () => {
       { viewer: ann.key, stream: 1, sealed: sealed('one') },
       { viewer: ann.key, stream: 2, sealed: sealed('two') },
     ])
-    expect(posted).toEqual({ status: 200, json: { added: 2 } })
+    expect(posted).toEqual({
+      status: 200,
+      json: { added: 2, replaced: 0, held: 0, acknowledged: 0 },
+    })
     const mailbox = await fetchAs(ann)
     expect(mailbox.status).toBe(200)
     expect((mailbox.json as { envelopes: { stream: number }[] }).envelopes.map((e) => e.stream))
@@ -58,11 +61,17 @@ describe('store and forward', () => {
   })
 
   it('never shows one viewer what waits for another (KV-31)', async () => {
-    await post([{ viewer: ann.key, stream: 1, sealed: sealed('for ann') }])
-    expect(await fetchAs(bill)).toEqual({ status: 200, json: { envelopes: [] } })
+    // Bill has mail of his own, so his fetch reads a mailbox rather than finding none.
+    await post([
+      { viewer: ann.key, stream: 1, sealed: sealed('for ann') },
+      { viewer: bill.key, stream: 1, sealed: sealed('for bill') },
+    ])
+    const mailbox = (await fetchAs(bill)).json as { envelopes: { sealed: string }[] }
+    expect(mailbox.envelopes.map((e) => e.sealed)).toEqual([sealed('for bill')])
   })
 
-  it('records each fetch, and gives the device those times (KV-31)', async () => {
+  it('records each fetch that delivered, and gives the device those times (KV-31)', async () => {
+    await post([{ viewer: ann.key, stream: 1, sealed: sealed('one') }])
     await fetchAs(ann)
     clock += 1000
     await fetchAs(ann)
@@ -74,6 +83,19 @@ describe('store and forward', () => {
     expect(viewers.find((v) => v.viewer === bill.key)?.fetchedAt).toEqual([])
   })
 
+  it('records and writes nothing for a fetch that found nothing (review of #216)', async () => {
+    // KV-31's history is taken from what the relay delivered. A background poll finding
+    // an empty mailbox delivered nothing: kept, it would bury the looks among thousands.
+    await fetchAs(ann)
+    const deliveries = (await call(base, device, { method: 'GET', path: ROUTES.deliveries }))
+      .json as { viewers: { viewer: string; fetchedAt: number[] }[] }
+    expect(deliveries.viewers.find((v) => v.viewer === ann.key)?.fetchedAt).toEqual([])
+    const before = await stat(join(dir, 'relay.json'))
+    clock += 1000
+    await fetchAs(ann)
+    expect((await stat(join(dir, 'relay.json'))).mtimeMs).toBe(before.mtimeMs)
+  })
+
   it('lets go of what a viewer acknowledges, and does not take it again', async () => {
     await post([
       { viewer: ann.key, stream: 1, sealed: sealed('one') },
@@ -83,10 +105,11 @@ describe('store and forward', () => {
     expect(ack.status).toBe(204)
     const left = (await fetchAs(ann)).json as { envelopes: { stream: number }[] }
     expect(left.envelopes.map((e) => e.stream)).toEqual([2])
-    // The outbox sending stream 1 again (#41) is harmless: it is held already.
+    // The outbox sending stream 1 again (#41) is not taken, and is said to be the
+    // viewer's already, apart from anything added (review of #216).
     expect(await post([{ viewer: ann.key, stream: 1, sealed: sealed('one') }])).toEqual({
       status: 200,
-      json: { added: 0 },
+      json: { added: 0, replaced: 0, held: 0, acknowledged: 1 },
     })
   })
 
@@ -94,17 +117,10 @@ describe('store and forward', () => {
     await post([{ viewer: ann.key, stream: 1, sealed: sealed('one') }])
     expect((await post([{ viewer: ann.key, stream: 1, sealed: sealed('one') }])).json).toEqual({
       added: 0,
+      replaced: 0,
+      held: 1,
+      acknowledged: 0,
     })
-  })
-
-  it('refuses different bytes at a stream it holds, and writes none of the batch', async () => {
-    await post([{ viewer: ann.key, stream: 1, sealed: sealed('one') }])
-    const clash = await post([
-      { viewer: bill.key, stream: 1, sealed: sealed('for bill') },
-      { viewer: ann.key, stream: 1, sealed: sealed('other') },
-    ])
-    expect(clash.status).toBe(409)
-    expect(await fetchAs(bill)).toEqual({ status: 200, json: { envelopes: [] } })
   })
 
   it('refuses an envelope for a non-viewer, and writes none of the batch', async () => {
@@ -203,10 +219,27 @@ describe('signed requests', () => {
     expect(await call(base, ann, request)).toEqual({ status: 401, json: { error: 'replayed' } })
   })
 
+  it('spends no nonce on a key nobody enrolled (review of #216)', async () => {
+    // Anyone can make a key and sign with it. Recorded, their nonces would fill the
+    // ledger; refused before it, the same request twice is "not enrolled" both times.
+    const request = { method: 'GET', path: ROUTES.envelopes, at: clock, nonce: 's'.repeat(22) }
+    const notEnrolled = { status: 401, json: { error: 'not enrolled' } }
+    expect(await call(base, stranger, request)).toEqual(notEnrolled)
+    expect(await call(base, stranger, request)).toEqual(notEnrolled)
+  })
+
   it('refuses a body over the limit, and says so', async () => {
+    const big = { envelopes: [{ viewer: ann.key, stream: 1, sealed: 'a'.repeat(MAX_BODY_BYTES) }] }
+    const res = await call(base, device, { method: 'POST', path: ROUTES.envelopes, body: big })
+    expect(res).toEqual({ status: 413, json: { error: 'body too large' } })
+  })
+
+  it('refuses an unsigned request before reading its body (review of #216)', async () => {
+    // Anyone can send a body; only a signed request from inside the window gets one read.
     const big = 'a'.repeat(MAX_BODY_BYTES + 1)
     const res = await fetch(base + ROUTES.envelopes, { method: 'POST', body: big })
-    expect(res.status).toBe(413)
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ error: 'not signed' })
   })
 })
 
@@ -245,5 +278,67 @@ describe('ending a viewer’s sharing', () => {
   it('answers a key that was never a viewer as not one', async () => {
     const res = await call(base, device, { method: 'DELETE', path: ROUTES.viewers + stranger.key })
     expect(res.status).toBe(404)
+  })
+})
+
+describe('where a viewer’s stream stands (review of #216)', () => {
+  const streams = async (who: Identity) =>
+    ((await fetchAs(who)).json as { envelopes: { stream: number; sealed: string }[] }).envelopes
+
+  it('takes a reseal of a stream still waiting in place of the old bytes', async () => {
+    // Resealing gives different bytes every time. Refused, the device could never send a
+    // waiting stream again, and delivery would stall until the envelope expired.
+    await post([{ viewer: ann.key, stream: 1, sealed: sealed('first seal') }])
+    const resealed = await post([{ viewer: ann.key, stream: 1, sealed: sealed('second seal') }])
+    expect(resealed).toEqual({
+      status: 200,
+      json: { added: 0, replaced: 1, held: 0, acknowledged: 0 },
+    })
+    expect(await streams(ann)).toEqual([
+      { stream: 1, sealed: sealed('second seal'), postedAt: clock },
+    ])
+  })
+
+  it('refuses an ack past a stream it never held, and keeps everything waiting', async () => {
+    // Stream 2 delayed: acknowledged past, it could never be delivered, and neither side
+    // would know. A caregiver would read an unbroken run of days with one missing.
+    await post([
+      { viewer: ann.key, stream: 1, sealed: sealed('one') },
+      { viewer: ann.key, stream: 3, sealed: sealed('three') },
+    ])
+    const ack = await call(base, ann, { method: 'POST', path: ROUTES.ack, body: { through: 3 } })
+    expect(ack).toEqual({ status: 422, json: { error: 'stream 2 not held here' } })
+    expect((await streams(ann)).map((e) => e.stream)).toEqual([1, 3])
+    // Up to the gap is fine; then stream 2 arrives, and the rest can go.
+    expect(
+      (await call(base, ann, { method: 'POST', path: ROUTES.ack, body: { through: 1 } })).status,
+    ).toBe(204)
+    await post([{ viewer: ann.key, stream: 2, sealed: sealed('two') }])
+    expect(
+      (await call(base, ann, { method: 'POST', path: ROUTES.ack, body: { through: 3 } })).status,
+    ).toBe(204)
+    expect(await streams(ann)).toEqual([])
+  })
+
+  it('refuses an ack far past anything held, without counting up to it', async () => {
+    await post([{ viewer: ann.key, stream: 1, sealed: sealed('one') }])
+    const through = Number.MAX_SAFE_INTEGER
+    const ack = await call(base, ann, { method: 'POST', path: ROUTES.ack, body: { through } })
+    expect(ack).toEqual({ status: 422, json: { error: 'stream 2 not held here' } })
+  })
+
+  it('tells the device where each viewer stands, so it can resume', async () => {
+    await post([
+      { viewer: ann.key, stream: 1, sealed: sealed('one') },
+      { viewer: ann.key, stream: 2, sealed: sealed('two') },
+    ])
+    await fetchAs(ann)
+    await call(base, ann, { method: 'POST', path: ROUTES.ack, body: { through: 1 } })
+    type Standing = { viewer: string; ackedThrough: number; highestWaiting: number | null }
+    const deliveries = (await call(base, device, { method: 'GET', path: ROUTES.deliveries }))
+      .json as { viewers: Standing[] }
+    const standing = (key: string) => deliveries.viewers.find((v) => v.viewer === key)
+    expect(standing(ann.key)).toMatchObject({ ackedThrough: 1, highestWaiting: 2 })
+    expect(standing(bill.key)).toMatchObject({ ackedThrough: 0, highestWaiting: null })
   })
 })

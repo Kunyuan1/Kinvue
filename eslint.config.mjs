@@ -209,7 +209,46 @@ export default tseslint.config(
                 'relay/ must not import from app/, in any spelling. What the relay and the ' +
                 'app share lives in @kinvue/core/sync.',
             },
+            {
+              // By name only, through the boundary `tests/workspaces.test.ts` pins: a
+              // relative path walks round it to files core does not export, its tests among
+              // them (review of #216).
+              group: ['../core', '../core/**', '../../core', '../../core/**'],
+              message:
+                'relay/ must not import core/ by a relative path. Import it as @kinvue/core, ' +
+                'the dependency its package.json declares.',
+            },
           ],
+        },
+      ],
+      // core/'s reason, carried over (review of #216): the import rule above sees only
+      // static forms, and `await import('electron')` would lint clean here and crash on the
+      // household's server. The relay has no need to load anything dynamically.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ImportExpression',
+          message:
+            'relay/ does not use dynamic import(). Import statically, so the relay/ import ' +
+            'guard can see what is loaded.',
+        },
+        {
+          selector: "CallExpression[callee.name='require']",
+          message:
+            'relay/ does not use require(). Import statically, so the relay/ import guard ' +
+            'can see what is loaded.',
+        },
+        {
+          selector: "CallExpression[callee.name='createRequire']",
+          message:
+            'relay/ does not use createRequire(). Import statically, so the relay/ import ' +
+            'guard can see what is loaded.',
+        },
+        {
+          selector: 'TSImportEqualsDeclaration',
+          message:
+            'relay/ does not use `import x = require()`. Import statically, so the relay/ ' +
+            'import guard can see what is loaded.',
         },
       ],
     },
