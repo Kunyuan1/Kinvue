@@ -12,13 +12,13 @@
   },
   "dependencies": {
     "@smartspectra/node-sdk": "3.3.0",
-    "react": "^19.3.0",
-    "react-dom": "^19.3.0"
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1"
   },
   "devDependencies": {
     "@kinvue/core": "*",
-    "@swc/core": "^1.16.2",
-    "@tailwindcss/vite": "^4.3.3",
+    "@swc/core": "^1.16.22",
+    "@tailwindcss/vite": "^4.3.4",
     "@testing-library/dom": "^10.4.2",
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19.3.0",

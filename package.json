@@ -25,10 +25,10 @@
     "@eslint/js": "^10.0.1",
     "@types/node": "^24.13.6",
     "@types/semver": "^7.8.0",
-    "eslint": "^10.11.0",
-    "semver": "^7.8.5",
+    "eslint": "^10.14.0",
+    "semver": "^7.8.6",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.70.1",
-    "vitest": "^5.0.1"
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.1.0"
   }
 }
