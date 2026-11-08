@@ -58,6 +58,8 @@ const IN_CORE = 'core/session/__lint_probe__.ts'
 /** The config's `core/**` glob covers `.tsx` too, though nothing there uses it yet. */
 const IN_CORE_TSX = 'core/ui/__lint_probe__.tsx'
 const OUTSIDE_CORE = 'app/main/__lint_probe__.ts'
+/** relay/ has an import guard of its own, with the same groups and its own reasons (KV-39). */
+const IN_RELAY = 'relay/__lint_probe__.ts'
 
 /** What it is, the source, and a fragment of the message it must produce. */
 type Probe = [what: string, source: string, says: string]
@@ -178,5 +180,49 @@ describe('the core/ import guard (KV-15)', () => {
       (message) => !ALL.some(([, , says]) => message.includes(says)),
     )
     expect(unprobed, 'configured with no probe in this file').toEqual([])
+  })
+})
+
+/** What only the relay's guard refuses: core reached round its package (review of #216). */
+const RELAY_ONLY: Probe[] = [
+  ['core/ by a relative path', "import { x } from '../core/session/store'", 'core/ by a relative'],
+  ['core/ two levels up', "import { x } from '../../core/sync/protocol'", 'core/ by a relative'],
+]
+
+describe('the relay/ import guard (KV-39)', () => {
+  it.each([...STATIC, ...DYNAMIC, ...RELAY_ONLY])('reports %s', async (_what, source, says) => {
+    const reports = await guard(source, IN_RELAY)
+    expect(reports.some((m) => m.includes(says)), reports.join(' | ')).toBe(true)
+    // The relay's own reasons, not core's: the message says which guard it is.
+    expect(reports.every((m) => m.includes('relay/ ')), reports.join(' | ')).toBe(true)
+  })
+
+  it('allows what the relay and the app share, and Node', async () => {
+    expect(await guard("import { ROUTES } from '@kinvue/core/sync/protocol'", IN_RELAY)).toEqual(
+      [],
+    )
+    expect(await guard("import { createServer } from 'node:http'", IN_RELAY)).toEqual([])
+  })
+
+  it('has a probe for every group and every banned syntax the config holds', async () => {
+    const config = (await eslint.calculateConfigForFile(IN_RELAY)) as {
+      rules: Record<string, [unknown, ...unknown[]]>
+    }
+    const [, importOptions] = config.rules[IMPORTS] ?? []
+    const patterns = (importOptions as { patterns?: { message: string }[] } | undefined)?.patterns
+    const [, ...syntaxOptions] = config.rules[SYNTAX] ?? []
+    // A shape this cannot read is a loud failure, not an empty list that passes.
+    expect(patterns?.length, `${IMPORTS} patterns`).toBeGreaterThan(0)
+    expect(syntaxOptions.length, `${SYNTAX} selectors`).toBeGreaterThan(0)
+    const probes = [...STATIC, ...DYNAMIC, ...RELAY_ONLY]
+    const unprobed = [
+      ...(patterns ?? []).map((p) => p.message),
+      ...(syntaxOptions as { message: string }[]).map((s) => s.message),
+    ].filter((message) => !probes.some(([, , says]) => message.includes(says)))
+    expect(unprobed, 'configured with no probe in this file').toEqual([])
+  })
+
+  it.each(RELAY_ONLY)('does not report %s from app/', async (_what, source) => {
+    expect(await guard(source, OUTSIDE_CORE)).toEqual([])
   })
 })

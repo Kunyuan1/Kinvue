@@ -5,7 +5,8 @@
   "description": "A daily check-in that tells a caregiver when an older adult's day looks different from their own baseline.",
   "workspaces": [
     "core",
-    "app"
+    "app",
+    "relay"
   ],
   "engines": {
     "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
@@ -15,7 +16,7 @@
     "build": "npm run build -w app",
     "preview": "npm run preview -w app",
     "dist": "npm run dist -w app",
-    "typecheck": "tsc -p core && tsc -p app && tsc -p .",
+    "typecheck": "tsc -p core && tsc -p app && tsc -p relay && tsc -p .",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
     "test:watch": "vitest"

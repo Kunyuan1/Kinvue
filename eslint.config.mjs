@@ -165,6 +165,96 @@ export default tseslint.config(
   },
   {
     /**
+     * relay/ is a server, and imports none of the desktop app (KV-39).
+     *
+     * It runs on a machine the household chose, on Node, with core's source and nothing
+     * else installed (`tests/workspaces.test.ts`). Electron, React, the renderer and the
+     * SDK are not there to load, and app/ is the other end of the wire: what the two share
+     * is `@kinvue/core/sync`, not each other's code. Type-only imports too, for core/'s
+     * reason above. `tests/lint-boundary.test.ts` checks every group fires here as well.
+     */
+    files: ['relay/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['electron', 'electron/*'],
+              message:
+                'relay/ must not import Electron, including its subpaths: it is a server, ' +
+                'and Electron is not installed where it runs.',
+            },
+            {
+              group: ['react', 'react-dom', 'react/*', 'react-dom/*'],
+              message:
+                'relay/ must not import React or anything named for it: it serves sealed ' +
+                'envelopes, and draws nothing.',
+            },
+            {
+              group: ['@renderer', '@renderer/*'],
+              message:
+                'relay/ must not reach into the renderer. What the relay and the app share ' +
+                'lives in @kinvue/core/sync.',
+            },
+            {
+              group: ['@smartspectra/node-sdk', '@smartspectra/node-sdk/*'],
+              message:
+                'relay/ must not import the SDK: it never sees a capture, and the package ' +
+                'loads a native runtime the server does not have.',
+            },
+            {
+              group: ['**/app/**', '../app/**', '../../app/**'],
+              message:
+                'relay/ must not import from app/, in any spelling. What the relay and the ' +
+                'app share lives in @kinvue/core/sync.',
+            },
+            {
+              // By name only, through the boundary `tests/workspaces.test.ts` pins: a
+              // relative path walks round it to files core does not export, its tests among
+              // them (review of #216).
+              group: ['../core', '../core/**', '../../core', '../../core/**'],
+              message:
+                'relay/ must not import core/ by a relative path. Import it as @kinvue/core, ' +
+                'the dependency its package.json declares.',
+            },
+          ],
+        },
+      ],
+      // core/'s reason, carried over (review of #216): the import rule above sees only
+      // static forms, and `await import('electron')` would lint clean here and crash on the
+      // household's server. The relay has no need to load anything dynamically.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: 'ImportExpression',
+          message:
+            'relay/ does not use dynamic import(). Import statically, so the relay/ import ' +
+            'guard can see what is loaded.',
+        },
+        {
+          selector: "CallExpression[callee.name='require']",
+          message:
+            'relay/ does not use require(). Import statically, so the relay/ import guard ' +
+            'can see what is loaded.',
+        },
+        {
+          selector: "CallExpression[callee.name='createRequire']",
+          message:
+            'relay/ does not use createRequire(). Import statically, so the relay/ import ' +
+            'guard can see what is loaded.',
+        },
+        {
+          selector: 'TSImportEqualsDeclaration',
+          message:
+            'relay/ does not use `import x = require()`. Import statically, so the relay/ ' +
+            'import guard can see what is loaded.',
+        },
+      ],
+    },
+  },
+  {
+    /**
      * The preload and the renderer never import from `app/main` (review of
      * #187), type-only imports included, for the reason core/'s are banned
      * above: `import type` is erased today, and the next value import is a
