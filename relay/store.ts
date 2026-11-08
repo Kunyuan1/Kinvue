@@ -1,13 +1,21 @@
+import { createHash, randomBytes } from 'node:crypto'
 import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
   DELIVERY_RETENTION_MS,
+  ENROL_TOKEN_TTL_MS,
   ENVELOPE_RETENTION_MS,
   isKey,
+  MAX_WAITING_PER_VIEWER,
+  isPairingId,
+  PAIRING_TTL_MS,
   isSealed,
   isStream,
   type Deliveries,
   type Envelope,
+  type Keys,
+  type Opened,
+  type Pairing,
   type Posted,
   type Waiting,
 } from '@kinvue/core/sync/protocol'
@@ -19,7 +27,9 @@ import {
  * enrolled, sealed envelopes waiting for their viewer, and when each viewer fetched. No
  * names, no readings, nothing it could open. And the keys of viewers whose sharing ended,
  * with when, so a viewer coming back after any gap is told it ended rather than that it is
- * unknown — told is what makes their app delete its copy (KV-31).
+ * unknown — told is what makes their app delete its copy (KV-31). While someone is being
+ * let in, briefly: an enrolment token's hash and an open pairing's keys (KV-39), each gone
+ * at its expiry.
  *
  * **Retention is enforced here, and is the operator's policy, not a control** (KV-33, T3,
  * T4): an envelope older than 14 days and a fetch older than 30 are dropped on every
@@ -56,13 +66,28 @@ interface ViewerEntry {
   fetchedAt: number[]
 }
 
+interface PairingEntry {
+  expiresAt: number
+  /** Who joined it, waiting for the device to confirm; null until someone does. */
+  viewer: Keys | null
+}
+
 interface RelayState {
   version: typeof RELAY_FILE_VERSION
-  /** The check-in device's signing key, once enrolled (#39's second PR). */
+  /** The check-in device's signing key, once enrolled. */
   device: string | null
+  /** Its X25519 key, given to a viewer joining a pairing, for their half of the code. */
+  deviceReceiveKey: string | null
   viewers: Record<string, ViewerEntry>
   /** Viewers whose sharing ended, and when. */
   ended: Record<string, number>
+  /**
+   * Enrolment tokens not yet redeemed, by the SHA-256 of the token, with when each
+   * expires. The token itself is never written: whoever reads this file cannot redeem one.
+   */
+  tokens: Record<string, number>
+  /** Open pairings, by id. One at a time: opening another closes the last. */
+  pairings: Record<string, PairingEntry>
 }
 
 export type Role = 'device' | 'viewer' | 'ended'
@@ -71,11 +96,26 @@ export type PostResult =
   | ({ kind: 'posted' } & Posted)
   /** An envelope for a key that is not an enrolled viewer: nothing was written. */
   | { kind: 'unknown-viewer'; viewer: string }
+  /** A viewer's mailbox would hold more than `MAX_WAITING_PER_VIEWER`: nothing was written. */
+  | { kind: 'full'; viewer: string }
 
 export type AckResult =
   | { kind: 'acked' }
   /** A stream inside the ack was never held for them: nothing was written (review of #216). */
   | { kind: 'gap'; missing: number }
+
+export type RedeemResult = 'enrolled' | 'invalid' | 'device-exists' | 'key-in-use'
+
+export type JoinResult =
+  | { kind: 'joined'; device: Keys }
+  /** No such pairing, or it expired. */
+  | { kind: 'unknown' }
+  /** Someone joined it already: one pairing, one viewer. */
+  | { kind: 'taken' }
+  /** The key is the device's, or already a viewer's. */
+  | { kind: 'key-in-use' }
+
+export type ConfirmResult = 'enrolled' | 'unknown' | 'nobody-joined'
 
 export interface RelayStore {
   /** What `key` is here, or null when it is nothing. */
@@ -92,10 +132,24 @@ export interface RelayStore {
   revoke(viewer: string, at: number): Promise<boolean>
   /** Drops what retention says has gone, and writes if anything did. */
   expire(at: number): Promise<void>
-  /** The check-in device's key. Enrolment by token is the second PR's; this is its write. */
-  enrolDevice(key: string, at: number): Promise<void>
-  /** A viewer, as a confirmed pairing will enrol them (the second PR). */
+  /** The check-in device's keys, written directly: what `redeem` does, for tests. */
+  enrolDevice(key: string, receiveKey: string, at: number): Promise<void>
+  /** A viewer, written directly: what `confirm` does, for tests. */
   enrolViewer(key: string, receiveKey: string, at: number): Promise<void>
+  /** A one-time enrolment token, for the household to give the check-in device. */
+  issueToken(at: number): Promise<string>
+  /** The check-in device enrolled by a token, once. */
+  redeem(token: string, keys: Keys, at: number): Promise<RedeemResult>
+  /** A pairing opened by the device, closing any other. */
+  openPairing(at: number): Promise<Opened>
+  /** A viewer joining an open pairing with their keys. */
+  join(pairing: string, keys: Keys, at: number): Promise<JoinResult>
+  /** An open pairing, as the device sees it, or null. */
+  pairing(id: string, at: number): Promise<Pairing | null>
+  /** The pairing's viewer enrolled, and the pairing closed. */
+  confirm(id: string, at: number): Promise<ConfirmResult>
+  /** The pairing closed, nobody enrolled. False when there was none. */
+  closePairing(id: string, at: number): Promise<boolean>
 }
 
 /** The relay file was written by a newer relay. Refused whole, as the history is (KV-13). */
@@ -111,9 +165,25 @@ export class UnreadableRelayFileError extends Error {}
 const empty = (): RelayState => ({
   version: RELAY_FILE_VERSION,
   device: null,
+  deviceReceiveKey: null,
   viewers: {},
   ended: {},
+  tokens: {},
+  pairings: {},
 })
+
+const hashOf = (token: string): string => createHash('sha256').update(token).digest('hex')
+
+/** Crockford's base32: no I, L, O or U, so a code read aloud is not misheard. */
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ'
+
+/** Ten characters, each from one random byte: 256 is a multiple of 32, so each is even. */
+const pairingId = (): string =>
+  Array.from(randomBytes(10), (byte) => CROCKFORD[byte % 32]).join('')
+
+/** Whether `key` is the device's or a viewer's here. */
+const inUse = (state: RelayState, key: string): boolean =>
+  state.device === key || Object.hasOwn(state.viewers, key)
 
 const isNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value)
@@ -123,6 +193,29 @@ function problemWith(value: unknown): string | null {
   if (typeof value !== 'object' || value === null) return 'not an object'
   const state = value as Record<string, unknown>
   if (state.device !== null && !isKey(state.device)) return 'device: not a key'
+  if (state.deviceReceiveKey !== null && !isKey(state.deviceReceiveKey)) {
+    return 'deviceReceiveKey: not a key'
+  }
+  if ((state.device === null) !== (state.deviceReceiveKey === null)) {
+    return 'device: its two keys not both there'
+  }
+  if (typeof state.tokens !== 'object' || state.tokens === null) return 'tokens: not an object'
+  for (const [hash, until] of Object.entries(state.tokens as Record<string, unknown>)) {
+    if (!/^[0-9a-f]{64}$/.test(hash) || !isNumber(until)) return 'tokens: not a hash and a time'
+  }
+  if (typeof state.pairings !== 'object' || state.pairings === null) {
+    return 'pairings: not an object'
+  }
+  for (const [id, entry] of Object.entries(state.pairings as Record<string, unknown>)) {
+    const pairing = entry as Partial<PairingEntry> | null
+    if (!isPairingId(id) || pairing === null || !isNumber(pairing.expiresAt)) {
+      return `pairings: ${id} is not a pairing`
+    }
+    const viewer = pairing.viewer
+    if (viewer !== null && !(isKey(viewer?.key) && isKey(viewer?.receiveKey))) {
+      return `pairings.${id}.viewer: not two keys`
+    }
+  }
   if (typeof state.viewers !== 'object' || state.viewers === null) return 'viewers: not an object'
   for (const [key, entry] of Object.entries(state.viewers as Record<string, unknown>)) {
     if (!isKey(key)) return `viewers: ${key} is not a key`
@@ -201,6 +294,18 @@ function pruned(state: RelayState, at: number): boolean {
       changed = true
       viewer.waiting = waiting
       viewer.fetchedAt = fetchedAt
+    }
+  }
+  for (const [hash, until] of Object.entries(state.tokens)) {
+    if (until <= at) {
+      delete state.tokens[hash]
+      changed = true
+    }
+  }
+  for (const [id, pairing] of Object.entries(state.pairings)) {
+    if (pairing.expiresAt <= at) {
+      delete state.pairings[id]
+      changed = true
     }
   }
   return changed
@@ -295,6 +400,9 @@ export function createRelayStore(path: string): RelayStore {
             there.postedAt = at
             posted.replaced += 1
           } else {
+            if (viewer.waiting.length >= MAX_WAITING_PER_VIEWER) {
+              return { result: { kind: 'full', viewer: envelope.viewer }, then: 'refuse' }
+            }
             viewer.waiting.push({ stream: envelope.stream, sealed: envelope.sealed, postedAt: at })
             posted.added += 1
           }
@@ -361,12 +469,13 @@ export function createRelayStore(path: string): RelayStore {
 
     expire: (at) => change(at, () => ({ result: undefined, then: 'keep' })),
 
-    enrolDevice: (key, at) =>
+    enrolDevice: (key, receiveKey, at) =>
       change(at, (draft) => {
         if (Object.hasOwn(draft.viewers, key) || Object.hasOwn(draft.ended, key)) {
           throw new Error('That key is already a viewer here, or was one.')
         }
         draft.device = key
+        draft.deviceReceiveKey = receiveKey
         return { result: undefined, then: 'write' }
       }),
 
@@ -383,6 +492,82 @@ export function createRelayStore(path: string): RelayStore {
           fetchedAt: [],
         }
         return { result: undefined, then: 'write' }
+      }),
+
+    issueToken: (at) =>
+      change(at, (draft) => {
+        const token = randomBytes(16).toString('base64url')
+        draft.tokens[hashOf(token)] = at + ENROL_TOKEN_TTL_MS
+        return { result: token, then: 'write' }
+      }),
+
+    redeem: (token, keys, at) =>
+      change<RedeemResult>(at, (draft) => {
+        const hash = hashOf(token)
+        if (!Object.hasOwn(draft.tokens, hash)) return { result: 'invalid', then: 'keep' }
+        if (draft.device !== null) return { result: 'device-exists', then: 'keep' }
+        if (inUse(draft, keys.key) || Object.hasOwn(draft.ended, keys.key)) {
+          return { result: 'key-in-use', then: 'keep' }
+        }
+        delete draft.tokens[hash]
+        draft.device = keys.key
+        draft.deviceReceiveKey = keys.receiveKey
+        return { result: 'enrolled', then: 'write' }
+      }),
+
+    openPairing: (at) =>
+      change<Opened>(at, (draft) => {
+        const pairing = pairingId()
+        const expiresAt = at + PAIRING_TTL_MS
+        draft.pairings = { [pairing]: { expiresAt, viewer: null } }
+        return { result: { pairing, expiresAt }, then: 'write' }
+      }),
+
+    join: (id, keys, at) =>
+      change<JoinResult>(at, (draft) => {
+        const pairing = Object.hasOwn(draft.pairings, id) ? draft.pairings[id] : undefined
+        if (pairing === undefined || draft.device === null || draft.deviceReceiveKey === null) {
+          return { result: { kind: 'unknown' }, then: 'keep' }
+        }
+        if (pairing.viewer !== null) return { result: { kind: 'taken' }, then: 'keep' }
+        if (inUse(draft, keys.key)) return { result: { kind: 'key-in-use' }, then: 'keep' }
+        pairing.viewer = { key: keys.key, receiveKey: keys.receiveKey }
+        const device = { key: draft.device, receiveKey: draft.deviceReceiveKey }
+        return { result: { kind: 'joined', device }, then: 'write' }
+      }),
+
+    pairing: (id, at) =>
+      change<Pairing | null>(at, (draft) => {
+        const pairing = Object.hasOwn(draft.pairings, id) ? draft.pairings[id] : undefined
+        if (pairing === undefined) return { result: null, then: 'keep' }
+        const viewer = pairing.viewer === null ? null : { ...pairing.viewer }
+        return { result: { pairing: id, expiresAt: pairing.expiresAt, viewer }, then: 'keep' }
+      }),
+
+    confirm: (id, at) =>
+      change<ConfirmResult>(at, (draft) => {
+        const pairing = Object.hasOwn(draft.pairings, id) ? draft.pairings[id] : undefined
+        if (pairing === undefined) return { result: 'unknown', then: 'keep' }
+        const { viewer } = pairing
+        if (viewer === null) return { result: 'nobody-joined', then: 'keep' }
+        delete draft.pairings[id]
+        // Approved again at the device after their sharing ended: a new pairing (KV-31).
+        delete draft.ended[viewer.key]
+        draft.viewers[viewer.key] = {
+          receiveKey: viewer.receiveKey,
+          enrolledAt: at,
+          ackedThrough: 0,
+          waiting: [],
+          fetchedAt: [],
+        }
+        return { result: 'enrolled', then: 'write' }
+      }),
+
+    closePairing: (id, at) =>
+      change(at, (draft) => {
+        if (!Object.hasOwn(draft.pairings, id)) return { result: false, then: 'keep' }
+        delete draft.pairings[id]
+        return { result: true, then: 'write' }
       }),
   }
 }

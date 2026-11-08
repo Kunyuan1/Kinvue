@@ -2,16 +2,21 @@ import { randomBytes } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   checkAck,
+  checkEnrol,
+  checkJoin,
   checkPostEnvelopes,
   DELIVERY_RETENTION_MS,
   ENDED,
+  ENROL_TOKEN_TTL_MS,
   ENVELOPE_RETENTION_MS,
   isKey,
   isNonce,
+  isPairingId,
   isSignature,
   MAX_BODY_BYTES,
   MAX_ENVELOPES_PER_POST,
   MAX_SEALED_CHARS,
+  PAIRING_TTL_MS,
   requestBytes,
   REQUEST_WINDOW_MS,
 } from '@kinvue/core/sync/protocol'
@@ -146,6 +151,37 @@ describe('the limits on a post (review of #216)', () => {
     const length = MAX_ENVELOPES_PER_POST + 1
     const tooMany = { envelopes: Array.from({ length }, () => envelope) }
     expect(checkPostEnvelopes(tooMany)).toBe(`envelopes: more than ${MAX_ENVELOPES_PER_POST}`)
+  })
+})
+
+describe('letting someone in (KV-39)', () => {
+  it('keeps a token 15 minutes and a pairing 10', () => {
+    expect(ENROL_TOKEN_TTL_MS).toBe(15 * 60 * 1000)
+    expect(PAIRING_TTL_MS).toBe(10 * 60 * 1000)
+  })
+
+  it('reads a pairing id as ten characters of Crockford base32', () => {
+    expect(isPairingId('0123456789')).toBe(true)
+    expect(isPairingId('ABCDEFGHJK')).toBe(true)
+    // I, L, O and U are left out, so a code read aloud is not misheard.
+    for (const letter of ['I', 'L', 'O', 'U']) {
+      expect(isPairingId(`ABCDEFGHJ${letter}`)).toBe(false)
+    }
+    expect(isPairingId('abcdefghjk')).toBe(false)
+    expect(isPairingId('ABCDEFGHJ')).toBe(false)
+  })
+
+  it('checks what the device enrols with', () => {
+    expect(checkEnrol({ token: 'A'.repeat(22), receiveKey: KEY })).toBeNull()
+    expect(checkEnrol({ token: 'short', receiveKey: KEY })).toContain('token')
+    expect(checkEnrol({ token: 'A'.repeat(22), receiveKey: 'x' })).toContain('receiveKey')
+    expect(checkEnrol(null)).not.toBeNull()
+  })
+
+  it('checks what a viewer joins with', () => {
+    expect(checkJoin({ receiveKey: KEY })).toBeNull()
+    expect(checkJoin({ receiveKey: 'x' })).toContain('receiveKey')
+    expect(checkJoin([])).not.toBeNull()
   })
 })
 

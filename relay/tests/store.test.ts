@@ -28,7 +28,18 @@ afterEach(async () => {
 
 /** A relay file, as text: everything empty unless `fields` says otherwise. */
 const fileOf = (fields: Record<string, unknown>): string =>
-  JSON.stringify({ version: 1, device: null, viewers: {}, ended: {}, ...fields })
+  JSON.stringify({
+    version: 1,
+    device: null,
+    deviceReceiveKey: null,
+    viewers: {},
+    ended: {},
+    tokens: {},
+    pairings: {},
+    // A device's two keys come together, so a file naming one names both.
+    ...(typeof fields.device === 'string' ? { deviceReceiveKey: receiveKey() } : {}),
+    ...fields,
+  })
 
 /** A relay file holding Ann as a viewer, her entry changed by `entry`. */
 const withAnn = (entry: Record<string, unknown>, fields: Record<string, unknown> = {}): string =>
@@ -50,7 +61,7 @@ const waiting = (stream: number) => ({ stream, sealed: sealed(`stream ${stream}`
 
 async function enrolled() {
   const store = createRelayStore(path)
-  await store.enrolDevice(device, T0)
+  await store.enrolDevice(device, receiveKey(), T0)
   await store.enrolViewer(ann, receiveKey(), T0)
   return store
 }
@@ -122,7 +133,15 @@ describe('the file', () => {
     const store = await enrolled()
     await store.post([{ viewer: ann, stream: 1, sealed: sealed('one') }], T0)
     const file = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
-    expect(Object.keys(file).sort()).toEqual(['device', 'ended', 'version', 'viewers'])
+    expect(Object.keys(file).sort()).toEqual([
+      'device',
+      'deviceReceiveKey',
+      'ended',
+      'pairings',
+      'tokens',
+      'version',
+      'viewers',
+    ])
   })
 
   it('remembers an ended viewer across a restart', async () => {
@@ -156,6 +175,14 @@ describe('the file', () => {
     ['waiting streams out of order', withAnn({ waiting: [waiting(2), waiting(1)] })],
     ['sealed bytes not in base64url', withAnn({ waiting: [{ ...waiting(1), sealed: 'a+b' }] })],
     ['an ended key that is not canonical', fileOf({ ended: { [`${ann.slice(0, -1)}B`]: 0 } })],
+    // What letting someone in leaves for a while (KV-39).
+    ['a device with one of its two keys', fileOf({ device: ann, deviceReceiveKey: null })],
+    ['a token kept as itself, not its hash', fileOf({ tokens: { [sealed('token')]: 0 } })],
+    ['a pairing id not in base32', fileOf({ pairings: { 'abc': { expiresAt: 0, viewer: null } } })],
+    [
+      'a pairing joined by half a viewer',
+      fileOf({ pairings: { ABCDEFGHJK: { expiresAt: 0, viewer: { key: ann } } } }),
+    ],
   ])('refuses a file with %s, and repairs nothing', async (_what, text) => {
     await writeFile(path, text, 'utf8')
     await expect(createRelayStore(path).roleOf(ann)).rejects.toBeInstanceOf(
@@ -190,11 +217,20 @@ describe('the file', () => {
 
   it('refuses to enrol a key under both roles (review of #216)', async () => {
     const store = await enrolled()
-    await expect(store.enrolDevice(ann, T0)).rejects.toThrow(/already/)
+    await expect(store.enrolDevice(ann, receiveKey(), T0)).rejects.toThrow(/already/)
     await expect(store.enrolViewer(device, receiveKey(), T0)).rejects.toThrow(/already/)
     await store.revoke(ann, T0)
-    await expect(store.enrolDevice(ann, T0)).rejects.toThrow(/already/)
+    await expect(store.enrolDevice(ann, receiveKey(), T0)).rejects.toThrow(/already/)
     expect(await store.roleOf(ann)).toBe('ended')
+  })
+
+  it('lets nobody join a pairing while no device is enrolled to give them keys', async () => {
+    // Unreachable over HTTP, where only an enrolled device opens one; held here for a
+    // file that says otherwise.
+    const store = createRelayStore(path)
+    const { pairing } = await store.openPairing(T0)
+    const keys = { key: ann, receiveKey: receiveKey() }
+    expect(await store.join(pairing, keys, T0)).toEqual({ kind: 'unknown' })
   })
 
   it('keeps the state it had when a write fails', async () => {

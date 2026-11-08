@@ -251,8 +251,12 @@ relay/                   `@kinvue/relay`: the household's relay (KV-39), on Node
                          is sent to it.
   server.ts              the routes: envelopes in from the check-in device, out to the
                          viewer they were sealed to; acknowledgements; when each viewer
-                         fetched; a viewer's sharing ended
-  store.ts               what it holds, in one file: keys, sealed envelopes, fetch times
+                         fetched; a viewer's sharing ended. Who gets in: the device by
+                         the household's one-time token, a viewer by a pairing the
+                         device opened and confirmed. Failed attempts limited per
+                         address; logs with no key, id or body
+  store.ts               what it holds, in one file: keys, sealed envelopes, fetch times,
+                         and briefly a token's hash or an open pairing
   keys.ts                checking a request's Ed25519 signature, with node:crypto
   tests/                 over real HTTP, with real signatures
 
