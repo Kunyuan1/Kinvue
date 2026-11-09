@@ -2,17 +2,26 @@ import { randomBytes } from 'node:crypto'
 import { describe, expect, it } from 'vitest'
 import {
   checkAck,
+  checkEnrol,
+  checkJoin,
   checkPostEnvelopes,
   DELIVERY_RETENTION_MS,
   ENDED,
+  ENROL_TOKEN_TTL_MS,
   ENVELOPE_RETENTION_MS,
   isKey,
   isNonce,
+  isPairingId,
   isSignature,
   MAX_BODY_BYTES,
   MAX_ENVELOPES_PER_POST,
+  MAX_POST_BYTES_AT_MIN_UPLINK,
   MAX_SEALED_CHARS,
+  MAX_WAITING_PER_VIEWER,
+  MIN_UPLINK_BITS_PER_SECOND,
+  PAIRING_TTL_MS,
   requestBytes,
+  REQUEST_TIMEOUT_MS,
   REQUEST_WINDOW_MS,
 } from '@kinvue/core/sync/protocol'
 
@@ -146,6 +155,66 @@ describe('the limits on a post (review of #216)', () => {
     const length = MAX_ENVELOPES_PER_POST + 1
     const tooMany = { envelopes: Array.from({ length }, () => envelope) }
     expect(checkPostEnvelopes(tooMany)).toBe(`envelopes: more than ${MAX_ENVELOPES_PER_POST}`)
+  })
+})
+
+describe('what one mailbox may hold (review of #218)', () => {
+  it('is stated in bytes as well as envelopes: 16 MiB', () => {
+    // The figure the ceiling's comment gives: the two limits together, 16 MiB a viewer.
+    expect(MAX_WAITING_PER_VIEWER * MAX_SEALED_CHARS).toBe(16 * 1024 * 1024)
+  })
+})
+
+describe('the time a request may take (review of #218)', () => {
+  it('keeps a request to a minute, for the routes strangers can reach', () => {
+    expect(REQUEST_TIMEOUT_MS).toBe(60 * 1000)
+  })
+
+  it('names the post a slow line can send inside it, with room to spare', () => {
+    const ms = (MAX_POST_BYTES_AT_MIN_UPLINK * 8 * 1000) / MIN_UPLINK_BITS_PER_SECOND
+    expect(ms).toBeLessThan(REQUEST_TIMEOUT_MS)
+    expect(MAX_POST_BYTES_AT_MIN_UPLINK).toBeLessThan(MAX_BODY_BYTES)
+  })
+
+  it('still lets a slow line send a catch-up post of ordinary check-ins whole', () => {
+    // 64 envelopes of 8 KB each: a sealed record is a few KB, the pain note included.
+    const ordinary = MAX_ENVELOPES_PER_POST * (8 * 1024 + 128)
+    expect(ordinary).toBeLessThan(MAX_POST_BYTES_AT_MIN_UPLINK)
+  })
+
+  it('names a slow line, not a fast one', () => {
+    expect(MIN_UPLINK_BITS_PER_SECOND).toBeLessThanOrEqual(512 * 1000)
+  })
+})
+
+describe('letting someone in (KV-39)', () => {
+  it('keeps a token 15 minutes and a pairing 10', () => {
+    expect(ENROL_TOKEN_TTL_MS).toBe(15 * 60 * 1000)
+    expect(PAIRING_TTL_MS).toBe(10 * 60 * 1000)
+  })
+
+  it('reads a pairing id as ten characters of Crockford base32', () => {
+    expect(isPairingId('0123456789')).toBe(true)
+    expect(isPairingId('ABCDEFGHJK')).toBe(true)
+    // I, L, O and U are left out, so a code read aloud is not misheard.
+    for (const letter of ['I', 'L', 'O', 'U']) {
+      expect(isPairingId(`ABCDEFGHJ${letter}`)).toBe(false)
+    }
+    expect(isPairingId('abcdefghjk')).toBe(false)
+    expect(isPairingId('ABCDEFGHJ')).toBe(false)
+  })
+
+  it('checks what the device enrols with', () => {
+    expect(checkEnrol({ token: 'A'.repeat(22), receiveKey: KEY })).toBeNull()
+    expect(checkEnrol({ token: 'short', receiveKey: KEY })).toContain('token')
+    expect(checkEnrol({ token: 'A'.repeat(22), receiveKey: 'x' })).toContain('receiveKey')
+    expect(checkEnrol(null)).not.toBeNull()
+  })
+
+  it('checks what a viewer joins with', () => {
+    expect(checkJoin({ receiveKey: KEY })).toBeNull()
+    expect(checkJoin({ receiveKey: 'x' })).toContain('receiveKey')
+    expect(checkJoin([])).not.toBeNull()
   })
 })
 

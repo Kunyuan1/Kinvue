@@ -56,7 +56,72 @@ export const ROUTES = {
   deliveries: '/v1/deliveries',
   /** DELETE by the check-in device, followed by the viewer's key: sharing ends. */
   viewers: '/v1/viewers/',
+  /** POST by the check-in device, once, with the household's one-time token (KV-39). */
+  enrol: '/v1/enrol',
+  /**
+   * POST by the check-in device: a pairing opens. Followed by its id: GET (who joined) and
+   * DELETE (closed) by the device; `/viewer` POST by the viewer joining; `/confirm` POST by
+   * the device, once the code matched on both screens.
+   */
+  pairings: '/v1/pairings',
 } as const
+
+/**
+ * **How anyone gets in: no open sign-up** (KV-35).
+ *
+ * - **The check-in device** redeems a one-time token that the household — the relay's
+ *   operator — makes on the relay itself. Anyone who can make one has the relay's shell,
+ *   and so has everything else already. Once a device is enrolled, no token enrols
+ *   another: replacing it is the recovery card's business (#45).
+ * - **A viewer** is enrolled only by a pairing the check-in device opened, joined by the
+ *   viewer and then confirmed at the device (KV-31). The relay passes the keys between
+ *   them; the code both screens show is derived from all four on the devices (#40), so a
+ *   relay that swapped a key is caught there, not here.
+ *
+ * The two routes a key not yet enrolled may use are these. Both are signed by that key,
+ * which proves it is held, and both are one-shot — a token redeems once, a pairing takes
+ * one viewer — so replaying either does nothing more.
+ */
+
+/** How long a household's one-time enrolment token can be redeemed. */
+export const ENROL_TOKEN_TTL_MS = 15 * MINUTE_MS
+
+/** How long a pairing stays open: long enough to compare a code over the phone. */
+export const PAIRING_TTL_MS = 10 * MINUTE_MS
+
+/** POST /v1/enrol, signed by the device's signing key. */
+export interface Enrol {
+  token: string
+  /** The device's X25519 key, which viewers' pairing code is derived from too. */
+  receiveKey: string
+}
+
+/** The two public keys a device or a viewer is known by. */
+export interface Keys {
+  key: string
+  receiveKey: string
+}
+
+/** POST /v1/pairings: the pairing the device shows, and until when. */
+export interface Opened {
+  pairing: string
+  expiresAt: number
+}
+
+/** POST /v1/pairings/:id/viewer, signed by the joining viewer's signing key. */
+export interface Join {
+  receiveKey: string
+}
+
+/** What the joining viewer is given: the device's keys, for its half of the code. */
+export interface Joined {
+  device: Keys
+}
+
+/** GET /v1/pairings/:id: who has joined, for the device's half of the code. */
+export interface Pairing extends Opened {
+  viewer: Keys | null
+}
 
 /** What a request signs. `bodyHash` is the SHA-256 of the body's bytes, in hex. */
 export interface SignedRequest {
@@ -180,11 +245,47 @@ export const MAX_SEALED_CHARS = 64 * 1024
 /** The most envelopes in one POST /v1/envelopes. */
 export const MAX_ENVELOPES_PER_POST = 64
 
+/**
+ * The most envelopes waiting for one viewer. Fourteen days' retention of a few check-ins a
+ * day, for each person a viewer follows, is a few dozen to a hundred or so; this is room
+ * for that, and a ceiling on what one mailbox can make the relay hold (KV-39).
+ */
+export const MAX_WAITING_PER_VIEWER = 256
+// What that ceiling costs, in bytes (reviews of #218): with `MAX_SEALED_CHARS` it lets at
+// most 16 MiB of sealed base64url wait for one viewer. The relay keeps its whole state in
+// one file, cloned and rewritten on each change, so this is also the worst a change has to
+// carry for each viewer. At the expected size — a few dozen envelopes of a few KB — that is
+// a few hundred KB; the ceiling is what keeps the rest from becoming the relay's problem.
+
+
 /** What one envelope's JSON adds around its sealed bytes: its key, stream and quoting. */
 const ENVELOPE_JSON_CHARS = 128
 
 /** The largest body the relay reads: the largest post the two limits above allow. */
 export const MAX_BODY_BYTES = MAX_ENVELOPES_PER_POST * (MAX_SEALED_CHARS + ENVELOPE_JSON_CHARS) + 64
+
+/**
+ * How long the relay gives one request to arrive, whole. A minute: every connection that
+ * gets its headers in may hold the relay this long, and the routes strangers can reach are
+ * among them, so this is kept short (second review of #218).
+ */
+export const REQUEST_TIMEOUT_MS = 60 * 1000
+
+/** The slowest uplink the protocol plans for, in bits a second: a poor rural upstream. */
+export const MIN_UPLINK_BITS_PER_SECOND = 256 * 1000
+
+/**
+ * **The largest post a device sends on the slowest uplink**, so it arrives inside the
+ * timeout with a quarter of it to spare. The trade was made this way round, not by
+ * stretching the timeout until the largest post fit (reviews of #218):
+ * `MAX_ENVELOPES_PER_POST` is a ceiling a device may stay under, not a size it must send,
+ * and the catch-up after an outage is already a loop of posts. At a few KB an envelope a
+ * post of 64 is well inside this; only envelopes near `MAX_SEALED_CHARS` make a device on
+ * such a line send fewer at a time.
+ */
+export const MAX_POST_BYTES_AT_MIN_UPLINK = Math.floor(
+  (MIN_UPLINK_BITS_PER_SECOND * REQUEST_TIMEOUT_MS * 0.75) / (8 * 1000),
+)
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/
 
@@ -245,6 +346,29 @@ export function checkPostEnvelopes(value: unknown): string | null {
     }
     if (!isSealed(sealed)) return `${at}.sealed: not base64url`
   }
+  return null
+}
+
+/** A pairing's id: ten characters of Crockford's base32, 50 random bits, easy to read out. */
+export const isPairingId = (value: unknown): value is string =>
+  typeof value === 'string' && /^[0-9A-HJKMNP-TV-Z]{10}$/.test(value)
+
+/** A one-time enrolment token: 16 random bytes, base64url. */
+export const isToken = (value: unknown): value is string =>
+  typeof value === 'string' && value.length === 22 && BASE64URL.test(value)
+
+/** Why `value` is not a POST /v1/enrol body, or null when it is. */
+export function checkEnrol(value: unknown): string | null {
+  if (!isObject(value)) return 'enrol: not an object'
+  if (!isToken(value.token)) return 'token: not a token'
+  if (!isKey(value.receiveKey)) return 'receiveKey: not a key'
+  return null
+}
+
+/** Why `value` is not a POST /v1/pairings/:id/viewer body, or null when it is. */
+export function checkJoin(value: unknown): string | null {
+  if (!isObject(value)) return 'join: not an object'
+  if (!isKey(value.receiveKey)) return 'receiveKey: not a key'
   return null
 }
 

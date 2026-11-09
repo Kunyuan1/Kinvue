@@ -1,17 +1,30 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import {
+  createServer,
+  STATUS_CODES,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from 'node:http'
 import {
   checkAck,
+  checkEnrol,
+  checkJoin,
   checkPostEnvelopes,
   ENDED,
   HEADERS,
   isKey,
   isNonce,
+  isPairingId,
   isSignature,
   MAX_BODY_BYTES,
   requestBytes,
+  REQUEST_TIMEOUT_MS,
   REQUEST_WINDOW_MS,
   ROUTES,
   type Ack,
+  type Enrol,
+  type Join,
+  type Joined,
   type Mailbox,
   type PostEnvelopes,
   type Posted,
@@ -44,14 +57,100 @@ import type { RelayStore, Role } from './store'
  * **A viewer whose sharing ended is told so, and only so** (KV-31), on any route, once its
  * signature checks out. That answer is what makes their app delete its copy.
  *
+ * **Two routes take a key nobody enrolled yet**: the check-in device redeeming the
+ * household's token, and a viewer joining a pairing (KV-39; the protocol says why each is
+ * safe to open). Both are signed by that key, and both are one-shot, so neither spends a
+ * nonce. They are the ones a stranger can reach, so failures there are counted per address,
+ * and an address that fails `MAX_FAILED_ATTEMPTS` times inside `ATTEMPT_WINDOW_MS` is
+ * refused until the window passes. Behind a reverse proxy every request has the proxy's
+ * address, and the limit is then one for everyone: fail-closed, which is the right way
+ * round for the routes that let someone in.
+ *
+ * **What it logs** (`log`): each request's method, its route with any id or key left out,
+ * its status, and how long it took. Never a body, a key, a header or an address — a log is
+ * where health data leaks from first (#46), and these hold nothing that needs one.
+ *
  * Errors say what was wrong with the request in a few words, and never repeat its body.
  */
 
+/** Failed attempts at the two open routes one address may make inside the window. */
+export const MAX_FAILED_ATTEMPTS = 10
+
+/** How long a failed attempt at an open route is counted against its address. */
+export const ATTEMPT_WINDOW_MS = 10 * 60 * 1000
+
+/**
+ * How often the attempt ledger forgets addresses whose failures have aged out. Its own, so
+ * how often nonces are swept never changes it (second review of #218).
+ */
+export const ATTEMPT_SWEEP_MS = 30 * 1000
+
+/**
+ * How long a request may take to send its headers. The whole request's limit is the
+ * protocol's `REQUEST_TIMEOUT_MS`, stated against the largest body it allows.
+ */
+export const HEADERS_TIMEOUT_MS = 10 * 1000
+
+/** One line of the relay's log: nothing in it about who, or what was sent. */
+export interface LogEntry {
+  method: string
+  /** The route as written in `ROUTES`, with ids and keys as `:pairing` and `:viewer`. */
+  route: string
+  status: number
+  ms: number
+}
 
 export interface RelayOptions {
   store: RelayStore
   /** The relay's clock, in milliseconds. */
   now?: () => number
+  /** Where each request's `LogEntry` goes. Nowhere, unless given. */
+  log?: (entry: LogEntry) => void
+  /** How long a request may take to send its headers: `HEADERS_TIMEOUT_MS`, unless given. */
+  headersTimeoutMs?: number
+}
+
+/** A path as its route, for the log: what it names left out. */
+export function routeOf(path: string): string {
+  if (path.startsWith(ROUTES.viewers)) return `${ROUTES.viewers}:viewer`
+  const pairing = /^\/v1\/pairings\/[^/]+(\/viewer|\/confirm)?$/.exec(path)
+  if (pairing !== null) return `${ROUTES.pairings}/:pairing${pairing[1] ?? ''}`
+  const known: string[] = Object.values(ROUTES)
+  return known.includes(path) ? path : 'unknown'
+}
+
+/**
+ * Failed attempts at the open routes, by address, inside the window. Strangers reach it by
+ * design, from as many addresses as they like, so it is swept of every address whose
+ * failures have all aged out — every `ATTEMPT_SWEEP_MS`, as the nonce ledger is — and not
+ * only when that address comes back (review of #218). Exported for its test.
+ */
+export function attemptLedger() {
+  const failures = new Map<string, number[]>()
+  let sweptAt = -Infinity
+  const sweep = (now: number): void => {
+    if (now - sweptAt < ATTEMPT_SWEEP_MS) return
+    sweptAt = now
+    for (const [address, times] of failures) {
+      if (times.every((t) => now - t >= ATTEMPT_WINDOW_MS)) failures.delete(address)
+    }
+  }
+  const recent = (address: string, now: number): number[] => {
+    sweep(now)
+    const kept = (failures.get(address) ?? []).filter((t) => now - t < ATTEMPT_WINDOW_MS)
+    if (kept.length === 0) failures.delete(address)
+    else failures.set(address, kept)
+    return kept
+  }
+  return {
+    allowed: (address: string, now: number): boolean =>
+      recent(address, now).length < MAX_FAILED_ATTEMPTS,
+    failed: (address: string, now: number): void => {
+      failures.set(address, [...recent(address, now), now])
+    },
+    /** How many addresses it holds. */
+    size: (): number => failures.size,
+  }
 }
 
 /** A request's signing headers, read and checked for shape and time. */
@@ -63,6 +162,9 @@ interface Claim {
   /** The relay's clock when the request arrived. */
   clock: number
 }
+
+/** The one refusal before a key is proven that cost the relay work: counted at open routes. */
+const BAD_SIGNATURE = 'bad signature'
 
 class Refusal extends Error {
   constructor(
@@ -143,8 +245,49 @@ function nonceLedger() {
   }
 }
 
-export function createRelayServer({ store, now = Date.now }: RelayOptions): Server {
+/**
+ * How often Node checks its connections against the timeouts. Node only notices a timeout
+ * when it checks, and by default it checks every 30 seconds — so a 10-second header limit
+ * cut at up to 30, and every timeout here was late by as much (second review of #218).
+ */
+export const CONNECTIONS_CHECK_MS = 1000
+
+/**
+ * The most connections held at once. A household's relay has a device and a few viewers;
+ * this bounds what slow connections can tie up while each runs out its minute (second
+ * review of #218).
+ */
+export const MAX_CONNECTIONS = 64
+
+/**
+ * How often retention runs whether or not anything is written (second review of #218).
+ * Reads write nothing, so a relay gone quiet — nobody checking in, nobody fetching — would
+ * otherwise keep envelopes past 14 days and fetch times past 30, for as long as it stayed
+ * quiet. An hour late is the most retention is now.
+ */
+export const EXPIRE_EVERY_MS = 60 * 60 * 1000
+
+/**
+ * Runs `store.expire` every `every` milliseconds until the returned function is called. The
+ * timer does not keep the process alive, and a failed run is left for the next: the file
+ * holds what it held, and nothing is half written.
+ */
+export function expireEvery(store: RelayStore, every: number, now: () => number): () => void {
+  const timer = setInterval(() => {
+    store.expire(now()).catch(() => undefined)
+  }, every)
+  timer.unref()
+  return () => clearInterval(timer)
+}
+
+export function createRelayServer({
+  store,
+  now = Date.now,
+  log = () => {},
+  headersTimeoutMs = HEADERS_TIMEOUT_MS,
+}: RelayOptions): Server {
   const fresh = nonceLedger()
+  const attempts = attemptLedger()
 
   /**
    * What a request says about who sent it and when, checked before a byte of its body is
@@ -170,8 +313,11 @@ export function createRelayServer({ store, now = Date.now }: RelayOptions): Serv
     return { key, at, nonce, signature, clock }
   }
 
-  /** Who signed this request, checked against its body, or a refusal. */
-  async function signer(req: IncomingMessage, claimed: Claim, body: Buffer) {
+  /**
+   * Who signed this request, checked against its body, or a refusal. `open` is for the two
+   * routes a key not yet enrolled may use: there its role is null, and it spends no nonce.
+   */
+  async function signer(req: IncomingMessage, claimed: Claim, body: Buffer, open: boolean) {
     const { key, at, nonce, signature, clock } = claimed
     const bytes = requestBytes({
       method: req.method ?? '',
@@ -180,9 +326,12 @@ export function createRelayServer({ store, now = Date.now }: RelayOptions): Serv
       nonce,
       bodyHash: hashOf(body),
     })
-    if (!signedBy(key, bytes, signature)) throw new Refusal(401, 'bad signature')
+    if (!signedBy(key, bytes, signature)) throw new Refusal(401, BAD_SIGNATURE)
     const role = await store.roleOf(key)
-    if (role === null) throw new Refusal(401, 'not enrolled')
+    if (role === null) {
+      if (open) return { key, role }
+      throw new Refusal(401, 'not enrolled')
+    }
     // Last: after the signature, so a forged request cannot spend a nonce someone else will
     // send, and after the role, so a key nobody enrolled spends none at all — the ledger
     // grows only with what enrolled keys send (review of #216).
@@ -196,15 +345,70 @@ export function createRelayServer({ store, now = Date.now }: RelayOptions): Serv
   }
 
   async function route(req: IncomingMessage, res: ServerResponse): Promise<void> {
-    const claimed = claim(req)
-    const body = await readBody(req)
-    const { key, role } = await signer(req, claimed, body)
+    const path = (req.url ?? '').split('?')[0] ?? ''
+    const joining = /^\/v1\/pairings\/([^/]+)\/viewer$/.exec(path)?.[1]
+    const open = req.method === 'POST' && (path === ROUTES.enrol || joining !== undefined)
+    const address = req.socket.remoteAddress ?? 'unknown'
+    if (open && !attempts.allowed(address, now())) throw new Refusal(429, 'too many attempts')
+    /**
+     * A refusal at an open route, counted against its address. What counts (reviews of
+     * #218): a bad signature, which cost a body read and a verification to find; and every
+     * guess at a token or a pairing. Not what is refused on headers alone — unsigned, or
+     * outside the time window — which costs nothing, and the second of which is a device
+     * whose clock has drifted, better told so every time than locked out. Not what a request
+     * the key really signed got wrong in its body, or a conflict it could not have known
+     * about: that is a client with a bug, or a household that forgot a device was enrolled,
+     * and locking them out helps no one.
+     */
+    const failed = (status: number, reason: string): Refusal => {
+      attempts.failed(address, now())
+      return new Refusal(status, reason)
+    }
+    let proven: { key: string; role: Role | null; body: Buffer }
+    try {
+      const claimed = claim(req)
+      const body = await readBody(req)
+      proven = { ...(await signer(req, claimed, body, open)), body }
+    } catch (err) {
+      if (open && err instanceof Refusal && err.reason === BAD_SIGNATURE) {
+        throw failed(err.status, err.reason)
+      }
+      throw err
+    }
+    const { key, role, body } = proven
+    const at = now()
+
+    if (path === ROUTES.enrol && req.method === 'POST') {
+      const value = parseJson(body)
+      const problem = checkEnrol(value)
+      if (problem !== null) throw new Refusal(400, problem)
+      const { token, receiveKey } = value as Enrol
+      const result = await store.redeem(token, { key, receiveKey }, at)
+      if (result === 'invalid') throw failed(401, 'not a token here')
+      if (result === 'device-exists') throw new Refusal(409, 'a check-in device is enrolled')
+      if (result === 'key-in-use') throw new Refusal(409, 'that key is in use here')
+      send(res, 204)
+      return
+    }
+    if (joining !== undefined && req.method === 'POST') {
+      // Before the ended check: a viewer whose sharing ended may be approved again (KV-31).
+      if (!isPairingId(joining)) throw failed(404, 'no such pairing')
+      const value = parseJson(body)
+      const problem = checkJoin(value)
+      if (problem !== null) throw new Refusal(400, problem)
+      const result = await store.join(joining, { key, receiveKey: (value as Join).receiveKey }, at)
+      if (result.kind === 'unknown') throw failed(404, 'no such pairing')
+      if (result.kind === 'taken') throw failed(409, 'someone joined it already')
+      if (result.kind === 'key-in-use') throw new Refusal(409, 'that key is in use here')
+      const joined: Joined = { device: result.device }
+      send(res, 200, joined)
+      return
+    }
+    if (role === null) throw new Refusal(401, 'not enrolled')
     if (role === 'ended') {
       send(res, 410, ENDED)
       return
     }
-    const path = (req.url ?? '').split('?')[0] ?? ''
-    const at = now()
 
     if (path === ROUTES.envelopes && req.method === 'POST') {
       only(role, 'device')
@@ -213,6 +417,7 @@ export function createRelayServer({ store, now = Date.now }: RelayOptions): Serv
       if (problem !== null) throw new Refusal(400, problem)
       const result = await store.post((value as PostEnvelopes).envelopes, at)
       if (result.kind === 'unknown-viewer') throw new Refusal(422, 'not a viewer here')
+      if (result.kind === 'full') throw new Refusal(507, 'a mailbox is full')
       const { added, replaced, held, acknowledged } = result
       const posted: Posted = { added, replaced, held, acknowledged }
       send(res, 200, posted)
@@ -239,6 +444,36 @@ export function createRelayServer({ store, now = Date.now }: RelayOptions): Serv
       send(res, 200, await store.deliveries(at))
       return
     }
+    if (path === ROUTES.pairings && req.method === 'POST') {
+      only(role, 'device')
+      send(res, 201, await store.openPairing(at))
+      return
+    }
+    const pairing = /^\/v1\/pairings\/([^/]+)(\/confirm)?$/.exec(path)
+    if (pairing !== null) {
+      only(role, 'device')
+      const [, id = '', confirming] = pairing
+      if (!isPairingId(id)) throw new Refusal(404, 'no such pairing')
+      if (confirming !== undefined && req.method === 'POST') {
+        const result = await store.confirm(id, at)
+        if (result === 'unknown') throw new Refusal(404, 'no such pairing')
+        if (result === 'nobody-joined') throw new Refusal(409, 'nobody has joined it')
+        if (result === 'key-in-use') throw new Refusal(409, 'that key is in use here')
+        send(res, 204)
+        return
+      }
+      if (confirming === undefined && req.method === 'GET') {
+        const found = await store.pairing(id, at)
+        if (found === null) throw new Refusal(404, 'no such pairing')
+        send(res, 200, found)
+        return
+      }
+      if (confirming === undefined && req.method === 'DELETE') {
+        if (!(await store.closePairing(id, at))) throw new Refusal(404, 'no such pairing')
+        send(res, 204)
+        return
+      }
+    }
     if (path.startsWith(ROUTES.viewers) && req.method === 'DELETE') {
       only(role, 'device')
       const viewer = path.slice(ROUTES.viewers.length)
@@ -250,7 +485,29 @@ export function createRelayServer({ store, now = Date.now }: RelayOptions): Serv
     throw new Refusal(404, 'no such route')
   }
 
-  return createServer((req, res) => {
+  /**
+   * The log, written so it cannot stop the relay (review of #218): this runs in an event
+   * handler, where a throw is an uncaught exception, and a full disk or a closed pipe
+   * behind the log is no reason to stop carrying a household's check-ins.
+   */
+  const record = (entry: LogEntry): void => {
+    try {
+      log(entry)
+    } catch {
+      // Dropped: a line that cannot be written is the one thing lost.
+    }
+  }
+
+  /** When each connection opened, so a request Node cuts is logged with how long it held one. */
+  const opened = new WeakMap<object, number>()
+
+  const server = createServer({ connectionsCheckingInterval: CONNECTIONS_CHECK_MS }, (req, res) => {
+    const started = now()
+    res.on('finish', () => {
+      const path = (req.url ?? '').split('?')[0] ?? ''
+      const entry = { method: req.method ?? '', route: routeOf(path), status: res.statusCode }
+      record({ ...entry, ms: now() - started })
+    })
     route(req, res).catch((err: unknown) => {
       if (err instanceof Refusal) {
         if (!res.headersSent) send(res, err.status, { error: err.reason })
@@ -259,4 +516,33 @@ export function createRelayServer({ store, now = Date.now }: RelayOptions): Serv
       if (!res.headersSent) send(res, 500, { error: 'the relay failed' })
     })
   })
+  server.headersTimeout = headersTimeoutMs
+  server.requestTimeout = REQUEST_TIMEOUT_MS
+  server.maxConnections = MAX_CONNECTIONS
+  const stopExpiring = expireEvery(store, EXPIRE_EVERY_MS, now)
+  server.on('close', stopExpiring)
+  server.on('connection', (socket) => opened.set(socket, now()))
+  /**
+   * What Node answers before a request reaches `route` — a request cut by the timeouts
+   * above (408), headers too large (431), or one it could not parse (400) — written as
+   * Node would, and logged
+   * (review of #218). Without this, the slow requests the timeouts are there to cut would
+   * leave no trace, and a flood of them would read as an idle relay.
+   */
+  server.on('clientError', (err: NodeJS.ErrnoException, socket) => {
+    if (err.code === 'ECONNRESET' || !socket.writable) {
+      socket.destroy()
+      return
+    }
+    const status =
+      err.code === 'ERR_HTTP_REQUEST_TIMEOUT'
+        ? 408
+        : err.code === 'HPE_HEADER_OVERFLOW'
+          ? 431
+          : 400
+    const head = `HTTP/1.1 ${status} ${STATUS_CODES[status]}`
+    socket.end(`${head}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
+    record({ method: '', route: 'unknown', status, ms: now() - (opened.get(socket) ?? now()) })
+  })
+  return server
 }

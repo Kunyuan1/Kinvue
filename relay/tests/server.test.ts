@@ -27,7 +27,7 @@ beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'kinvue-relay-'))
   store = createRelayStore(join(dir, 'relay.json'))
   clock = Date.now()
-  await store.enrolDevice(device.key, clock)
+  await store.enrolDevice(device.key, receiveKey(), clock)
   await store.enrolViewer(ann.key, receiveKey(), clock)
   await store.enrolViewer(bill.key, receiveKey(), clock)
   server = createRelayServer({ store, now: () => clock })
