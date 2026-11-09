@@ -2009,6 +2009,35 @@ ever ruled out.
 - #36's T4 remains in part: the relay still sees when envelopes arrive and who is paired
   with whom; sending on a schedule rather than at capture time is noted, not required.
 
+**Built: the relay (KV-39, PRs #216, #218 and the third).** The `relay/` workspace, run
+with `npm run relay`; the protocol it speaks is `core/sync/protocol.ts`, so the desktop
+app, the relay and the caregiver client share one definition. What it does, and what
+holds it:
+
+- **Every request is signed** with the Ed25519 key it names, over its method, path, time,
+  nonce and body; refused outside five minutes or with a nonce seen inside them. The relay
+  checks the signature with `node:crypto` and never seals, opens or signs anything.
+- **Who gets in, with no open sign-up** (KV-35). The check-in device by a one-time token
+  the relay prints at start; a viewer only by a pairing the device opens, the viewer
+  joins, and the device confirms once the code from all four keys matched (#40's screen).
+  Every key the relay knows is a different key, and an ended viewer's is no one else's.
+- **Store and forward, per viewer.** A viewer reaches only its own mailbox; acks are
+  contiguous, and the relay says where each viewer's stream stands, so the device resumes
+  from there (the resume contract, in the protocol). A viewer whose sharing ended is told
+  only that, on every route, after any gap.
+- **Retention as KV-33 sets it** — envelopes 14 days, fetch times 30 — dropped on every
+  write and every hour regardless. **Enforced by the relay, which is T3's and T4's
+  adversary**: it is the operator's policy, and an operator who wanted more could change
+  it. What holds against that operator is what the file holds: keys, times and sealed
+  bytes.
+- **What any server on the internet needs** (#39's line): limits on bodies, envelopes per
+  post and per mailbox, connections and time; failed guesses at the open routes counted
+  per address; HTTPS required off loopback; a log of method, route, status and time only.
+- **Not yet:** anything connecting to it. The desktop app sends nothing until #40 and #41,
+  and `README.md`'s privacy section changes in the PR that first makes it send. Operating
+  it — backups, monitoring, breach response, ownership — is #46, and comes before a real
+  household uses it.
+
 ### The caregiver's client (KV-34)
 
 Decided 2026-10-01, revised in review of #178. **The caregiver's client is the dashboard's
@@ -2936,8 +2965,8 @@ to check a card against. Integrity is protected as deliberately as confidentiali
 |---|---|---|---|---|---|
 | T1 | A viewer uses legitimate access to watch or control the person | **A remote viewer who is the danger** | What #31 keeps as defence: the person sees who looks and how often, from a record the viewer cannot alter (what the relay delivered, not the viewer's own report); removal is immediate and silent; viewers cannot see each other. Coerced consent cannot be detected — a limit. Presence at the device is **not** a defence here: see T2. | #31, #45 | Decided, until T2 is closed |
 | T2 | Someone at the check-in device acts with its authority: approves their own phone, revokes the viewer who might notice, and — removal being silent — leaves that viewer told only that sharing ended | **A household member who is the danger**, at a shared computer | Approval and revocation need only presence at the device, so until there is a lock on the sharing screen, separate from the check-in itself, the model assumes the device is the person's (#31's first limit). The recovery card's mass revocation needs no presence at all, which is why its use is delayed and announced (T14). | #40 | **Gap → #40** |
-| T3 | The relay's contents read in a breach, or by its operator | Outside attacker; the operator | End-to-end encryption: each envelope sealed per viewer, so the relay holds nothing it can read; the pairing code derived from all four public keys, so a key substituted at pairing is caught — without it the seal protects nothing (KV-33). Retention limits and operator access are policy, not controls, against this actor. No forward secrecy: envelopes archived now are readable by whoever later takes a viewer's key (T5). Encrypted, restore-tested backups; logs with no health data. | #33, #39, #40, #46 | Decided; #39, #40 to build, #46 to operate |
-| T4 | The relay infers behaviour from metadata it must hold even under end-to-end encryption: when check-ins arrive, who shares with whom, and **when each viewer fetched** — the access history #31 takes from it | The operator; whoever breaches it | Ciphertext kept until fetched, at most 14 days; delivery records for #31's 30-day access window only, then deleted; no analytics (KV-33). **These limits are enforced by the relay, which is this row's adversary**: an operator who kept more is undetectable from either device. Arrival timing and the pairing graph remain visible — a limit; sending on a schedule rather than at capture time is noted, not required. | #33, #39 | Decided as policy; a limit against the operator |
+| T3 | The relay's contents read in a breach, or by its operator | Outside attacker; the operator | End-to-end encryption: each envelope sealed per viewer, so the relay holds nothing it can read; the pairing code derived from all four public keys, so a key substituted at pairing is caught — without it the seal protects nothing (KV-33). Retention limits and operator access are policy, not controls, against this actor. No forward secrecy: envelopes archived now are readable by whoever later takes a viewer's key (T5). Encrypted, restore-tested backups; logs with no health data. | #33, #39, #40, #46 | Decided; the relay built (#39); #40 to build, #46 to operate |
+| T4 | The relay infers behaviour from metadata it must hold even under end-to-end encryption: when check-ins arrive, who shares with whom, and **when each viewer fetched** — the access history #31 takes from it | The operator; whoever breaches it | Ciphertext kept until fetched, at most 14 days; delivery records for #31's 30-day access window only, then deleted; no analytics (KV-33). **These limits are enforced by the relay, which is this row's adversary**: an operator who kept more is undetectable from either device. Arrival timing and the pairing graph remain visible — a limit; sending on a schedule rather than at capture time is noted, not required. | #33, #39 | Decided as policy, enforced by the relay (#39); a limit against the operator |
 | T5 | A caregiver's phone is lost or stolen with shared check-ins on it | Whoever finds it | The client opens only after the phone's own authentication — an app lock, its own plugin — and its keys are held in the phone's Keychain or Keystore (KV-34); the person can revoke that viewer from the check-in device (#45). A device offline after revocation keeps its copy until it connects — a limit. With no forward secrecy (KV-33), the phone's key also opens any envelopes an attacker archived from the relay. | #34, #42, #45, #179 | Decided; #42 to build; two limits stand |
 | T6 | The daily summary leaks on a lock screen, or through the push provider | Bystanders; Apple's or Google's push service | The push carries no health data, only "your summary is ready"; the content is fetched and composed on the device (#33). | #43 | **Gap → #43** |
 | T7 | Data on the check-in device itself: `sessions.json` is plain JSON, readable by anyone with that operating-system account, its backups (File History, Time Machine, a sync client), or malware running as it | Others on the computer; malware; a backup service | **Decided (KV-175):** the whole history encrypted with the operating system's key (`safeStorage`), so a copy, a backup or a sync copy read under another account or machine, and the residue a deletion leaves, are ciphertext; where the operating system holds no key (Linux `basic_text`) it stays plain and the dashboard says so. **Built** (KV-175), checked by backend on Linux, so `basic_text` is never called encrypted. **Not covered:** anyone signed in as the same user, malware running as them, and a same-account rollback of the file from a backup, which still brings deleted check-ins back; a separate account for the person is the boundary (README). | #175 | Done (KV-175), where the operating system holds a key. Anyone on the same login, malware, a same-account rollback, and a computer with no key store, remain limits |

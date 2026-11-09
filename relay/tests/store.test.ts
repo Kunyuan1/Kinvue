@@ -150,6 +150,17 @@ describe('a refused batch, while something expires (review of #216)', () => {
   })
 })
 
+describe('enrolment tokens (reviews of #219)', () => {
+  it('keeps one outstanding: a new token voids the last', async () => {
+    const store = createRelayStore(path)
+    const first = await store.issueToken(T0)
+    const second = await store.issueToken(T0)
+    const keys = { key: device, receiveKey: receiveKey() }
+    expect(await store.redeem(first, keys, T0)).toBe('invalid')
+    expect(await store.redeem(second, keys, T0)).toBe('enrolled')
+  })
+})
+
 describe('an edit that throws, while something expires (second review of #218)', () => {
   it('still writes the expiry', async () => {
     const store = createRelayStore(path)
