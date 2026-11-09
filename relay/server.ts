@@ -80,6 +80,12 @@ export const MAX_FAILED_ATTEMPTS = 10
 export const ATTEMPT_WINDOW_MS = 10 * 60 * 1000
 
 /**
+ * How often the attempt ledger forgets addresses whose failures have aged out. Its own, so
+ * how often nonces are swept never changes it (second review of #218).
+ */
+export const ATTEMPT_SWEEP_MS = 30 * 1000
+
+/**
  * How long a request may take to send its headers. The whole request's limit is the
  * protocol's `REQUEST_TIMEOUT_MS`, stated against the largest body it allows.
  */
@@ -100,6 +106,8 @@ export interface RelayOptions {
   now?: () => number
   /** Where each request's `LogEntry` goes. Nowhere, unless given. */
   log?: (entry: LogEntry) => void
+  /** How long a request may take to send its headers: `HEADERS_TIMEOUT_MS`, unless given. */
+  headersTimeoutMs?: number
 }
 
 /** A path as its route, for the log: what it names left out. */
@@ -114,14 +122,14 @@ export function routeOf(path: string): string {
 /**
  * Failed attempts at the open routes, by address, inside the window. Strangers reach it by
  * design, from as many addresses as they like, so it is swept of every address whose
- * failures have all aged out — every `NONCE_SWEEP_MS`, as the nonce ledger is — and not
+ * failures have all aged out — every `ATTEMPT_SWEEP_MS`, as the nonce ledger is — and not
  * only when that address comes back (review of #218). Exported for its test.
  */
 export function attemptLedger() {
   const failures = new Map<string, number[]>()
   let sweptAt = -Infinity
   const sweep = (now: number): void => {
-    if (now - sweptAt < NONCE_SWEEP_MS) return
+    if (now - sweptAt < ATTEMPT_SWEEP_MS) return
     sweptAt = now
     for (const [address, times] of failures) {
       if (times.every((t) => now - t >= ATTEMPT_WINDOW_MS)) failures.delete(address)
@@ -154,6 +162,9 @@ interface Claim {
   /** The relay's clock when the request arrived. */
   clock: number
 }
+
+/** The one refusal before a key is proven that cost the relay work: counted at open routes. */
+const BAD_SIGNATURE = 'bad signature'
 
 class Refusal extends Error {
   constructor(
@@ -234,7 +245,47 @@ function nonceLedger() {
   }
 }
 
-export function createRelayServer({ store, now = Date.now, log = () => {} }: RelayOptions): Server {
+/**
+ * How often Node checks its connections against the timeouts. Node only notices a timeout
+ * when it checks, and by default it checks every 30 seconds — so a 10-second header limit
+ * cut at up to 30, and every timeout here was late by as much (second review of #218).
+ */
+export const CONNECTIONS_CHECK_MS = 1000
+
+/**
+ * The most connections held at once. A household's relay has a device and a few viewers;
+ * this bounds what slow connections can tie up while each runs out its minute (second
+ * review of #218).
+ */
+export const MAX_CONNECTIONS = 64
+
+/**
+ * How often retention runs whether or not anything is written (second review of #218).
+ * Reads write nothing, so a relay gone quiet — nobody checking in, nobody fetching — would
+ * otherwise keep envelopes past 14 days and fetch times past 30, for as long as it stayed
+ * quiet. An hour late is the most retention is now.
+ */
+export const EXPIRE_EVERY_MS = 60 * 60 * 1000
+
+/**
+ * Runs `store.expire` every `every` milliseconds until the returned function is called. The
+ * timer does not keep the process alive, and a failed run is left for the next: the file
+ * holds what it held, and nothing is half written.
+ */
+export function expireEvery(store: RelayStore, every: number, now: () => number): () => void {
+  const timer = setInterval(() => {
+    store.expire(now()).catch(() => undefined)
+  }, every)
+  timer.unref()
+  return () => clearInterval(timer)
+}
+
+export function createRelayServer({
+  store,
+  now = Date.now,
+  log = () => {},
+  headersTimeoutMs = HEADERS_TIMEOUT_MS,
+}: RelayOptions): Server {
   const fresh = nonceLedger()
   const attempts = attemptLedger()
 
@@ -275,7 +326,7 @@ export function createRelayServer({ store, now = Date.now, log = () => {} }: Rel
       nonce,
       bodyHash: hashOf(body),
     })
-    if (!signedBy(key, bytes, signature)) throw new Refusal(401, 'bad signature')
+    if (!signedBy(key, bytes, signature)) throw new Refusal(401, BAD_SIGNATURE)
     const role = await store.roleOf(key)
     if (role === null) {
       if (open) return { key, role }
@@ -301,11 +352,13 @@ export function createRelayServer({ store, now = Date.now, log = () => {} }: Rel
     if (open && !attempts.allowed(address, now())) throw new Refusal(429, 'too many attempts')
     /**
      * A refusal at an open route, counted against its address. What counts (reviews of
-     * #218): every request whose key is not yet proven — unsigned, outside the window, a
-     * bad signature — since each costs a body read and a verification; and every guess at
-     * a token or a pairing. Not what a request the key really signed got wrong in its body,
-     * or a conflict it could not have known about: that is a client with a bug, or a
-     * household that forgot a device was enrolled, and locking them out helps no one.
+     * #218): a bad signature, which cost a body read and a verification to find; and every
+     * guess at a token or a pairing. Not what is refused on headers alone — unsigned, or
+     * outside the time window — which costs nothing, and the second of which is a device
+     * whose clock has drifted, better told so every time than locked out. Not what a request
+     * the key really signed got wrong in its body, or a conflict it could not have known
+     * about: that is a client with a bug, or a household that forgot a device was enrolled,
+     * and locking them out helps no one.
      */
     const failed = (status: number, reason: string): Refusal => {
       attempts.failed(address, now())
@@ -317,7 +370,9 @@ export function createRelayServer({ store, now = Date.now, log = () => {} }: Rel
       const body = await readBody(req)
       proven = { ...(await signer(req, claimed, body, open)), body }
     } catch (err) {
-      if (open && err instanceof Refusal && err.status === 401) throw failed(err.status, err.reason)
+      if (open && err instanceof Refusal && err.reason === BAD_SIGNATURE) {
+        throw failed(err.status, err.reason)
+      }
       throw err
     }
     const { key, role, body } = proven
@@ -443,7 +498,10 @@ export function createRelayServer({ store, now = Date.now, log = () => {} }: Rel
     }
   }
 
-  const server = createServer((req, res) => {
+  /** When each connection opened, so a request Node cuts is logged with how long it held one. */
+  const opened = new WeakMap<object, number>()
+
+  const server = createServer({ connectionsCheckingInterval: CONNECTIONS_CHECK_MS }, (req, res) => {
     const started = now()
     res.on('finish', () => {
       const path = (req.url ?? '').split('?')[0] ?? ''
@@ -458,11 +516,16 @@ export function createRelayServer({ store, now = Date.now, log = () => {} }: Rel
       if (!res.headersSent) send(res, 500, { error: 'the relay failed' })
     })
   })
-  server.headersTimeout = HEADERS_TIMEOUT_MS
+  server.headersTimeout = headersTimeoutMs
   server.requestTimeout = REQUEST_TIMEOUT_MS
+  server.maxConnections = MAX_CONNECTIONS
+  const stopExpiring = expireEvery(store, EXPIRE_EVERY_MS, now)
+  server.on('close', stopExpiring)
+  server.on('connection', (socket) => opened.set(socket, now()))
   /**
    * What Node answers before a request reaches `route` — a request cut by the timeouts
-   * above (408), or one it could not parse (400) — written as Node would, and logged
+   * above (408), headers too large (431), or one it could not parse (400) — written as
+   * Node would, and logged
    * (review of #218). Without this, the slow requests the timeouts are there to cut would
    * leave no trace, and a flood of them would read as an idle relay.
    */
@@ -471,10 +534,15 @@ export function createRelayServer({ store, now = Date.now, log = () => {} }: Rel
       socket.destroy()
       return
     }
-    const status = err.code === 'ERR_HTTP_REQUEST_TIMEOUT' ? 408 : 400
+    const status =
+      err.code === 'ERR_HTTP_REQUEST_TIMEOUT'
+        ? 408
+        : err.code === 'HPE_HEADER_OVERFLOW'
+          ? 431
+          : 400
     const head = `HTTP/1.1 ${status} ${STATUS_CODES[status]}`
     socket.end(`${head}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`)
-    record({ method: '', route: 'unknown', status, ms: 0 })
+    record({ method: '', route: 'unknown', status, ms: now() - (opened.get(socket) ?? now()) })
   })
   return server
 }

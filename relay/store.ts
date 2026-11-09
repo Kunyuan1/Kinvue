@@ -137,7 +137,11 @@ export interface RelayStore {
   deliveries(at: number): Promise<Deliveries>
   /** Sharing with `viewer` ends: their mailbox and enrolment go together. False if unknown. */
   revoke(viewer: string, at: number): Promise<boolean>
-  /** Drops what retention says has gone, and writes if anything did. */
+  /**
+   * Drops what retention says has gone, and writes if anything did. The server runs it every
+   * `EXPIRE_EVERY_MS` (`relay/server.ts`): reads write nothing, so without it a quiet relay
+   * would keep what retention promises to drop.
+   */
   expire(at: number): Promise<void>
   /** The check-in device's keys, written directly: what `redeem` does, for tests. */
   enrolDevice(key: string, receiveKey: string, at: number): Promise<void>
@@ -202,21 +206,37 @@ const pairingId = (): string =>
   Array.from(randomBytes(10), (byte) => CROCKFORD[byte % 32]).join('')
 
 /**
- * Whether `keys` could be taken by someone new: two different keys, neither of which the
- * relay already holds for anyone — the device's two, every viewer's two, and whoever has
- * joined an open pairing (review of #218). The relay is the one place all of them meet,
- * and #40's code and #41's seal both assume four parties' keys are four distinct keys.
+ * Every key the relay holds for a party, as a list, so a key held twice shows twice: the
+ * device's two, every viewer's two, and whoever has joined an open pairing.
  */
-function takenBy(state: RelayState, keys: Keys): boolean {
-  if (keys.key === keys.receiveKey) return true
-  const held = new Set<string>()
-  if (state.device !== null) held.add(state.device)
-  if (state.deviceReceiveKey !== null) held.add(state.deviceReceiveKey)
-  for (const [key, viewer] of Object.entries(state.viewers)) held.add(key).add(viewer.receiveKey)
+function heldKeys(state: RelayState): string[] {
+  const held: string[] = []
+  if (state.device !== null) held.push(state.device)
+  if (state.deviceReceiveKey !== null) held.push(state.deviceReceiveKey)
+  for (const [key, viewer] of Object.entries(state.viewers)) held.push(key, viewer.receiveKey)
   for (const pairing of Object.values(state.pairings)) {
-    if (pairing.viewer !== null) held.add(pairing.viewer.key).add(pairing.viewer.receiveKey)
+    if (pairing.viewer !== null) held.push(pairing.viewer.key, pairing.viewer.receiveKey)
   }
-  return held.has(keys.key) || held.has(keys.receiveKey)
+  return held
+}
+
+/**
+ * **Every key the relay knows is a different key** (reviews of #218). The relay is the one
+ * place all of them meet, and #40's code and #41's seal both assume four parties' keys are
+ * four distinct keys. So `keys` can be taken only when its two are different, neither is
+ * held for anyone, and neither is the key of a viewer whose sharing ended — kept so they
+ * are told, and so not anyone else's to reuse. The one exception is `rejoining`: a viewer
+ * whose sharing ended may come back with their own signing key, by a new pairing (KV-31).
+ *
+ * `problemWith` holds a file to the same rule, and every way into the relay — the routes
+ * and the two direct enrolments tests use — goes through this.
+ */
+function takenBy(state: RelayState, keys: Keys, rejoining = false): boolean {
+  if (keys.key === keys.receiveKey) return true
+  const held = new Set(heldKeys(state))
+  if (held.has(keys.key) || held.has(keys.receiveKey)) return true
+  if (Object.hasOwn(state.ended, keys.receiveKey)) return true
+  return Object.hasOwn(state.ended, keys.key) && !rejoining
 }
 
 const isNumber = (value: unknown): value is number =>
@@ -292,12 +312,22 @@ function problemWith(value: unknown): string | null {
     if (Object.hasOwn(state.viewers, state.device)) return 'device: also a viewer'
     if (Object.hasOwn(state.ended, state.device)) return 'device: also ended'
   }
-  // What `join` refuses, held here too (review of #218): a pairing joined by someone
-  // already in.
-  for (const [id, entry] of Object.entries(state.pairings as Record<string, PairingEntry>)) {
-    const joined = entry.viewer?.key
-    if (joined !== undefined && (joined === state.device || Object.hasOwn(state.viewers, joined))) {
-      return `pairings.${id}.viewer: already the device or a viewer`
+  // What `takenBy` holds every way in to, held here too (second review of #218): every key
+  // a different key, and none an ended viewer's but their own signing key in a pairing they
+  // joined to come back.
+  const shaped = state as unknown as RelayState
+  const held = heldKeys(shaped)
+  const seen = new Set<string>()
+  for (const key of held) {
+    if (seen.has(key)) return `${key}: held for two parties, or as both of one's keys`
+    seen.add(key)
+  }
+  const rejoining = new Set(
+    Object.values(shaped.pairings).flatMap((pairing) => pairing.viewer?.key ?? []),
+  )
+  for (const key of held) {
+    if (Object.hasOwn(shaped.ended, key) && !rejoining.has(key)) {
+      return `${key}: an ended viewer's key, held again`
     }
   }
   return null
@@ -398,7 +428,11 @@ export function createRelayStore(path: string): RelayStore {
   /**
    * A read: in turn with the changes, so it sees each whole, but with no copy made and
    * nothing written (review of #218). What retention would drop is left out of what it
-   * returns rather than dropped; the next change, or `expire`, drops it.
+   * returns rather than dropped; the next change, or the server's hourly `expire`, drops it.
+   *
+   * **A reader returns only copies** (second review of #218). It is handed the live state,
+   * with no copy in between — the point of a read — so a list or an object it returned
+   * as it found it could be changed by its caller outside the queue, behind every change.
    */
   const view = <T>(read: (state: RelayState) => T): Promise<T> =>
     serial(async () => read(await current()))
@@ -417,7 +451,17 @@ export function createRelayStore(path: string): RelayStore {
       const kept = structuredClone(await current())
       const expired = pruned(kept, at)
       const draft = structuredClone(kept)
-      const { result, then } = edit(draft)
+      let outcome: { result: T; then: Then }
+      try {
+        outcome = edit(draft)
+      } catch (err) {
+        // An edit that throws refuses too, and the expiry is still written (second review
+        // of #218): `issueToken` throws once a device is enrolled, and is the call likeliest
+        // to find an expired token in the same turn.
+        if (expired) await write(kept)
+        throw err
+      }
+      const { result, then } = outcome
       if (then === 'write') await write(draft)
       else if (expired) await write(kept)
       return result
@@ -528,8 +572,8 @@ export function createRelayStore(path: string): RelayStore {
 
     enrolDevice: (key, receiveKey, at) =>
       change(at, (draft) => {
-        if (Object.hasOwn(draft.viewers, key) || Object.hasOwn(draft.ended, key)) {
-          throw new Error('That key is already a viewer here, or was one.')
+        if (takenBy(draft, { key, receiveKey })) {
+          throw new Error('Those keys are already held here, or were a viewer’s.')
         }
         draft.device = key
         draft.deviceReceiveKey = receiveKey
@@ -538,7 +582,9 @@ export function createRelayStore(path: string): RelayStore {
 
     enrolViewer: (key, receiveKey, at) =>
       change(at, (draft) => {
-        if (draft.device === key) throw new Error('That key is already the check-in device.')
+        if (takenBy(draft, { key, receiveKey }, true)) {
+          throw new Error('Those keys are already held here.')
+        }
         // A viewer whose sharing ended can be approved again at the device: a new pairing.
         delete draft.ended[key]
         draft.viewers[key] = {
@@ -565,9 +611,7 @@ export function createRelayStore(path: string): RelayStore {
         const hash = hashOf(token)
         if (!Object.hasOwn(draft.tokens, hash)) return { result: 'invalid', then: 'keep' }
         if (draft.device !== null) return { result: 'device-exists', then: 'keep' }
-        if (takenBy(draft, keys) || Object.hasOwn(draft.ended, keys.key)) {
-          return { result: 'key-in-use', then: 'keep' }
-        }
+        if (takenBy(draft, keys)) return { result: 'key-in-use', then: 'keep' }
         delete draft.tokens[hash]
         draft.device = keys.key
         draft.deviceReceiveKey = keys.receiveKey
@@ -589,7 +633,7 @@ export function createRelayStore(path: string): RelayStore {
           return { result: { kind: 'unknown' }, then: 'keep' }
         }
         if (pairing.viewer !== null) return { result: { kind: 'taken' }, then: 'keep' }
-        if (takenBy(draft, keys)) return { result: { kind: 'key-in-use' }, then: 'keep' }
+        if (takenBy(draft, keys, true)) return { result: { kind: 'key-in-use' }, then: 'keep' }
         pairing.viewer = { key: keys.key, receiveKey: keys.receiveKey }
         const device = { key: draft.device, receiveKey: draft.deviceReceiveKey }
         return { result: { kind: 'joined', device }, then: 'write' }
@@ -613,7 +657,7 @@ export function createRelayStore(path: string): RelayStore {
         // Checked again here, on its own terms (review of #218): `join` checked when they
         // joined, but enrolling over a viewer already there would reset their stream and
         // drop their mailbox, and that should not rest on there being one pairing at a time.
-        if (takenBy(draft, viewer)) return { result: 'key-in-use', then: 'refuse' }
+        if (takenBy(draft, viewer, true)) return { result: 'key-in-use', then: 'refuse' }
         // Approved again at the device after their sharing ended: a new pairing (KV-31).
         delete draft.ended[viewer.key]
         draft.viewers[viewer.key] = {

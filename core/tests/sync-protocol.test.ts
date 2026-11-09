@@ -15,8 +15,8 @@ import {
   isSignature,
   MAX_BODY_BYTES,
   MAX_ENVELOPES_PER_POST,
+  MAX_POST_BYTES_AT_MIN_UPLINK,
   MAX_SEALED_CHARS,
-  MAX_WAITING_CHARS_PER_VIEWER,
   MAX_WAITING_PER_VIEWER,
   MIN_UPLINK_BITS_PER_SECOND,
   PAIRING_TTL_MS,
@@ -160,15 +160,26 @@ describe('the limits on a post (review of #216)', () => {
 
 describe('what one mailbox may hold (review of #218)', () => {
   it('is stated in bytes as well as envelopes: 16 MiB', () => {
-    expect(MAX_WAITING_CHARS_PER_VIEWER).toBe(MAX_WAITING_PER_VIEWER * MAX_SEALED_CHARS)
-    expect(MAX_WAITING_CHARS_PER_VIEWER).toBe(16 * 1024 * 1024)
+    // The figure the ceiling's comment gives: the two limits together, 16 MiB a viewer.
+    expect(MAX_WAITING_PER_VIEWER * MAX_SEALED_CHARS).toBe(16 * 1024 * 1024)
   })
 })
 
 describe('the time a request may take (review of #218)', () => {
-  it('lets the largest post arrive over the slowest uplink it names', () => {
-    const seconds = (MAX_BODY_BYTES * 8) / MIN_UPLINK_BITS_PER_SECOND
-    expect(REQUEST_TIMEOUT_MS).toBeGreaterThan(seconds * 1000)
+  it('keeps a request to a minute, for the routes strangers can reach', () => {
+    expect(REQUEST_TIMEOUT_MS).toBe(60 * 1000)
+  })
+
+  it('names the post a slow line can send inside it, with room to spare', () => {
+    const ms = (MAX_POST_BYTES_AT_MIN_UPLINK * 8 * 1000) / MIN_UPLINK_BITS_PER_SECOND
+    expect(ms).toBeLessThan(REQUEST_TIMEOUT_MS)
+    expect(MAX_POST_BYTES_AT_MIN_UPLINK).toBeLessThan(MAX_BODY_BYTES)
+  })
+
+  it('still lets a slow line send a catch-up post of ordinary check-ins whole', () => {
+    // 64 envelopes of 8 KB each: a sealed record is a few KB, the pain note included.
+    const ordinary = MAX_ENVELOPES_PER_POST * (8 * 1024 + 128)
+    expect(ordinary).toBeLessThan(MAX_POST_BYTES_AT_MIN_UPLINK)
   })
 
   it('names a slow line, not a fast one', () => {

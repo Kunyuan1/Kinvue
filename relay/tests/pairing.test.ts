@@ -10,14 +10,16 @@ import {
   MAX_ENVELOPES_PER_POST,
   MAX_WAITING_PER_VIEWER,
   PAIRING_TTL_MS,
+  REQUEST_WINDOW_MS,
   ROUTES,
 } from '@kinvue/core/sync/protocol'
 import {
+  ATTEMPT_SWEEP_MS,
   ATTEMPT_WINDOW_MS,
   attemptLedger,
   createRelayServer,
+  CONNECTIONS_CHECK_MS,
   MAX_FAILED_ATTEMPTS,
-  NONCE_SWEEP_MS,
   routeOf,
   type LogEntry,
 } from '../server'
@@ -274,6 +276,21 @@ describe('a viewer, enrolled by a pairing the device confirms (KV-31)', () => {
     expect((await joinAs(identity(), await open(), shared)).status).toBe(409)
   })
 
+  it('takes no ended viewer’s key as anyone else’s (second review of #218)', async () => {
+    // Kept so that viewer is told sharing ended; not someone else's to reuse.
+    const token = await store.issueToken(clock)
+    const ann = identity()
+    await store.enrolViewer(ann.key, receiveKey(), clock)
+    await store.revoke(ann.key, clock)
+    // A device redeeming a token, offering that key as where it receives.
+    expect((await enrol(device, token, ann.key)).status).toBe(409)
+    expect((await enrol(device, token, deviceReceive)).status).toBe(204)
+    // A viewer joining with it as theirs.
+    expect((await joinAs(identity(), await open(), ann.key)).status).toBe(409)
+    // Ann herself, coming back: her own signing key, by a new pairing.
+    expect((await joinAs(ann, await open())).status).toBe(200)
+  })
+
   it('finds no pairing to join before a device is enrolled', async () => {
     expect((await joinAs(identity(), 'ABCDEFGHJK')).status).toBe(404)
   })
@@ -305,14 +322,23 @@ describe('what a stranger can reach', () => {
     expect((await joinAs(identity(), await open())).status).toBe(200)
   })
 
-  it('counts requests whose key is not proven (review of #218)', async () => {
-    // Each costs a body read and a signature check, whatever it was guessing at.
-    await enrolled()
-    for (let i = 0; i < MAX_FAILED_ATTEMPTS; i += 1) {
+  it('does not count what is refused on headers alone (second review of #218)', async () => {
+    // Unsigned, or from a clock that has drifted: refused before a body is read, so they
+    // cost nothing. And a skewed clock is the likeliest real failure at enrolment — told
+    // "outside the time window" every time, a household can see what to fix.
+    const token = await store.issueToken(clock)
+    for (let i = 0; i < MAX_FAILED_ATTEMPTS + 2; i += 1) {
       const unsigned = await fetch(base + ROUTES.enrol, { method: 'POST', body: '{}' })
       expect(unsigned.status).toBe(401)
+      const skewed = await call(base, device, {
+        method: 'POST',
+        path: ROUTES.enrol,
+        body: { token, receiveKey: deviceReceive },
+        at: clock - REQUEST_WINDOW_MS - 1,
+      })
+      expect(skewed).toEqual({ status: 401, json: { error: 'outside the time window' } })
     }
-    expect((await joinAs(identity(), await open())).status).toBe(429)
+    expect((await enrol(device, token, deviceReceive)).status).toBe(204)
   })
 
   it('counts a bad signature at an open route', async () => {
@@ -364,7 +390,7 @@ describe('the attempt ledger', () => {
     const t0 = 1_000_000
     for (let i = 0; i < 100; i += 1) ledger.failed(`198.51.100.${i}`, t0)
     expect(ledger.size()).toBe(100)
-    ledger.allowed('203.0.113.1', t0 + ATTEMPT_WINDOW_MS + NONCE_SWEEP_MS)
+    ledger.allowed('203.0.113.1', t0 + ATTEMPT_WINDOW_MS + ATTEMPT_SWEEP_MS)
     expect(ledger.size()).toBe(0)
   })
 
@@ -459,6 +485,56 @@ describe('the log', () => {
       `${ROUTES.viewers}:viewer`,
     ])
     expect(Object.keys(logged[0] ?? {}).sort()).toEqual(['method', 'ms', 'route', 'status'])
+  })
+
+  it('cuts a stalled request at its timeout, not at Node’s sweep, and logs it', async () => {
+    // Measured, since the constant alone was once wrong by twenty seconds (second review
+    // of #218): Node only notices a timeout when it checks its connections.
+    const headersTimeoutMs = 1500
+    const slow = createRelayServer({
+      store,
+      log: (entry) => logged.push(entry),
+      headersTimeoutMs,
+    })
+    const slowBase = await listening(slow)
+    try {
+      const started = Date.now()
+      const answer = await new Promise<string>((resolve, reject) => {
+        const { port } = new URL(slowBase)
+        const socket = connect(Number(port), '127.0.0.1', () =>
+          socket.write('GET /v1/envelopes HTTP/1.1\r\nHost: relay\r\n'),
+        )
+        let text = ''
+        socket.on('data', (chunk) => (text += chunk.toString()))
+        socket.on('end', () => resolve(text))
+        socket.on('error', reject)
+      })
+      const took = Date.now() - started
+      expect(answer).toMatch(/^HTTP.1.1 408 /)
+      expect(took).toBeGreaterThanOrEqual(headersTimeoutMs - 50)
+      expect(took).toBeLessThan(headersTimeoutMs + CONNECTIONS_CHECK_MS + 500)
+      const [entry] = logged
+      expect(entry).toMatchObject({ route: 'unknown', status: 408 })
+      expect(entry?.ms).toBeGreaterThanOrEqual(headersTimeoutMs - 50)
+    } finally {
+      await new Promise((resolve) => slow.close(resolve))
+    }
+  }, 10_000)
+
+  it('answers headers too large as Node does, 431, and logs it so', async () => {
+    const answer = await new Promise<string>((resolve, reject) => {
+      const { port } = server.address() as { port: number }
+      const big = 'x'.repeat(20 * 1024)
+      const socket = connect(port, '127.0.0.1', () =>
+        socket.write(`GET /v1/envelopes HTTP/1.1\r\nHost: relay\r\nX-Big: ${big}\r\n\r\n`),
+      )
+      let text = ''
+      socket.on('data', (chunk) => (text += chunk.toString()))
+      socket.on('end', () => resolve(text))
+      socket.on('error', reject)
+    })
+    expect(answer).toMatch(/^HTTP.1.1 431 /)
+    expect(logged).toMatchObject([{ route: 'unknown', status: 431 }])
   })
 
   it('logs a request Node refuses before it is routed (review of #218)', async () => {

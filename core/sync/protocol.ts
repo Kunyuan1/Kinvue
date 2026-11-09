@@ -251,15 +251,12 @@ export const MAX_ENVELOPES_PER_POST = 64
  * for that, and a ceiling on what one mailbox can make the relay hold (KV-39).
  */
 export const MAX_WAITING_PER_VIEWER = 256
+// What that ceiling costs, in bytes (reviews of #218): with `MAX_SEALED_CHARS` it lets at
+// most 16 MiB of sealed base64url wait for one viewer. The relay keeps its whole state in
+// one file, cloned and rewritten on each change, so this is also the worst a change has to
+// carry for each viewer. At the expected size — a few dozen envelopes of a few KB — that is
+// a few hundred KB; the ceiling is what keeps the rest from becoming the relay's problem.
 
-/**
- * **What that ceiling costs, in bytes** (review of #218): at most this much sealed
- * base64url waits for one viewer, 16 MiB. The relay keeps its whole state in one file,
- * cloned and rewritten on each change, so this is also the worst a change has to carry for
- * each viewer. At the expected size — a few dozen envelopes of a few KB — that is a few
- * hundred KB; the ceiling is what keeps the rest from becoming the relay's problem.
- */
-export const MAX_WAITING_CHARS_PER_VIEWER = MAX_WAITING_PER_VIEWER * MAX_SEALED_CHARS
 
 /** What one envelope's JSON adds around its sealed bytes: its key, stream and quoting. */
 const ENVELOPE_JSON_CHARS = 128
@@ -268,19 +265,27 @@ const ENVELOPE_JSON_CHARS = 128
 export const MAX_BODY_BYTES = MAX_ENVELOPES_PER_POST * (MAX_SEALED_CHARS + ENVELOPE_JSON_CHARS) + 64
 
 /**
- * The slowest uplink a device can count on sending the largest post over, in bits a
- * second: a poor rural line's upstream. A device on a slower one sends smaller posts.
+ * How long the relay gives one request to arrive, whole. A minute: every connection that
+ * gets its headers in may hold the relay this long, and the routes strangers can reach are
+ * among them, so this is kept short (second review of #218).
  */
+export const REQUEST_TIMEOUT_MS = 60 * 1000
+
+/** The slowest uplink the protocol plans for, in bits a second: a poor rural upstream. */
 export const MIN_UPLINK_BITS_PER_SECOND = 256 * 1000
 
 /**
- * How long the relay gives one request to arrive, whole: the largest post at the slowest
- * uplink above, and half a minute more (review of #218). Shorter, a post the limits allow
- * could never arrive on that line — cut, retried, and cut again — and it would be the
- * catch-up after an outage, when posts are largest.
+ * **The largest post a device sends on the slowest uplink**, so it arrives inside the
+ * timeout with a quarter of it to spare. The trade was made this way round, not by
+ * stretching the timeout until the largest post fit (reviews of #218):
+ * `MAX_ENVELOPES_PER_POST` is a ceiling a device may stay under, not a size it must send,
+ * and the catch-up after an outage is already a loop of posts. At a few KB an envelope a
+ * post of 64 is well inside this; only envelopes near `MAX_SEALED_CHARS` make a device on
+ * such a line send fewer at a time.
  */
-export const REQUEST_TIMEOUT_MS =
-  Math.ceil((MAX_BODY_BYTES * 8 * 1000) / MIN_UPLINK_BITS_PER_SECOND) + 30 * 1000
+export const MAX_POST_BYTES_AT_MIN_UPLINK = Math.floor(
+  (MIN_UPLINK_BITS_PER_SECOND * REQUEST_TIMEOUT_MS * 0.75) / (8 * 1000),
+)
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/
 

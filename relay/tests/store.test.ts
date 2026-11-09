@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { DELIVERY_RETENTION_MS, ENVELOPE_RETENTION_MS } from '@kinvue/core/sync/protocol'
+import {
+  DELIVERY_RETENTION_MS,
+  ENROL_TOKEN_TTL_MS,
+  ENVELOPE_RETENTION_MS,
+} from '@kinvue/core/sync/protocol'
 import {
   createRelayStore,
   NewerRelayFileError,
@@ -56,6 +60,19 @@ const withAnn = (entry: Record<string, unknown>, fields: Record<string, unknown>
     },
     ...fields,
   })
+
+const SHARED = receiveKey()
+const DEVICE_KEY = identity().key
+const DEVICE_RECEIVE = receiveKey()
+
+/** A viewer's entry in a relay file, receiving at `receive`. */
+const viewerEntry = (receive: string) => ({
+  receiveKey: receive,
+  enrolledAt: 0,
+  ackedThrough: 0,
+  waiting: [],
+  fetchedAt: [],
+})
 
 const waiting = (stream: number) => ({ stream, sealed: sealed(`stream ${stream}`), postedAt: 0 })
 
@@ -133,6 +150,20 @@ describe('a refused batch, while something expires (review of #216)', () => {
   })
 })
 
+describe('an edit that throws, while something expires (second review of #218)', () => {
+  it('still writes the expiry', async () => {
+    const store = createRelayStore(path)
+    await store.issueToken(T0)
+    await store.enrolDevice(device, receiveKey(), T0)
+    const hashes = () =>
+      readFile(path, 'utf8').then((text) => Object.keys(JSON.parse(text).tokens as object))
+    expect(await hashes()).toHaveLength(1)
+    // Refused, since a device is enrolled — and the token, expired by now, still goes.
+    await expect(store.issueToken(T0 + ENROL_TOKEN_TTL_MS)).rejects.toThrow(/recovery card/)
+    expect(await hashes()).toEqual([])
+  })
+})
+
 describe('the file', () => {
   it('holds what was written for the next relay process', async () => {
     const first = await enrolled()
@@ -191,6 +222,35 @@ describe('the file', () => {
     ['a token kept as itself, not its hash', fileOf({ tokens: { [sealed('token')]: 0 } })],
     ['a pairing id not in base32', fileOf({ pairings: { 'abc': { expiresAt: 0, viewer: null } } })],
     ['a pairing that is not an object', fileOf({ pairings: { ABCDEFGHJK: 7 } })],
+    // Every key a different key, as `takenBy` holds at every way in (second review of #218).
+    ['the device’s two keys one key', fileOf({ device: ann, deviceReceiveKey: ann })],
+    [
+      'two viewers sharing one receiving key',
+      fileOf({
+        viewers: {
+          [ann]: viewerEntry(SHARED),
+          [identity().key]: viewerEntry(SHARED),
+        },
+      }),
+    ],
+    [
+      'a viewer receiving at the device’s signing key',
+      fileOf({ device: DEVICE_KEY, viewers: { [ann]: viewerEntry(DEVICE_KEY) } }),
+    ],
+    [
+      'a pairing joined with the device’s receiving key',
+      fileOf({
+        device: DEVICE_KEY,
+        deviceReceiveKey: DEVICE_RECEIVE,
+        pairings: {
+          ABCDEFGHJK: { expiresAt: 0, viewer: { key: ann, receiveKey: DEVICE_RECEIVE } },
+        },
+      }),
+    ],
+    [
+      'an ended viewer’s key held as someone’s receiving key',
+      fileOf({ viewers: { [identity().key]: viewerEntry(ann) }, ended: { [ann]: 0 } }),
+    ],
     [
       'a pairing joined by a viewer already in',
       withAnn(
@@ -270,17 +330,28 @@ describe('the file', () => {
     expect(await store.join(pairing, keys, T0)).toEqual({ kind: 'unknown' })
   })
 
-  it('confirms no viewer over one already enrolled (review of #218)', async () => {
-    // `join` checks too; this holds without leaning on one pairing at a time.
+  it('reads a file with an ended viewer rejoining by a pairing', async () => {
+    // The one place an ended key may appear: their own signing key, coming back (KV-31).
+    const file = fileOf({
+      device: DEVICE_KEY,
+      deviceReceiveKey: DEVICE_RECEIVE,
+      ended: { [ann]: 0 },
+      pairings: { ABCDEFGHJK: { expiresAt: T0 + 1, viewer: { key: ann, receiveKey: SHARED } } },
+    })
+    await writeFile(path, file, 'utf8')
+    expect(await createRelayStore(path).roleOf(ann)).toBe('ended')
+  })
+
+  it('lets no way in enrol keys an open pairing holds (reviews of #218)', async () => {
+    // What would let `confirm` enrol over a viewer already there. Closed at every way in,
+    // so `confirm`'s own check is defence, not the only thing holding it.
     const store = await enrolled()
-    await store.post([{ viewer: ann, stream: 1, sealed: sealed('one') }], T0)
     const { pairing } = await store.openPairing(T0)
     const bill = { key: identity().key, receiveKey: receiveKey() }
     expect((await store.join(pairing, bill, T0)).kind).toBe('joined')
-    await store.enrolViewer(bill.key, receiveKey(), T0)
-    await store.post([{ viewer: bill.key, stream: 1, sealed: sealed('for bill') }], T0)
-    expect(await store.confirm(pairing, T0)).toBe('key-in-use')
-    expect(await store.fetch(bill.key, T0)).toHaveLength(1)
+    await expect(store.enrolViewer(bill.key, receiveKey(), T0)).rejects.toThrow(/already/)
+    await expect(store.enrolViewer(identity().key, bill.receiveKey, T0)).rejects.toThrow(/already/)
+    expect(await store.confirm(pairing, T0)).toBe('enrolled')
   })
 
   it('keeps the state it had when a write fails', async () => {
