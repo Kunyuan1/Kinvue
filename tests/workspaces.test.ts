@@ -5,6 +5,7 @@ import pkg from '../package.json'
 import core from '../core/package.json'
 import desktop from '../app/package.json'
 import relay from '../relay/package.json'
+import lock from '../package-lock.json'
 import config from '../vitest.config'
 
 /**
@@ -12,6 +13,9 @@ import config from '../vitest.config'
  * desktop app as `app`, and the household's relay as `relay` (KV-39). What #38 said must
  * survive the move, and nothing else would notice going wrong, is held here.
  */
+
+/** The esbuild the lockfile installs at the root, where the whole tree shares it. */
+const lockedEsbuild = (lock.packages['node_modules/esbuild'] as { version?: string }).version
 
 type Manifest = {
   dependencies?: Record<string, string>
@@ -27,19 +31,30 @@ describe('the workspaces (KV-38)', () => {
     expect(pkg.workspaces).toEqual(['core', 'app', 'relay'])
   })
 
-  it('leave the relay depending on core alone', () => {
-    // The relay runs core's source on Node, so core is a runtime dependency here, unlike
-    // the desktop app, which bundles it. Nothing else: a server holding a household's
-    // envelopes takes on no supply chain without that being decided (KV-39). `*`, for
+  it('leave the relay depending on nothing when it runs', () => {
+    // A server holding a household's envelopes takes on no supply chain without that
+    // being decided (KV-39). Since its third PR it is bundled — core's extensionless
+    // imports are not something Node runs — so core is built in, as the desktop app's is,
+    // and what runs on the household's server needs nothing installed beside it. `*`, for
     // the reason the desktop app's is.
     const { dependencies, devDependencies, peerDependencies, optionalDependencies } =
       relay as Manifest
     expect({ dependencies, devDependencies, peerDependencies, optionalDependencies }).toEqual({
-      dependencies: { '@kinvue/core': '*' },
-      devDependencies: undefined,
+      dependencies: undefined,
+      devDependencies: { '@kinvue/core': '*', esbuild: lockedEsbuild },
       peerDependencies: undefined,
       optionalDependencies: undefined,
     })
+  })
+
+  it('bundle the relay with the esbuild the lockfile already held', () => {
+    // Taken on to bundle the relay, it is the version electron-vite installed already,
+    // pinned exactly: deciding to bundle added no package to the tree (KV-39).
+    expect(lockedEsbuild).toMatch(/^\d+\.\d+\.\d+$/)
+    const electronVite = lock.packages['node_modules/electron-vite'] as {
+      dependencies?: Record<string, string>
+    }
+    expect(electronVite.dependencies?.esbuild).toBeDefined()
   })
 
   it('leave core depending on nothing, an app least of all', () => {

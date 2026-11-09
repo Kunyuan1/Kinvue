@@ -2,9 +2,12 @@ import {
   createServer,
   STATUS_CODES,
   type IncomingMessage,
+  type RequestListener,
   type Server,
+  type ServerOptions,
   type ServerResponse,
 } from 'node:http'
+import { createServer as createTlsServer } from 'node:https'
 import {
   checkAck,
   checkEnrol,
@@ -108,6 +111,12 @@ export interface RelayOptions {
   log?: (entry: LogEntry) => void
   /** How long a request may take to send its headers: `HEADERS_TIMEOUT_MS`, unless given. */
   headersTimeoutMs?: number
+  /**
+   * The relay's certificate and its key, PEM. Given, it serves HTTPS; not, plain HTTP —
+   * which `relay/main.ts` allows on loopback only, where a reverse proxy in front of it
+   * terminates TLS (#46).
+   */
+  tls?: { cert: string | Buffer; key: string | Buffer }
 }
 
 /** A path as its route, for the log: what it names left out. */
@@ -285,6 +294,7 @@ export function createRelayServer({
   now = Date.now,
   log = () => {},
   headersTimeoutMs = HEADERS_TIMEOUT_MS,
+  tls,
 }: RelayOptions): Server {
   const fresh = nonceLedger()
   const attempts = attemptLedger()
@@ -501,7 +511,13 @@ export function createRelayServer({
   /** When each connection opened, so a request Node cuts is logged with how long it held one. */
   const opened = new WeakMap<object, number>()
 
-  const server = createServer({ connectionsCheckingInterval: CONNECTIONS_CHECK_MS }, (req, res) => {
+  const options: ServerOptions = { connectionsCheckingInterval: CONNECTIONS_CHECK_MS }
+  const serve = (handler: RequestListener): Server =>
+    tls === undefined
+      ? createServer(options, handler)
+      : // An HTTPS server is an HTTP server underneath, with every option and event here.
+        (createTlsServer({ ...options, ...tls }, handler) as unknown as Server)
+  const server = serve((req, res) => {
     const started = now()
     res.on('finish', () => {
       const path = (req.url ?? '').split('?')[0] ?? ''

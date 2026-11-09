@@ -13,9 +13,10 @@
   },
   "scripts": {
     "dev": "npm run dev -w app",
-    "build": "npm run build -w app",
+    "build": "npm run build -w app && npm run build -w relay",
     "preview": "npm run preview -w app",
     "dist": "npm run dist -w app",
+    "relay": "npm run build -w relay && npm run start -w relay",
     "typecheck": "tsc -p core && tsc -p app && tsc -p relay && tsc -p .",
     "lint": "eslint . --max-warnings=0",
     "test": "vitest run",
