@@ -8,6 +8,7 @@ import {
   type ServerResponse,
 } from 'node:http'
 import { createServer as createTlsServer } from 'node:https'
+import type { Socket } from 'node:net'
 import {
   checkAck,
   checkEnrol,
@@ -515,8 +516,13 @@ export function createRelayServer({
   const serve = (handler: RequestListener): Server =>
     tls === undefined
       ? createServer(options, handler)
-      : // An HTTPS server is an HTTP server underneath, with every option and event here.
-        (createTlsServer({ ...options, ...tls }, handler) as unknown as Server)
+      : // An HTTPS server is an HTTP server underneath, with every option here, and every
+        // event but one: `tlsClientError`, handled below.
+        (createTlsServer(
+          // A handshake gets the headers' time, not TLS's own two minutes (review of #219).
+          { ...options, ...tls, handshakeTimeout: headersTimeoutMs },
+          handler,
+        ) as unknown as Server)
   const server = serve((req, res) => {
     const started = now()
     res.on('finish', () => {
@@ -535,6 +541,19 @@ export function createRelayServer({
   server.headersTimeout = headersTimeoutMs
   server.requestTimeout = REQUEST_TIMEOUT_MS
   server.maxConnections = MAX_CONNECTIONS
+  /**
+   * On HTTPS, what fails before the handshake completes — plain HTTP to the port, a client
+   * it cannot agree a version with, a scanner — never reaches `clientError` (reviews of
+   * #219). Logged here as one line, as `clientError` logs its own, and the socket closed.
+   */
+  if (tls !== undefined) {
+    server.on('tlsClientError', (_err: Error, socket: Socket) => {
+      // The TLS socket wraps the one `connection` timestamped; Node keeps that as `_parent`.
+      const raw = (socket as Socket & { _parent?: Socket })._parent ?? socket
+      record({ method: '', route: 'unknown', status: 400, ms: now() - (opened.get(raw) ?? now()) })
+      socket.destroy()
+    })
+  }
   const stopExpiring = expireEvery(store, EXPIRE_EVERY_MS, now)
   server.on('close', stopExpiring)
   server.on('connection', (socket) => opened.set(socket, now()))

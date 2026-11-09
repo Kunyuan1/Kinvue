@@ -147,7 +147,7 @@ export interface RelayStore {
   enrolDevice(key: string, receiveKey: string, at: number): Promise<void>
   /** A viewer, written directly: what `confirm` does, for tests. */
   enrolViewer(key: string, receiveKey: string, at: number): Promise<void>
-  /** A one-time enrolment token, for the household to give the check-in device. */
+  /** A one-time enrolment token, for the household to give the check-in device; the only one. */
   issueToken(at: number): Promise<string>
   /** The check-in device enrolled by a token, once. */
   redeem(token: string, keys: Keys, at: number): Promise<RedeemResult>
@@ -602,7 +602,9 @@ export function createRelayStore(path: string): RelayStore {
         // A token that could only ever be refused is worse than none (review of #218).
         if (draft.device !== null) throw new DeviceEnrolledError()
         const token = randomBytes(16).toString('base64url')
-        draft.tokens[hashOf(token)] = at + ENROL_TOKEN_TTL_MS
+        // One outstanding at a time (reviews of #219): a new token voids any earlier one,
+        // so a restart loop cannot leave several able to enrol the device.
+        draft.tokens = { [hashOf(token)]: at + ENROL_TOKEN_TTL_MS }
         return { result: token, then: 'write' }
       }),
 

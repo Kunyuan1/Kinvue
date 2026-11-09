@@ -104,11 +104,10 @@ describe('the check-in device, enrolled by the household’s token', () => {
   })
 
   it('enrols no second device, whatever token it brings (#45 replaces one)', async () => {
-    // Two tokens issued before either was redeemed: the second finds a device there.
-    const first = await store.issueToken(clock)
-    const second = await store.issueToken(clock)
-    expect((await enrol(device, first, deviceReceive)).status).toBe(204)
-    expect(await enrol(identity(), second)).toEqual({
+    // A token outstanding while a device is enrolled another way finds a device there.
+    const token = await store.issueToken(clock)
+    await store.enrolDevice(device.key, deviceReceive, clock)
+    expect(await enrol(identity(), token)).toEqual({
       status: 409,
       json: { error: 'a check-in device is enrolled' },
     })
@@ -371,11 +370,9 @@ describe('what a stranger can reach', () => {
   })
 
   it('does not count a household redeeming a token after its device enrolled', async () => {
-    const tokens = await Promise.all(
-      Array.from({ length: MAX_FAILED_ATTEMPTS + 2 }, () => store.issueToken(clock)),
-    )
-    expect((await enrol(device, tokens[0] ?? '', deviceReceive)).status).toBe(204)
-    for (const token of tokens.slice(1)) {
+    const token = await store.issueToken(clock)
+    await store.enrolDevice(device.key, deviceReceive, clock)
+    for (let i = 0; i < MAX_FAILED_ATTEMPTS + 2; i += 1) {
       expect((await enrol(identity(), token)).status).toBe(409)
     }
     expect((await joinAs(identity(), await open())).status).toBe(200)

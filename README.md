@@ -377,23 +377,38 @@ The household's own relay, for remote access (Phase 5). **Nothing connects to it
 the desktop app sends nothing until pairing (#40) and the outbox (#41) are built, and the
 privacy section below still holds as written. Running one now is for trying it.
 
+To try it in a checkout, which builds it and then runs it:
+
 ```bash
-KINVUE_RELAY_DATA=./relay-data/relay.json npm run relay
+KINVUE_RELAY_DATA="$PWD/relay-data/relay.json" npm run relay
+```
+
+To run it on a server, build it once and copy one file: `relay/dist/main.js`, from
+`npm run build`, has core inside it and needs nothing installed beside it but Node.
+
+```bash
+KINVUE_RELAY_DATA=/var/lib/kinvue/relay.json node main.js start
 ```
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `KINVUE_RELAY_DATA` | — | The file it keeps: keys, sealed envelopes it cannot open, and when each viewer fetched (KV-33). Required. |
+| `KINVUE_RELAY_DATA` | — | The file it keeps: keys, sealed envelopes it cannot open, and when each viewer fetched (KV-33). Required, and absolute: `npm run relay` runs in `relay/`, so a relative path would name a different file depending on how it was started. `relay-data/` in a checkout is ignored by git. |
 | `KINVUE_RELAY_HOST` | `127.0.0.1` | Where it listens. Anything but this machine needs a certificate, or it refuses to start. |
 | `KINVUE_RELAY_PORT` | `8787` | Its port. |
 | `KINVUE_RELAY_TLS_CERT`, `KINVUE_RELAY_TLS_KEY` | — | Its certificate and key, PEM. Both or neither. Without them it serves plain HTTP on loopback, for a reverse proxy in front of it to serve HTTPS. |
 
-- **The check-in device's one-time token is printed at start** while no device is
-  enrolled, valid for 15 minutes; restarting prints another. Once a device is enrolled,
-  no token enrols another (replacing one is #45's recovery card).
-- **One relay per file:** a second one started on the same file refuses.
-- **Its log is one JSON line a request** — method, route, status, time — with no key, no
-  body, no address.
+- **The check-in device's one-time token** is issued once the relay is listening, while
+  no device is enrolled, and is valid for 15 minutes. It is written to `<data>.token`,
+  readable by the relay's own user only, and the console says where; it is shown itself
+  only to someone at a terminal, never into a log. One is outstanding at a time. Missed
+  the window? `kill -USR2 <pid>` has the running relay issue another, or restart it. Once
+  a device is enrolled, no token enrols another (replacing one is #45's recovery card).
+- **One relay per file:** a second one started on the same file refuses. A lock left by a
+  crash or a power cut is taken over; one it cannot read is not, and the message says
+  what to do.
+- **Its log is one JSON line a request** on standard output — method, route, status,
+  time — with no key, no body, no address. What a person should know goes to standard
+  error.
 - **Running it for real is #46's**: backups, monitoring, a breach plan, and an owner. The
   household runs it for itself, and ideally not on a viewer's machine (KV-35).
 

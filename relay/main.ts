@@ -1,4 +1,6 @@
-import { readFile, open, rm } from 'node:fs/promises'
+import { link, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { uptime } from 'node:os'
+import { isAbsolute } from 'node:path'
 import { isIP } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { pathToFileURL } from 'node:url'
@@ -29,6 +31,10 @@ import { createRelayStore, DeviceEnrolledError } from './store'
 export interface RelayConfig {
   dataFile: string
   host: string
+  /**
+   * From the environment, 1 to 65535 (`configFrom`). 0, which the system turns into a free
+   * port, is for tests building a config directly (review of #219).
+   */
   port: number
   tls: { certFile: string; keyFile: string } | null
 }
@@ -53,18 +59,42 @@ const isLoopback = (host: string): boolean =>
  *   Both or neither; required off loopback.
  */
 export function configFrom(env: Record<string, string | undefined>): RelayConfig | string {
+  // Set but empty is refused, never read as unset or as zero (review of #219): it is how a
+  // variable usually ends up empty, in an EnvironmentFile or a compose block, and read as
+  // unset or 0 it would start a relay somewhere nobody meant.
+  const named = [
+    'KINVUE_RELAY_DATA',
+    'KINVUE_RELAY_HOST',
+    'KINVUE_RELAY_PORT',
+    'KINVUE_RELAY_TLS_CERT',
+    'KINVUE_RELAY_TLS_KEY',
+  ]
+  const empty = named.find((name) => env[name] === '')
+  if (empty !== undefined) return `${empty} is set but empty. Give it a value, or unset it.`
   const dataFile = env.KINVUE_RELAY_DATA
-  if (dataFile === undefined || dataFile === '') {
+  if (dataFile === undefined) {
     return (
       'Set KINVUE_RELAY_DATA to the file the relay keeps, for example ' +
       '/var/lib/kinvue/relay.json.'
     )
   }
+  // Absolute only (reviews of #219): `npm run relay` runs in relay/ and `node
+  // relay/dist/main.js` wherever it was typed, so one relative path would name two files —
+  // and a relay finding the other one empty would print a fresh token beside the real keys.
+  if (!isAbsolute(dataFile)) {
+    return (
+      `KINVUE_RELAY_DATA is ${dataFile}, a relative path, which names a different file ` +
+      'depending on where the relay is started. Give it as an absolute path, for example ' +
+      '/var/lib/kinvue/relay.json.'
+    )
+  }
   const host = env.KINVUE_RELAY_HOST ?? DEFAULT_HOST
   const portText = env.KINVUE_RELAY_PORT ?? String(DEFAULT_PORT)
-  const port = Number(portText)
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    return `KINVUE_RELAY_PORT is ${portText}, not a port.`
+  // Digits only, 1 to 65535: `Number` would read 0x1f90 as 8080 and 1e3 as 1000, and 0 as
+  // a port the system picks, different every start (review of #219).
+  const port = /^\d{1,5}$/.test(portText) ? Number(portText) : NaN
+  if (!(port >= 1 && port <= 65535)) {
+    return `KINVUE_RELAY_PORT is ${portText}, not a port from 1 to 65535.`
   }
   const certFile = env.KINVUE_RELAY_TLS_CERT
   const keyFile = env.KINVUE_RELAY_TLS_KEY
@@ -82,34 +112,97 @@ export function configFrom(env: Record<string, string | undefined>): RelayConfig
   return { dataFile, host, port, tls }
 }
 
-/** Another relay holds this file. */
+/** Another relay holds this file, or might. */
 export class RelayLockedError extends Error {}
 
+/** What a lock says about who holds it. */
+export interface Holder {
+  pid: number
+  /** When the machine the holder ran on last booted, in milliseconds. */
+  bootedAt: number
+}
+
+/** How far two readings of one boot's time may differ: `uptime` is whole seconds. */
+const BOOT_SLACK_MS = 60 * 1000
+
+/** When this machine booted, by `now`. */
+export const bootedAt = (now: number): number => now - uptime() * 1000
+
+const holderIn = (text: string | null): Holder | null => {
+  try {
+    const held = JSON.parse(text ?? '') as Partial<Holder>
+    const { pid, bootedAt: at } = held
+    return Number.isInteger(pid) && (pid as number) > 0 && Number.isFinite(at)
+      ? { pid: pid as number, bootedAt: at as number }
+      : null
+  } catch {
+    return null
+  }
+}
+
 /**
- * Takes the lock beside `dataFile` for this process, or refuses. A lock left by a process
- * that is no longer running — a crash, a power cut — is taken over, since nothing holds it.
+ * Whether `held` holds nothing any longer: written before this machine last booted — a
+ * power cut, a reboot — whatever its pid now names, since a pid means something only
+ * within one boot; or by a process no longer running (reviews of #219).
  */
-async function lock(dataFile: string): Promise<() => Promise<void>> {
+const stale = (held: Holder, now: number): boolean =>
+  Math.abs(held.bootedAt - bootedAt(now)) > BOOT_SLACK_MS || !running(held.pid)
+
+/**
+ * Takes the lock beside `dataFile` for this process, or refuses (reviews of #219).
+ *
+ * - **It exists only once it names its holder.** The holder is written to a file of its
+ *   own and linked into place, and `link` fails if the lock is there: there is no moment
+ *   when the lock is there and empty, for a second relay to read as nobody's.
+ * - **A lock that does not say who holds it is held**, never stale: refused, with what to
+ *   do. Guessing it was nobody's is how two relays come to share a file.
+ * - **A stale lock is taken over**, by moving it aside under a name of this process's own
+ *   and checking that what moved is what was judged stale; anything else is put back.
+ *
+ * Returns what lets go of it, which removes the lock only while it still names this relay.
+ */
+async function lock(dataFile: string, now: () => number): Promise<() => Promise<void>> {
   const path = `${dataFile}.lock`
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const handle = await open(path, 'wx')
-      await handle.writeFile(String(process.pid), 'utf8')
-      await handle.close()
-      return () => rm(path, { force: true })
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
-      const pid = Number(await readFile(path, 'utf8').catch(() => ''))
-      if (Number.isInteger(pid) && pid > 0 && running(pid)) {
+  const mine = JSON.stringify({ pid: process.pid, bootedAt: bootedAt(now()) } satisfies Holder)
+  const ours = `${path}.${process.pid}`
+  const aside = `${path}.stale.${process.pid}`
+  const ifUnheld = `If no relay is running on ${dataFile}, delete ${path} and start again.`
+  await writeFile(ours, mine, 'utf8')
+  try {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await link(ours, path)
+        return async () => {
+          if ((await readFile(path, 'utf8').catch(() => null)) === mine) await rm(path)
+        }
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
+      }
+      const text = await readFile(path, 'utf8').catch(() => null)
+      const held = holderIn(text)
+      if (held === null) {
+        throw new RelayLockedError(`${path} does not say which relay holds it. ${ifUnheld}`)
+      }
+      if (!stale(held, now())) {
         throw new RelayLockedError(
-          `Another relay (process ${pid}) is using ${dataFile}. Stop it first; two relays on ` +
-            'one file would overwrite each other.',
+          `Another relay (process ${held.pid}) holds ${path}; two relays on one file would ` +
+            `overwrite each other. ${ifUnheld}`,
         )
       }
-      await rm(path, { force: true })
+      await rename(path, aside).catch(() => undefined)
+      const moved = await readFile(aside, 'utf8').catch(() => null)
+      if (moved !== null && moved !== text) {
+        // Someone else's fresh lock, taken in between: theirs, so it goes back.
+        await link(aside, path).catch(() => undefined)
+        await rm(aside, { force: true })
+        throw new RelayLockedError(`Another relay took ${path} as this one started. ${ifUnheld}`)
+      }
+      await rm(aside, { force: true })
     }
+    throw new RelayLockedError(`Could not take ${path}. ${ifUnheld}`)
+  } finally {
+    await rm(ours, { force: true })
   }
-  throw new RelayLockedError(`Could not take the lock beside ${dataFile}.`)
 }
 
 const running = (pid: number): boolean => {
@@ -123,34 +216,56 @@ const running = (pid: number): boolean => {
 }
 
 export interface Running {
-  /** Where it listens, as the device and viewers would reach it. */
+  /**
+   * Where this machine reaches it. For a host that is one address, also where the device
+   * and viewers would; for a wildcard (`0.0.0.0`, `::`), loopback, since the wildcard
+   * itself is not an address anything can reach (reviews of #219).
+   */
   url: string
+  /** A new one-time token for the check-in device, as at start; voids any earlier one. */
+  issueToken: () => Promise<void>
   /** Stops listening, finishes what is in flight, and lets go of the file. */
   close: () => Promise<void>
 }
 
+/** Where the relay's lines go. */
+export interface Output {
+  /** One JSON line a request: method, route, status, time. Standard output, in `main`. */
+  log: (line: string) => void
+  /** What a person running it should know. Standard error, in `main`. */
+  tell: (line: string) => void
+  /**
+   * Whether the token itself may be shown, beside the file it is written to: only when a
+   * person is at a terminal, never into a log (reviews of #219).
+   */
+  showToken: boolean
+}
+
+const WILDCARDS = new Set(['0.0.0.0', '::'])
+
+/** How long `close` waits for requests in flight before cutting them off. */
+export const CLOSE_GRACE_MS = 10 * 1000
+
 /**
  * Starts the relay: takes the file's lock, reads the file (a file it cannot read stops it
- * here, before it listens), prints a token if no device is enrolled, and listens. `say` is
- * where its lines go: the token, where it listens, and the log.
+ * here, before anything else), listens, and only then — the relay known to be running —
+ * gives the check-in device its token if none is enrolled (reviews of #219).
+ *
+ * **The token is written to a file beside the data file**, `<data>.token`, readable by the
+ * relay's own user only, and the path is what is said. A token said on standard output or
+ * error would land in the journal or a log file, kept long after it was used, and readable
+ * by whoever reads logs. Shown as well only to a person at a terminal (`showToken`).
  */
 export async function startRelay(
   config: RelayConfig,
-  say: (line: string) => void,
+  out: Output,
   now: () => number = Date.now,
 ): Promise<Running> {
-  const unlock = await lock(config.dataFile)
+  const unlock = await lock(config.dataFile, now)
   try {
     const store = createRelayStore(config.dataFile)
-    try {
-      const token = await store.issueToken(now())
-      const minutes = ENROL_TOKEN_TTL_MS / 60_000
-      say(`No check-in device is enrolled. Its one-time token, for the next ${minutes} minutes:`)
-      say(`  ${token}`)
-    } catch (err) {
-      if (!(err instanceof DeviceEnrolledError)) throw err
-      say('A check-in device is enrolled.')
-    }
+    // Read now, so a file it cannot read stops it before it listens.
+    await store.roleOf('')
     const tls =
       config.tls === null
         ? undefined
@@ -162,7 +277,7 @@ export async function startRelay(
       store,
       now,
       tls,
-      log: (entry) => say(JSON.stringify(entry)),
+      log: (entry) => out.log(JSON.stringify(entry)),
     })
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)
@@ -171,15 +286,55 @@ export async function startRelay(
         resolve()
       })
     })
+    // Kept for the relay's life (reviews of #219): an accept that fails — out of file
+    // descriptors, say — is said, and the relay goes on listening, rather than an
+    // unhandled 'error' ending it with its lock behind.
+    server.on('error', (err) => out.tell(`The relay could not take a connection: ${err.message}`))
+
     const { port } = server.address() as AddressInfo
-    const host = isIP(config.host) === 6 ? `[${config.host}]` : config.host
-    const url = `${tls === undefined ? 'http' : 'https'}://${host}:${port}`
-    say(`The relay is listening at ${url}.`)
+    const scheme = tls === undefined ? 'http' : 'https'
+    const wildcard = WILDCARDS.has(config.host)
+    const reachable = wildcard ? '127.0.0.1' : config.host
+    const host = isIP(reachable) === 6 ? `[${reachable}]` : reachable
+    const url = `${scheme}://${host}:${port}`
+    out.tell(
+      wildcard
+        ? `The relay is listening on every address, port ${port} (from this machine, ${url}).`
+        : `The relay is listening at ${url}.`,
+    )
+
+    const tokenFile = `${config.dataFile}.token`
+    const issueToken = async (): Promise<void> => {
+      try {
+        const token = await store.issueToken(now())
+        await rm(tokenFile, { force: true })
+        await writeFile(tokenFile, `${token}\n`, { encoding: 'utf8', mode: 0o600 })
+        const minutes = ENROL_TOKEN_TTL_MS / 60_000
+        out.tell(
+          `No check-in device is enrolled. Its one-time token, for the next ${minutes} ` +
+            `minutes, is in ${tokenFile}, readable by this user only.`,
+        )
+        if (out.showToken) out.tell(`  ${token}`)
+      } catch (err) {
+        if (!(err instanceof DeviceEnrolledError)) throw err
+        await rm(tokenFile, { force: true })
+        out.tell('A check-in device is enrolled.')
+      }
+    }
+    await issueToken()
+
     return {
       url,
+      issueToken,
       close: async () => {
-        await new Promise((resolve) => server.close(resolve))
+        const closed = new Promise<Error | undefined>((resolve) => server.close(resolve))
+        // Requests still in flight after the grace are cut off, so a stop always ends.
+        const grace = setTimeout(() => server.closeAllConnections(), CLOSE_GRACE_MS)
+        grace.unref()
+        const err = await closed
+        clearTimeout(grace)
         await unlock()
+        if (err !== undefined) throw err
       },
     }
   } catch (err) {
@@ -192,7 +347,9 @@ export async function startRelay(
 async function main(): Promise<void> {
   const [command] = process.argv.slice(2)
   if (command !== 'start') {
-    process.stderr.write('Usage: npm run relay  (which runs: node relay/dist/main.js start)\n')
+    process.stderr.write(
+      'Usage: node relay/dist/main.js start  (or, in a checkout: npm run relay)\n',
+    )
     process.exitCode = 2
     return
   }
@@ -202,12 +359,37 @@ async function main(): Promise<void> {
     process.exitCode = 1
     return
   }
-  const relay = await startRelay(config, (line) => process.stdout.write(`${line}\n`))
+  const relay = await startRelay(config, {
+    log: (line) => process.stdout.write(`${line}\n`),
+    tell: (line) => process.stderr.write(`${line}\n`),
+    showToken: process.stderr.isTTY === true,
+  })
+  // Stopped once, however many signals arrive while it drains (reviews of #219); a close
+  // that fails is said and exits non-zero. No `process.exit`: once the server is closed
+  // nothing keeps the process, and the last log lines are not cut off in a pipe.
+  let stopping = false
   const stop = (): void => {
-    void relay.close().then(() => process.exit(0))
+    if (stopping) return
+    stopping = true
+    relay.close().then(
+      () => undefined,
+      (err: unknown) => {
+        process.stderr.write(`The relay did not stop cleanly: ${String(err)}\n`)
+        process.exitCode = 1
+      },
+    )
   }
-  process.once('SIGINT', stop)
-  process.once('SIGTERM', stop)
+  process.on('SIGINT', stop)
+  process.on('SIGTERM', stop)
+  // A token on demand, from the running relay, which stays the only writer of its file
+  // (review of #219). SIGUSR2, since Node keeps SIGUSR1 for its debugger; Windows has none.
+  if (process.platform !== 'win32') {
+    process.on('SIGUSR2', () => {
+      relay.issueToken().catch((err: unknown) => {
+        process.stderr.write(`No token was issued: ${String(err)}\n`)
+      })
+    })
+  }
 }
 
 // Run only as the program, not when a test imports this file.
