@@ -16,8 +16,12 @@ import {
   MAX_BODY_BYTES,
   MAX_ENVELOPES_PER_POST,
   MAX_SEALED_CHARS,
+  MAX_WAITING_CHARS_PER_VIEWER,
+  MAX_WAITING_PER_VIEWER,
+  MIN_UPLINK_BITS_PER_SECOND,
   PAIRING_TTL_MS,
   requestBytes,
+  REQUEST_TIMEOUT_MS,
   REQUEST_WINDOW_MS,
 } from '@kinvue/core/sync/protocol'
 
@@ -151,6 +155,24 @@ describe('the limits on a post (review of #216)', () => {
     const length = MAX_ENVELOPES_PER_POST + 1
     const tooMany = { envelopes: Array.from({ length }, () => envelope) }
     expect(checkPostEnvelopes(tooMany)).toBe(`envelopes: more than ${MAX_ENVELOPES_PER_POST}`)
+  })
+})
+
+describe('what one mailbox may hold (review of #218)', () => {
+  it('is stated in bytes as well as envelopes: 16 MiB', () => {
+    expect(MAX_WAITING_CHARS_PER_VIEWER).toBe(MAX_WAITING_PER_VIEWER * MAX_SEALED_CHARS)
+    expect(MAX_WAITING_CHARS_PER_VIEWER).toBe(16 * 1024 * 1024)
+  })
+})
+
+describe('the time a request may take (review of #218)', () => {
+  it('lets the largest post arrive over the slowest uplink it names', () => {
+    const seconds = (MAX_BODY_BYTES * 8) / MIN_UPLINK_BITS_PER_SECOND
+    expect(REQUEST_TIMEOUT_MS).toBeGreaterThan(seconds * 1000)
+  })
+
+  it('names a slow line, not a fast one', () => {
+    expect(MIN_UPLINK_BITS_PER_SECOND).toBeLessThanOrEqual(512 * 1000)
   })
 })
 

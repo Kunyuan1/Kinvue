@@ -29,7 +29,7 @@ afterEach(async () => {
 /** A relay file, as text: everything empty unless `fields` says otherwise. */
 const fileOf = (fields: Record<string, unknown>): string =>
   JSON.stringify({
-    version: 1,
+    version: RELAY_FILE_VERSION,
     device: null,
     deviceReceiveKey: null,
     viewers: {},
@@ -84,6 +84,20 @@ describe('retention, as KV-33 sets it', () => {
     expect(before.viewers[0]?.fetchedAt).toEqual([T0])
     const after = await store.deliveries(T0 + DELIVERY_RETENTION_MS)
     expect(after.viewers[0]?.fetchedAt).toEqual([])
+  })
+
+  it('reads without writing, and leaves out what has expired (review of #218)', async () => {
+    const store = await enrolled()
+    await store.post([{ viewer: ann, stream: 1, sealed: sealed('one') }], T0)
+    await store.fetch(ann, T0)
+    const { pairing } = await store.openPairing(T0)
+    const before = await readFile(path, 'utf8')
+    // Everything here has expired by now: shown as gone, and still in the file.
+    const later = T0 + DELIVERY_RETENTION_MS
+    const standing = (await store.deliveries(later)).viewers[0]
+    expect(standing).toMatchObject({ fetchedAt: [], highestWaiting: null })
+    expect(await store.pairing(pairing, later)).toBeNull()
+    expect(await readFile(path, 'utf8')).toBe(before)
   })
 
   it('writes the expiry, so a restart does not bring an expired envelope back', async () => {
@@ -158,10 +172,7 @@ describe('the file', () => {
   it.each([
     ['not JSON', 'nope'],
     ['no version', JSON.stringify({ device: null, viewers: {}, ended: {} })],
-    [
-      'a device that is not a key',
-      JSON.stringify({ version: 1, device: 'x', viewers: {}, ended: {} }),
-    ],
+    ['a device that is not a key', fileOf({ device: 'x', deviceReceiveKey: receiveKey() })],
     ['an envelope without its bytes', withAnn({ waiting: [{ stream: 1, postedAt: 0 }] })],
     // What the routes would never admit (review of #216): the check is all that stands
     // between a hand-edited or downgraded file and them.
@@ -179,16 +190,42 @@ describe('the file', () => {
     ['a device with one of its two keys', fileOf({ device: ann, deviceReceiveKey: null })],
     ['a token kept as itself, not its hash', fileOf({ tokens: { [sealed('token')]: 0 } })],
     ['a pairing id not in base32', fileOf({ pairings: { 'abc': { expiresAt: 0, viewer: null } } })],
+    ['a pairing that is not an object', fileOf({ pairings: { ABCDEFGHJK: 7 } })],
+    [
+      'a pairing joined by a viewer already in',
+      withAnn(
+        {},
+        {
+          pairings: {
+            ABCDEFGHJK: { expiresAt: 0, viewer: { key: ann, receiveKey: receiveKey() } },
+          },
+        },
+      ),
+    ],
     [
       'a pairing joined by half a viewer',
       fileOf({ pairings: { ABCDEFGHJK: { expiresAt: 0, viewer: { key: ann } } } }),
     ],
-  ])('refuses a file with %s, and repairs nothing', async (_what, text) => {
+  ])('refuses a file with %s, and repairs nothing', async (what, text) => {
     await writeFile(path, text, 'utf8')
-    await expect(createRelayStore(path).roleOf(ann)).rejects.toBeInstanceOf(
-      UnreadableRelayFileError,
-    )
+    const refusal = createRelayStore(path).roleOf(ann)
+    await expect(refusal).rejects.toBeInstanceOf(UnreadableRelayFileError)
+    // Refused for what is wrong with it, not for its version (review of #218): a case
+    // written at the wrong version would pass on that alone, and prove nothing.
+    if (what !== 'not JSON' && what !== 'no version') {
+      await expect(refusal).rejects.toThrow(/^The relay file: /)
+    }
     expect(await readFile(path, 'utf8')).toBe(text)
+  })
+
+  it('refuses a file an older relay wrote, and says so (review of #218)', async () => {
+    const older = fileOf({ version: RELAY_FILE_VERSION - 1 })
+    await writeFile(path, older, 'utf8')
+    await expect(createRelayStore(path).roleOf(ann)).rejects.toThrow(/written by an older relay/)
+  })
+
+  it('reads as version 2: the device’s receiving key, tokens and pairings', () => {
+    expect(RELAY_FILE_VERSION).toBe(2)
   })
 
   it('leaves no copy of the state behind when a write fails (review of #216)', async () => {
@@ -231,6 +268,19 @@ describe('the file', () => {
     const { pairing } = await store.openPairing(T0)
     const keys = { key: ann, receiveKey: receiveKey() }
     expect(await store.join(pairing, keys, T0)).toEqual({ kind: 'unknown' })
+  })
+
+  it('confirms no viewer over one already enrolled (review of #218)', async () => {
+    // `join` checks too; this holds without leaning on one pairing at a time.
+    const store = await enrolled()
+    await store.post([{ viewer: ann, stream: 1, sealed: sealed('one') }], T0)
+    const { pairing } = await store.openPairing(T0)
+    const bill = { key: identity().key, receiveKey: receiveKey() }
+    expect((await store.join(pairing, bill, T0)).kind).toBe('joined')
+    await store.enrolViewer(bill.key, receiveKey(), T0)
+    await store.post([{ viewer: bill.key, stream: 1, sealed: sealed('for bill') }], T0)
+    expect(await store.confirm(pairing, T0)).toBe('key-in-use')
+    expect(await store.fetch(bill.key, T0)).toHaveLength(1)
   })
 
   it('keeps the state it had when a write fails', async () => {

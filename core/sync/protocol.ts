@@ -247,16 +247,40 @@ export const MAX_ENVELOPES_PER_POST = 64
 
 /**
  * The most envelopes waiting for one viewer. Fourteen days' retention of a few check-ins a
- * day is a few dozen; this is room for a household many times over, and a ceiling on what
- * one mailbox can make the relay hold (KV-39).
+ * day, for each person a viewer follows, is a few dozen to a hundred or so; this is room
+ * for that, and a ceiling on what one mailbox can make the relay hold (KV-39).
  */
-export const MAX_WAITING_PER_VIEWER = 1024
+export const MAX_WAITING_PER_VIEWER = 256
+
+/**
+ * **What that ceiling costs, in bytes** (review of #218): at most this much sealed
+ * base64url waits for one viewer, 16 MiB. The relay keeps its whole state in one file,
+ * cloned and rewritten on each change, so this is also the worst a change has to carry for
+ * each viewer. At the expected size — a few dozen envelopes of a few KB — that is a few
+ * hundred KB; the ceiling is what keeps the rest from becoming the relay's problem.
+ */
+export const MAX_WAITING_CHARS_PER_VIEWER = MAX_WAITING_PER_VIEWER * MAX_SEALED_CHARS
 
 /** What one envelope's JSON adds around its sealed bytes: its key, stream and quoting. */
 const ENVELOPE_JSON_CHARS = 128
 
 /** The largest body the relay reads: the largest post the two limits above allow. */
 export const MAX_BODY_BYTES = MAX_ENVELOPES_PER_POST * (MAX_SEALED_CHARS + ENVELOPE_JSON_CHARS) + 64
+
+/**
+ * The slowest uplink a device can count on sending the largest post over, in bits a
+ * second: a poor rural line's upstream. A device on a slower one sends smaller posts.
+ */
+export const MIN_UPLINK_BITS_PER_SECOND = 256 * 1000
+
+/**
+ * How long the relay gives one request to arrive, whole: the largest post at the slowest
+ * uplink above, and half a minute more (review of #218). Shorter, a post the limits allow
+ * could never arrive on that line — cut, retried, and cut again — and it would be the
+ * catch-up after an outage, when posts are largest.
+ */
+export const REQUEST_TIMEOUT_MS =
+  Math.ceil((MAX_BODY_BYTES * 8 * 1000) / MIN_UPLINK_BITS_PER_SECOND) + 30 * 1000
 
 const BASE64URL = /^[A-Za-z0-9_-]+$/
 
