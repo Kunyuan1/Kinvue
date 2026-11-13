@@ -59,11 +59,21 @@ describe('exact version pins (KV-131)', () => {
   })
 
   it.each(PINNED)('installs %s at exactly that version', (name, declared, locked) => {
-    // A half-reverted pin — package.json exact, lockfile still a range, or a
-    // resolved version that no longer matches — fails here rather than on the
-    // next `npm ci`.
-    expect(locked).toBe(declared)
+    // A half-reverted pin — package.json exact, and a resolved version that no
+    // longer matches — fails here rather than on the next `npm ci`.
     expect(installed[`node_modules/${name}`]?.version).toBe(declared)
+    // The lockfile's own copy of the app's manifest: the pin, or a caret on
+    // exactly it, and nothing looser (KV-229). The caret is Dependabot's. Since
+    // the pins moved into a workspace (KV-38) it writes the manifest right
+    // (`45.2.3`) and this copy as `^45.2.3`, whatever `versioning-strategy`
+    // says, so holding the copy to the pin itself turned every Electron,
+    // electron-builder and SDK PR red (#189, #212, #215, #237) — each to be
+    // replaced by hand, the delay those three are kept out of the group to
+    // avoid. The copy pins nothing: npm installs what the manifest declares
+    // and the entry above resolves, both still held exactly, and rewrites the
+    // copy to match at the next `npm install`. A caret on another version, or
+    // any other range, is a lockfile that has drifted from its manifest.
+    expect([declared, `^${declared}`]).toContain(locked)
   })
 
   it('leaves room for four open majors beside every PR that arrives alone (review of #193)', () => {

@@ -54,6 +54,19 @@ updates:
       # rule and not a closed PR: 25 was proposed after 26 was closed.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+      # esbuild is held inside the range electron-vite takes (KV-229). The relay
+      # bundles with the one esbuild the tree already shares, at the root, and
+      # tests/workspaces.test.ts holds its range to that copy (reviews of #219).
+      # Dependabot knows nothing of that: it raised the relay's range to the
+      # newest release, past electron-vite's, which failed that test in the
+      # group's PR every week and took eslint, vitest and React down with it
+      # (#220). Bumps inside the range still arrive, in the group.
+      #
+      # Not for good: when an electron-vite release takes a later esbuild, the
+      # same test file fails on this rule — the two ranges then overlap — and it
+      # is raised or removed in that PR.
+      - dependency-name: "esbuild"
+        versions: [">=0.26.0"]
     labels: ["chore"]
     commit-message:
       prefix: "chore(deps)"
