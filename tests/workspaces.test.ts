@@ -76,6 +76,25 @@ describe('the workspaces (KV-38)', () => {
     expect(packages['node_modules/electron-vite/node_modules/esbuild']).toBeUndefined()
   })
 
+  it('keep Dependabot from raising the relay’s esbuild past the one the tree shares (KV-229)', () => {
+    // Without the rule, the routine group's PR raises the relay's range to the newest
+    // esbuild, the test above fails, and every other bump in the group waits behind it
+    // (#220). The rule holds back exactly what electron-vite does not take: a version
+    // both would accept is one a bump may still reach, so the two must not overlap —
+    // which is also what fails here, on purpose, the day electron-vite moves on and
+    // the rule has to be raised or removed.
+    const yml = readFileSync(resolve(__dirname, '../.github/dependabot.yml'), 'utf8')
+    const held = /- dependency-name: "esbuild"\s*\n\s*versions: \["([^"]+)"\]/.exec(yml)?.[1]
+    expect(held, 'dependabot.yml has no ignore rule for esbuild').toBeTypeOf('string')
+    const packages = lock.packages as Record<string, Manifest | undefined>
+    const electronVite = packages['node_modules/electron-vite']?.dependencies?.esbuild ?? ''
+    expect(semver.validRange(held ?? ''), `not a range: ${held}`).not.toBeNull()
+    expect(semver.intersects(held ?? '', electronVite), `${held} and ${electronVite}`).toBe(false)
+    // It holds back what is past the range, not what is before it: a rule written the
+    // wrong way round would also not overlap, and would stop every bump that is wanted.
+    expect(semver.gtr(semver.minVersion(held ?? '')?.version ?? '0.0.0', electronVite)).toBe(true)
+  })
+
   it('leave core depending on nothing, an app least of all', () => {
     // The lint rule (KV-15) keeps Electron, React, the SDK and app/ out of core's
     // imports. This keeps them out of its manifest, where a dependency would install

@@ -718,6 +718,14 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   relaxed. They are the only two pinned, because they are the only two whose risk CI
   cannot see — a native ABI and a network surface.
 
+  Two things about Dependabot since the workspaces (KV-229). Its PR for a pinned package
+  writes the pin exactly in `app/package.json` and as a caret (`^45.2.3`) in the
+  lockfile's copy of that manifest; the test takes that, since the copy pins nothing, and
+  the next `npm install` on `main` writes it back to the pin — expect that one line in
+  whichever PR runs it. And esbuild is held to the range electron-vite takes
+  (`dependabot.yml`'s `ignore`), because the relay bundles with the tree's one copy; the
+  rule is raised or removed when electron-vite moves, and a test fails to say so.
+
 ---
 
 ## Known Limitations / Gotchas
