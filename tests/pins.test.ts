@@ -218,8 +218,8 @@ describe('the declared Node range (KV-134)', () => {
  * typecheck`.
  */
 const TYPES_NODE_MAJOR = 24
-const TYPES_NODE_MINOR = 21
-const TYPES_NODE_READ_FROM = '44.4.5'
+const TYPES_NODE_MINOR = 22
+const TYPES_NODE_READ_FROM = '44.10.2'
 
 /** A version the lockfile or manifest must hold; failing loudly, never defaulting to one that passes. */
 function required(value: string | undefined, what: string): string {
