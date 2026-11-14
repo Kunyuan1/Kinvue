@@ -54,8 +54,28 @@ function runtimeProblem(): string | null {
   return null
 }
 
-const problem = runtimeProblem()
-if (problem !== null) {
+/**
+ * One Kinvue for each history (KV-222). A second start — the shortcut pressed
+ * again while the first window is still opening, which is an ordinary thing to
+ * do — would otherwise be a second main process on the same files: its own
+ * queue of writes beside the first's, both through one temporary file, so a
+ * check-in could be dropped or a half-written history renamed into place; its
+ * own seal at start; and its own session on the one camera. The store's
+ * one-at-a-time rule (`core/session/store.ts`) holds within a process, so this
+ * is what makes it hold at all.
+ *
+ * Asked here, before anything else is loaded: the second copy leaves without
+ * the SDK's runtime, a store or a window, and the first is told, and brings
+ * its window forward (`index.ts`). The lock is Electron's, kept with
+ * `userData`, so a copy started on another folder (`--user-data-dir`, as
+ * README's scratch launches are) is another history and runs beside this one.
+ */
+const onlyCopy = app.requestSingleInstanceLock()
+
+const problem = onlyCopy ? runtimeProblem() : null
+if (!onlyCopy) {
+  app.quit()
+} else if (problem !== null) {
   dialog.showErrorBox('Kinvue could not start', problem)
   app.exit(1)
 } else {

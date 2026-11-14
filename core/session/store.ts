@@ -957,10 +957,12 @@ export function createJsonSessionStore(
      * Read-modify-write, one at a time within this process (`exclusive`).
      *
      * Two writes genuinely at once would have the later read miss the earlier
-     * write and drop it; in this process they now queue (KV-175). The
-     * single-window guard in `app/main` means there is one process, so that is
-     * every writer today — it stops holding the moment a second process writes
-     * here, which is #39's problem to inherit.
+     * write and drop it; in this process they now queue (KV-175). That there
+     * is one process is the desktop app's to hold, and since KV-222 it does:
+     * Electron's single-instance lock, asked for in `app/main/boot.ts` before
+     * a store is made. Until then nothing held it — this said a "single-window
+     * guard" did, and there was none. Any other program writing this file
+     * is outside the queue, as a second process always was.
      */
     append(record, { onlyIfListed = false } = {}) {
       return exclusive(async () => {

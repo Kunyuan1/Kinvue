@@ -146,8 +146,10 @@ app/                     the desktop app (its package is still named `kinvue`, b
                          the Windows installer (KV-19)
   main/
     boot.ts              the main process's first code: everything before `ready`, and
-                         where the SDK's runtime is, then index.ts (KV-19)
+                         where the SDK's runtime is, then index.ts (KV-19). It takes the
+                         single-instance lock first: one Kinvue for each history (KV-222)
     index.ts             window, IPC handlers, store wiring
+    single-instance.ts   started again while running: the window comes forward (KV-222)
     links.ts             the one place app/main opens a link out, from a fixed list
     api-key.ts           the household's SmartSpectra key: held, sealed, or asked again
                          (KV-19)

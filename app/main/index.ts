@@ -49,6 +49,7 @@ import { localStateHoldsKey, osCipher, protectionOf } from "./cipher";
 import { captureVitals } from "./vitals";
 import { ERR_ABORTED, loadFailureMessage, showWhenReady } from "./window-show";
 import { isAppUrl, isTrustedSender, resolveAppPage } from "./security";
+import { bringForward } from "./single-instance";
 import { toCaptureReply, type CaptureReply } from "../shared/capture-reply";
 import type { Protection } from "../shared/protection";
 import { namedResult, shown, type NamedResult, type PeopleNow } from "../shared/people";
@@ -780,6 +781,14 @@ void app.whenReady().then(async () => {
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
+
+  // KV-222. Started again while running: `boot.ts` holds the single-instance
+  // lock, so the second copy has already left, and this one comes forward.
+  // Registered here, once there is a window to bring: a second start before
+  // `ready` finds one opening anyway.
+  app.on("second-instance", () => {
+    bringForward(BrowserWindow.getAllWindows(), createWindow);
   });
 
   // The seal starts only once the window is up (review of #187). Sealing calls
