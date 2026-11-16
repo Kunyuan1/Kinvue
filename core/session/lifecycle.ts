@@ -512,6 +512,17 @@ export function describeRestore(outcome: RestoreOutcome, day: (instant: string) 
 }
 
 /**
+ * What a deletion says it did (KV-21), for one card and for the panel alike.
+ * Never "Deleted 0 check-ins" (KV-235): none goes only when the list on screen
+ * was out of date and what was chosen from it had already been deleted.
+ */
+export function describeDeleted(removed: number): string {
+  return removed === 0
+    ? 'Nothing was deleted: what was chosen had already been deleted.'
+    : `Deleted ${checkIns(removed)}.`
+}
+
+/**
  * Said after `describeRestore` when the file's person was not on this computer
  * and has been added (KV-18): an empty string when they were already here.
  */

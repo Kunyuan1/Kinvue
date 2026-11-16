@@ -14,13 +14,14 @@ const BUTTON = 'rounded-lg border px-4 py-2' +
  *
  * "Keep them" has the focus: the choice that changes nothing is the default.
  */
-export default function ConfirmDeletion({
+export default function ConfirmDeletion<Deleted>({
   heading,
   children,
   deleteLabel,
   canExport = true,
   afterNote,
   onDelete,
+  onDeleted,
   onExport,
   onCancel,
   onFailure,
@@ -34,8 +35,15 @@ export default function ConfirmDeletion({
   canExport?: boolean
   /** Said under the buttons, beside the export it offers, so it is not read as an undo. */
   afterNote: string
-  /** Deletes, and whatever follows on the dashboard; a throw is `onFailure`'s. */
-  onDelete: () => Promise<void>
+  /** Deletes, and nothing else: a throw is `onFailure`'s, and means nothing went. */
+  onDelete: () => Promise<Deleted>
+  /**
+   * What follows a deletion that landed, given what `onDelete` resolved to.
+   * Called outside `onFailure`'s reach (KV-235): by now the deletion cannot be
+   * undone, so nothing that goes wrong after it — a reload, most of all — can
+   * be said as the deletion failing. It answers for its own failures.
+   */
+  onDeleted: (deleted: Deleted) => void
   /**
    * Makes an export, from the screen that offers one first: the dashboard's
    * one export, resolving to what to say, shown here beside the Delete it
@@ -52,14 +60,22 @@ export default function ConfirmDeletion({
   // "Export first" asks the same question the panel does (KV-175).
   const [choosing, setChoosing] = useState(false)
 
-  const run = async (step: () => Promise<void>): Promise<void> => {
+  const remove = async (): Promise<void> => {
     setBusy(true)
+    let deleted: Deleted
     try {
-      await step()
+      deleted = await onDelete()
     } catch (e) {
       onFailure(e)
+      return
     } finally {
       setBusy(false)
+    }
+    // Not in the `try` above, on purpose: see `onDeleted`.
+    try {
+      onDeleted(deleted)
+    } catch (e) {
+      console.error(e)
     }
   }
 
@@ -96,7 +112,7 @@ export default function ConfirmDeletion({
         <button
           type="button"
           disabled={busy || choosing}
-          onClick={() => void run(onDelete)}
+          onClick={() => void remove()}
           className={`${BUTTON} border-(--color-elevated) text-(--color-elevated)`}
         >
           {deleteLabel}

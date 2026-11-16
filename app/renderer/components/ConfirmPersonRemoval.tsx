@@ -23,8 +23,8 @@ export default function ConfirmPersonRemoval({
   checkIns: number
   /** Makes an export of their history first, resolving to what to say, or null. */
   onExport: (passphrase?: string) => Promise<string | null>
-  /** Called with how many check-ins went, once they have. */
-  onDone: (removed: number) => Promise<void>
+  /** Called with how many check-ins went, once they have; it answers for what it does next. */
+  onDone: (removed: number) => void
   onCancel: () => void
   /** A step that failed: the dashboard says so the way it says any other. */
   onFailure: (e: unknown) => void
@@ -43,9 +43,8 @@ export default function ConfirmPersonRemoval({
       // Nothing of theirs to export.
       canExport={checkIns > 0}
       afterNote="An export is a copy to keep: restoring it will not bring them back."
-      onDelete={async () => {
-        await onDone(await window.kinvue.removePerson(person.id))
-      }}
+      onDelete={() => window.kinvue.removePerson(person.id)}
+      onDeleted={onDone}
       onExport={onExport}
       onCancel={onCancel}
       onFailure={onFailure}

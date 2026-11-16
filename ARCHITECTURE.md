@@ -1568,6 +1568,15 @@ Second, deleting a person (`store.removePerson`, `ConfirmPersonRemoval.tsx`):
 - **One shell for confirming a deletion** (`ConfirmDeletion.tsx`): deleting check-ins and
   deleting a person say different things in it, and share its buttons, its export and
   its focus, so a change to how a deletion is confirmed reaches both (review of #206).
+- **What landed is said as landed, whatever the reload after it does** (KV-235). A save, a
+  deletion, a restore or a rename is followed by a reload, and a reload that fails is a
+  stale list, not a failed write. The shell runs what follows a deletion outside the
+  handler that says "could not be deleted", so no caller can put a reload inside it. The
+  dashboard then says what landed, that the list could not be reloaded, and why
+  (`staleText`) — its own cause for each store failure, since the store's sentence for a
+  failed read ends "Nothing has been changed", which is true of the read and false of the
+  write before it. *Reload the list* is offered under it, because the cards shown are from
+  before the write: a deleted one is still drawn, with its Delete still live.
 - ***Start a new history* says it is the household's:** "This sets aside everyone's
   check-ins on this computer, and their names, in the old file, and starts an empty
   history for everyone", and its notice says the old file kept everyone's check-ins and

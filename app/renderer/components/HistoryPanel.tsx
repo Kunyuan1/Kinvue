@@ -4,6 +4,7 @@ import {
   chosenFor,
   describeLastExport,
   describeAdded,
+  describeDeleted,
   describeRefusal,
   describeRestore,
   type Removal,
@@ -89,11 +90,11 @@ export default function HistoryPanel({
   onRestored: (into: RestoredInto) => Promise<void>
   onFailure: (e: unknown, fallback: string) => void
   /**
-   * A deletion that landed, and the reload after it that did not (KV-235):
-   * `text` is said whole, never replaced by a failure's own "nothing has been
-   * changed".
+   * A deletion or a restore that landed, and the reload after it that did not
+   * (KV-235): `landed` says what went through, and the dashboard adds that the
+   * list is out of date — never a failure's own "nothing has been changed".
    */
-  onStale: (e: unknown, text: string) => void
+  onStale: (e: unknown, landed: string) => void
 }) {
   const [said, setSaid] = useState<string | null>(null)
   const [before, setBefore] = useState('')
@@ -120,6 +121,21 @@ export default function HistoryPanel({
     }
   }
 
+  /**
+   * After a deletion that landed: deleted is deleted, so a reload that fails
+   * is the dashboard's to say, with what was deleted (KV-235), and not here as
+   * well.
+   */
+  const deleted = async (done: string): Promise<void> => {
+    try {
+      await onChanged()
+    } catch (e) {
+      onStale(e, done)
+      return
+    }
+    setSaid(done)
+  }
+
   /** What any restore came to, plain, protected or confirmed. */
   const landed = async (result: RestoreResult): Promise<void> => {
     if (!result.ok) {
@@ -131,16 +147,18 @@ export default function HistoryPanel({
       setSaid(describeRefusal(result.refusal, deviceDay))
       return
     }
-    // Said before the reload, and kept if the reload fails: written is written,
-    // and the step's own "nothing has been changed" would be false over it
-    // (review of #207).
+    // Kept if the reload fails: written is written, and neither the step's own
+    // "nothing has been changed" nor the store's would be true over it (review
+    // of #207, KV-235). Said by the dashboard's alert then, and not here as
+    // well, so it is heard once.
     const said = describeRestore(result.outcome, deviceDay) + describeAdded(result.into.added)
-    setSaid(said)
     try {
       await onRestored(result.into)
     } catch (e) {
-      onFailure(e, `${said} The list could not be reloaded.`)
+      onStale(e, said)
+      return
     }
+    setSaid(said)
   }
 
   const restore = (): Promise<void> =>
@@ -370,17 +388,9 @@ export default function HistoryPanel({
           onFailure={(e) =>
             onFailure(e, 'The check-ins could not be deleted. Nothing has been changed.')
           }
-          onDone={async (removed) => {
+          onDone={(removed) => {
             setRemoving(null)
-            // Said before the reload, and kept if the reload fails, as a
-            // restore is (`landed`): deleted is deleted (KV-235).
-            const done = `Deleted ${String(removed)} check-in${removed === 1 ? '' : 's'}.`
-            setSaid(done)
-            try {
-              await onChanged()
-            } catch (e) {
-              onStale(e, `${done} The list could not be reloaded.`)
-            }
+            void deleted(describeDeleted(removed))
           }}
         />
       )}

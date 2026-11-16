@@ -9,7 +9,7 @@ import {
   type TaggedFailure,
 } from '@kinvue/core/capture/failure'
 import { UnreachableStoreError, UnreadableStoreError } from '@kinvue/core/session/store'
-import { dashboardErrorText } from '@renderer/dashboardError'
+import { dashboardErrorText, staleText } from '@renderer/dashboardError'
 
 /**
  * Three quite different situations used to reach the screen as the same raw
@@ -181,6 +181,41 @@ describe('the dashboard, when the history will not open (KV-95)', () => {
     expect(dashboardErrorText(bare, 'fallback')).toBe(
       'The saved check-in history could not be read. Nothing in it has been changed.',
     )
+  })
+
+  it('keeps the cause and drops "nothing has been changed" after a write that landed (KV-235)', () => {
+    // The store's sentence is true of the read that failed, and false of the
+    // check-in deleted a moment before it.
+    expect(staleText(unreadable, 'Deleted 1 check-in.')).toBe(
+      'Deleted 1 check-in. The list could not be reloaded. ' +
+        'The saved check-in history could not be read.',
+    )
+    const held = fromMain(new UnreachableStoreError(path, 'EBUSY', new Error('busy')))
+    expect(staleText(held, 'Deleted 1 check-in.')).toBe(
+      'Deleted 1 check-in. The list could not be reloaded. The saved check-in history could ' +
+        'not be opened: another program may be using it, or its permissions may need checking.',
+    )
+    // Anything the dashboard has no words for: what landed, and that the list is stale.
+    expect(staleText(new Error('something odd'), 'Deleted 1 check-in.')).toBe(
+      'Deleted 1 check-in. The list could not be reloaded.',
+    )
+    // Every failure with a sentence of its own, whatever that sentence says.
+    for (const failure of [
+      'store-unreadable',
+      'store-unreachable',
+      'store-newer',
+      'store-record-unknown',
+      'store-locked',
+      'store-undecryptable',
+    ] as const) {
+      const text = staleText(
+        fromMain(new Error(`${failureTag(failure)}: It failed. Nothing has been changed.`)),
+        'The check-in was saved.',
+      )
+      expect(text, failure).toMatch(/^The check-in was saved\. The list could not be reloaded\. \S/)
+      expect(text, failure).not.toMatch(/has been changed/i)
+      expect(text, failure).not.toMatch(/invoking remote method|kinvue\//)
+    }
   })
 
   it('reads a tagged sentence out of any wrapping, and says nothing when the tag is absent', () => {
