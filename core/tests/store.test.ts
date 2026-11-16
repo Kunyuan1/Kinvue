@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import {
   createJsonSessionStore,
   NewerStoreError,
@@ -24,16 +24,36 @@ import { session, sessionBeforeKV16 } from './helpers'
  */
 const renameControl = vi.hoisted(() => ({ failNext: false }))
 
+/**
+ * What reached the disk, in order (KV-223): each flush of a file and each
+ * rename, by the file's name. And a flush that can be made to fail once.
+ */
+const disk = vi.hoisted(() => ({ events: [] as string[], failNextSync: false }))
+
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const file = await actual.open(...args)
+      const sync = file.sync.bind(file)
+      file.sync = async (): Promise<void> => {
+        if (disk.failNextSync) {
+          disk.failNextSync = false
+          throw new Error('EIO: sync failed')
+        }
+        await sync()
+        disk.events.push(`sync ${basename(String(args[0]))}`)
+      }
+      return file
+    },
     rename: async (from: string, to: string): Promise<void> => {
       if (renameControl.failNext) {
         renameControl.failNext = false
         throw new Error('EIO: rename failed')
       }
       await actual.rename(from, to)
+      disk.events.push(`rename ${basename(from)}`)
     },
   }
 })
@@ -332,6 +352,38 @@ describe('the temp-then-rename write', () => {
     expect(await readFile(path, 'utf8')).toBe(before)
     // And the leftover temp file does not poison the next successful append:
     // it is overwritten, never read.
+    await store.append(session({ id: 'next', capturedAt: '2026-09-02T09:00:00.000Z' }))
+    expect((await createJsonSessionStore(path).list('test-person')).map((s) => s.id)).toEqual([
+      'safe',
+      'next',
+    ])
+  })
+
+  it('flushes the temporary file to the disk before it is renamed into place (KV-223)', async () => {
+    // A rename can reach the disk before the text it names. Without the flush
+    // a power cut just after a write leaves `sessions.json` empty or zeros:
+    // the whole history gone, and an empty file read as a first run.
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    disk.events.length = 0
+    await store.append(session({ id: 'kept', capturedAt: '2026-09-01T09:00:00.000Z' }))
+
+    expect(disk.events).toEqual(['sync sessions.json.tmp', 'rename sessions.json.tmp'])
+  })
+
+  it('renames nothing into place when the flush fails', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'safe', capturedAt: '2026-09-01T09:00:00.000Z' }))
+    const before = await readFile(path, 'utf8')
+
+    disk.events.length = 0
+    disk.failNextSync = true
+    await expect(store.append(session({ id: 'doomed' }))).rejects.toThrow(/sync failed/)
+
+    expect(disk.events).toEqual([])
+    expect(await readFile(path, 'utf8')).toBe(before)
+    // The file is closed, not left held: the next write goes through.
     await store.append(session({ id: 'next', capturedAt: '2026-09-02T09:00:00.000Z' }))
     expect((await createJsonSessionStore(path).list('test-person')).map((s) => s.id)).toEqual([
       'safe',

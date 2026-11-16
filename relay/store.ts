@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, unlink } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { replaceFile } from '@kinvue/core/session/replace'
 import {
   DELIVERY_RETENTION_MS,
   ENROL_TOKEN_TTL_MS,
@@ -411,15 +412,14 @@ export function createRelayStore(path: string): RelayStore {
    * of whatever an earlier one left; and removed when the write fails, since it holds the
    * whole state — sealed envelopes included — where retention would never reach it
    * (review of #216). Writes are serial, so one name is never shared by two at once.
+   * Flushed to the disk before the rename (`replaceFile`, KV-223).
    */
   const write = async (next: RelayState): Promise<void> => {
     await mkdir(dirname(path), { recursive: true })
-    const tmp = `${path}.tmp`
     try {
-      await writeFile(tmp, JSON.stringify(next, null, 2), 'utf8')
-      await rename(tmp, path)
+      await replaceFile(path, JSON.stringify(next, null, 2))
     } catch (err) {
-      await unlink(tmp).catch(() => undefined)
+      await unlink(`${path}.tmp`).catch(() => undefined)
       throw err
     }
     state = Promise.resolve(next)

@@ -219,6 +219,8 @@ core/                    `@kinvue/core`. Plain TypeScript, no dependencies: no E
   session/
     types.ts             Vitals, CheckInAnswers, FiredRule, Assessment, SessionRecord
     store.ts             JSON session store (MAIN PROCESS ONLY — imports node:fs)
+    replace.ts           one file in place of another, flushed before the rename, so a
+                         power cut cannot leave it empty (KV-223)
     validate.ts          runtime checks on everything the renderer sends to main
     answers.ts           the four questions: complete, or not a check-in at all
     people.ts            the people on this computer (KV-18): the name rule, the record

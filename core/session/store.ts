@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { failureTag } from '../capture/failure'
 import { asAskedNow } from './answers'
@@ -30,6 +30,7 @@ import {
   type Person,
   type PersonTombstone,
 } from './people'
+import { replaceFile } from './replace'
 import type { SessionRecord, Tombstone } from './types'
 
 /**
@@ -560,10 +561,10 @@ async function read(path: string, cipher: StoreCipher): Promise<FileShape> {
   // Refusing is right everywhere else *because* answering "empty" would let
   // `append` rename one record over real history. A zero-byte file holds no
   // history, so there is none to lose — and it is the likeliest real
-  // corruption of the three: a power cut between `writeFile` and `rename`, an
-  // antivirus quarantine-and-restore, a cloud-sync conflict resolving to
-  // nothing. `JSON.parse('')` throws, so without this it was a permanent
-  // refusal protecting nothing (KV-13 review).
+  // corruption of the three: a power cut on a write made before the flush
+  // (`replaceFile`, KV-223), an antivirus quarantine-and-restore, a
+  // cloud-sync conflict resolving to nothing. `JSON.parse('')` throws, so
+  // without this it was a permanent refusal protecting nothing (KV-13 review).
   if (text.trim() === '') return empty()
 
   // From here a file exists with something in it, so "I do not understand
@@ -723,12 +724,12 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 
 /**
  * Written via a temp file and a rename so a crash mid-write cannot truncate
- * the history. Losing a day's check-in is recoverable; losing the baseline the
- * comparisons depend on is not.
+ * the history, and flushed to the disk before the rename so a power cut cannot
+ * either (`replaceFile`, KV-223). Losing a day's check-in is recoverable;
+ * losing the baseline the comparisons depend on is not.
  */
 async function write(path: string, data: FileShape, cipher: StoreCipher): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
-  const tmp = `${path}.tmp`
   // The version for what it holds (`versionOf`), whatever it was read as.
   const plain = JSON.stringify({ ...data, version: versionOf(data) }, null, 2)
   // Sealed where the cipher encrypts (KV-175), so the temporary file is
@@ -745,8 +746,7 @@ async function write(path: string, data: FileShape, cipher: StoreCipher): Promis
   const text = seal
     ? JSON.stringify({ version: ENVELOPE_VERSION, sealed: cipher.seal(plain) }, null, 2)
     : plain
-  await writeFile(tmp, text, 'utf8')
-  await rename(tmp, path)
+  await replaceFile(path, text)
 }
 
 /**

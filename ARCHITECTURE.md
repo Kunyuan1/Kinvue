@@ -1083,6 +1083,22 @@ Writes go through a temp file and a rename, so a crash mid-write cannot truncate
 history. Losing one day's check-in is recoverable; losing the baseline that every
 comparison depends on is not.
 
+**The temp file is flushed to the disk before it is renamed** (KV-223, `replaceFile` in
+`core/session/replace.ts`). A crash of the app never needed that; a power cut does. A file
+system may record the rename before the text it names, so an unflushed write could come back
+from a power cut as `sessions.json` empty or full of zeros — and an empty file is read as a
+first run, which is the silent-empty outcome the rest of this section refuses. Flushed
+first, the worst a power cut leaves is the history as it was before that write. The key
+file and the relay's file are written the same way. This is from how NTFS and ext4 order
+the two, not from a power cut staged on hardware.
+
+**No earlier copy of the history is kept beside it** (decided in KV-223). With the flush,
+the app's own writes cannot produce the empty file a copy would be there for. And a copy
+would still hold a check-in the caregiver had just deleted (KV-21), until the next write
+replaced it — "removed" said on screen and not yet true on disk. A zero-byte file is
+therefore still read as a first run, as below: there is nothing beside it to prefer, and a
+set-aside file beside it means the caregiver already chose to start again.
+
 **A file that exists and cannot be parsed is refused, not recovered from.** `read` raises
 `UnreadableStoreError`, and because `append` is read-modify-write, that refusal is what
 keeps the history intact: a read answering "empty" for a file it could not parse would push
