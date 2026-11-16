@@ -28,7 +28,16 @@ export interface WindowLike {
  * A window not yet shown is left alone: `showWhenReady` is about to show it
  * (KV-139), and shown from here before its page has drawn, it would be the
  * blank window that waits to avoid. That is the usual case — a second press
- * while the first start is still opening.
+ * while the first start is still opening. **What that costs** (review of
+ * #246): the press does nothing that can be seen until that window shows,
+ * which `showWhenReady` bounds at `SHOW_FALLBACK_MS`, ten seconds from when the
+ * window was made; a press at the second second can wait eight more.
+ *
+ * **"Not visible" is read as "not yet shown", which is true only while nothing
+ * hides the window.** Nothing does today. A window hidden later — macOS's
+ * Cmd+H, or a tray, should there ever be one — is not visible either, and
+ * would be left hidden by a second start, the one thing meant to bring it
+ * back. Whatever adds a way to hide the window has to tell the two apart here.
  */
 export function bringForward(windows: readonly WindowLike[], open: () => void): void {
   const window = windows.find((w) => !w.isDestroyed())

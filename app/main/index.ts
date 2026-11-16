@@ -134,6 +134,28 @@ app.on("web-contents-created", (_event, contents) => {
 });
 
 /**
+ * Started again while running (KV-222): `boot.ts` holds the single-instance
+ * lock, so the second copy has already left, and this one comes forward.
+ *
+ * Listened for from the moment this file loads, not once the window is up
+ * (review of #246). The lock is held from `boot.ts` on, and a start that
+ * stopped partway used to be answered by starting Kinvue again; with the lock
+ * that second start leaves, so whatever holds the lock has to be listening. A
+ * start that fails outright does not stay to hold it: see the end of this file.
+ *
+ * `started` is what lets it open a window: true once start-up has made the
+ * first one. Until then one is on its way, and making another here would be
+ * two windows on one start; after, none left means macOS, where the app
+ * outlives its last window, and a new one is what clicking its icon gives.
+ */
+let started = false;
+app.on("second-instance", () => {
+  bringForward(BrowserWindow.getAllWindows(), () => {
+    if (started) createWindow();
+  });
+});
+
+/**
  * `ipcMain.handle`, answered only for Kinvue's own page. Every handler goes
  * through this; `app/tests/security.test.ts` fails if one is registered directly.
  * The renderer holds no key and no history, and reaches the camera, the key's
@@ -667,7 +689,7 @@ function registerIpc(
   });
 }
 
-void app.whenReady().then(async () => {
+app.whenReady().then(async () => {
   if (envError !== null) {
     // The app still runs — the dashboard reads stored history without a key —
     // but capture will fail, and this says why while the .env is still the
@@ -778,17 +800,10 @@ void app.whenReady().then(async () => {
 
   registerIpc(store, protection, keys);
   createWindow();
+  started = true;
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-
-  // KV-222. Started again while running: `boot.ts` holds the single-instance
-  // lock, so the second copy has already left, and this one comes forward.
-  // Registered here, once there is a window to bring: a second start before
-  // `ready` finds one opening anyway.
-  app.on("second-instance", () => {
-    bringForward(BrowserWindow.getAllWindows(), createWindow);
   });
 
   // The seal starts only once the window is up (review of #187). Sealing calls
@@ -801,6 +816,18 @@ void app.whenReady().then(async () => {
       console.error("The history could not be encrypted.", err);
     });
   }
+}).catch((err: unknown) => {
+  // A start that fails says so and leaves (review of #246), as `boot.ts` does
+  // for a file that will not load. Left as an unhandled rejection, it was a
+  // process with no window that never quit — `window-all-closed` needs a window
+  // to have closed — and since KV-222 one holding the single-instance lock, so
+  // every later start left at once and Kinvue could not be opened again short of
+  // ending it by hand. Leaving lets go of the lock.
+  dialog.showErrorBox(
+    "Kinvue could not start",
+    err instanceof Error ? err.message : String(err),
+  );
+  app.exit(1);
 });
 
 app.on("window-all-closed", () => {

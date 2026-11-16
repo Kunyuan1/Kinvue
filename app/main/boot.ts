@@ -64,27 +64,45 @@ function runtimeProblem(): string | null {
  * one-at-a-time rule (`core/session/store.ts`) holds within a process, so this
  * is what makes it hold at all.
  *
- * Asked here, before anything else is loaded: the second copy leaves without
- * the SDK's runtime, a store or a window, and the first is told, and brings
- * its window forward (`index.ts`). The lock is Electron's, kept with
- * `userData`, so a copy started on another folder (`--user-data-dir`, as
- * README's scratch launches are) is another history and runs beside this one.
+ * Asked here, before `index.ts` is loaded — and so before the SDK's runtime
+ * and the store, which is what the lock is for; this file's own two imports
+ * and the two calls above run first, and touch neither. The second copy leaves
+ * without any of them, and the first is told, and brings its window forward
+ * (`index.ts`). The lock is Electron's, kept with `userData`, so a copy
+ * started on another folder (`--user-data-dir`, as README's scratch launches
+ * are) is another history and runs beside this one.
+ *
+ * **The copy that leaves says why**, on its terminal (review of #246). With
+ * the installed app open, `npm run dev` is a second copy on the same folder
+ * (README), and leaving with nothing said was an empty terminal and no window.
+ * A household never sees a terminal; for them the first copy coming forward is
+ * the answer.
  */
 const onlyCopy = app.requestSingleInstanceLock()
 
-const problem = onlyCopy ? runtimeProblem() : null
 if (!onlyCopy) {
+  console.info(
+    'Kinvue is already running on this history, so this copy is leaving and that one ' +
+      'comes forward. To run a second beside it, give it a folder of its own: ' +
+      '--user-data-dir=<a scratch folder>.',
+  )
   app.quit()
-} else if (problem !== null) {
-  dialog.showErrorBox('Kinvue could not start', problem)
-  app.exit(1)
 } else {
-  // Loaded, not imported, so the lines above run first. A failure here — the
-  // runtime missing or damaged — would otherwise be an unhandled rejection: no
-  // window, and nothing said. Electron's own dialog for a main-process error is
-  // what a static import gave; this keeps it.
-  import('./index').catch((err: unknown) => {
-    dialog.showErrorBox('Kinvue could not start', err instanceof Error ? err.message : String(err))
+  const problem = runtimeProblem()
+  if (problem !== null) {
+    dialog.showErrorBox('Kinvue could not start', problem)
     app.exit(1)
-  })
+  } else {
+    // Loaded, not imported, so the lines above run first. A failure here — the
+    // runtime missing or damaged — would otherwise be an unhandled rejection: no
+    // window, and nothing said. Electron's own dialog for a main-process error is
+    // what a static import gave; this keeps it.
+    import('./index').catch((err: unknown) => {
+      dialog.showErrorBox(
+        'Kinvue could not start',
+        err instanceof Error ? err.message : String(err),
+      )
+      app.exit(1)
+    })
+  }
 }
