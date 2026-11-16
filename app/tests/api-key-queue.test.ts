@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { createApiKeyStore, type KeyCipher } from '../main/api-key'
@@ -79,6 +79,21 @@ describe('the key store writes one at a time', () => {
     await store.load()
     disk.events.length = 0
     await store.set('ss-live-flushed-key-0000')
-    expect(disk.events).toEqual(['sync api-key.json.tmp', 'rename api-key.json.tmp'])
+    // Then the folder, where it can be flushed; Windows has no such flush.
+    const folder = process.platform === 'win32' ? [] : [`sync ${basename(dir)}`]
+    expect(disk.events).toEqual(['sync api-key.json.tmp', 'rename api-key.json.tmp', ...folder])
+  })
+
+  it('leaves no copy of the key behind when a save fails (review of #247)', async () => {
+    // A temporary file left by a refused save holds the key, unencrypted where there is no
+    // key store, under a name `forget` never removes. Here the rename fails: the file's
+    // place is taken by a folder.
+    const dir = await mkdtemp(join(tmpdir(), 'kinvue-keyq-'))
+    dirs.push(dir)
+    const store = createApiKeyStore(join(dir, 'api-key.json'), cipher({ landed: true }))
+    await store.load()
+    await mkdir(join(dir, 'api-key.json'))
+    await expect(store.set('ss-live-refused-key-0000')).rejects.toThrow()
+    expect(await readdir(dir)).toEqual(['api-key.json'])
   })
 })

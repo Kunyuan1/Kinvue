@@ -1092,6 +1092,16 @@ first, the worst a power cut leaves is the history as it was before that write. 
 file and the relay's file are written the same way. This is from how NTFS and ext4 order
 the two, not from a power cut staged on hardware.
 
+**After the rename the folder is flushed too, where a folder can be** (review of #247). A
+rename lost to a power cut is the earlier file, complete — one check-in gone for a write
+that added one, but for a write that took something out, a check-in deleted or a viewer's
+sharing ended at the relay, the earlier file is the one that still holds it. Windows has no
+flush for a folder, so there that gap stays: a removal made in the moments before a power
+cut can come back. A write that fails removes its temp file, which holds everything the
+file would have under a name nothing else reads or expires. And a history set aside
+(`setAside`) has its copy flushed before the original is removed, since that copy is the
+only one there will be.
+
 **No earlier copy of the history is kept beside it** (decided in KV-223). With the flush,
 the app's own writes cannot produce the empty file a copy would be there for. And a copy
 would still hold a check-in the caregiver had just deleted (KV-21), until the next write

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, open, readFile, unlink, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { failureTag } from '../capture/failure'
 import { asAskedNow } from './answers'
@@ -810,6 +810,11 @@ function localDay(now: Date): string {
  * only then is the original removed. If the removal fails the history is still
  * unreadable and a copy exists beside it — nothing is lost, and the next press
  * sets it aside under the next name.
+ *
+ * **The copy is flushed to the disk before the original is removed** (review
+ * of #247), for the reason `replaceFile` flushes: a removal can reach the disk
+ * before the copy's bytes do, and a power cut between the two would leave the
+ * only copy of that history empty. A flush that fails removes nothing.
  */
 async function setAside(path: string, now: Date): Promise<string> {
   const base = `${path}.unreadable-${localDay(now)}`
@@ -820,6 +825,13 @@ async function setAside(path: string, now: Date): Promise<string> {
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'EEXIST') continue
       throw err
+    }
+    // 'r+': Windows flushes only a file opened for writing.
+    const copy = await open(candidate, 'r+')
+    try {
+      await copy.sync()
+    } finally {
+      await copy.close()
     }
     await unlink(path)
     await explainSetAside(path)

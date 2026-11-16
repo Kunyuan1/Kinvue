@@ -1,4 +1,5 @@
-import { open, rename } from 'node:fs/promises'
+import { open, rename, unlink } from 'node:fs/promises'
+import { dirname } from 'node:path'
 
 /**
  * MAIN PROCESS ONLY — this module imports node:fs.
@@ -15,23 +16,53 @@ import { open, rename } from 'node:fs/promises'
  * with nothing to say so. Flushed first, what the rename names is already
  * there, so the worst a power cut leaves is the file as it was before.
  *
- * The folder itself is not flushed after the rename. A rename lost that way is
- * the earlier file, complete — one write gone, which is the loss this design
- * already accepts — and Windows has no flush for a folder to ask for.
+ * The folder is flushed after the rename where a folder can be (`flushFolder`),
+ * so a write that was answered stays made. A lost rename is the earlier file,
+ * complete — and for a write that took something out, a check-in deleted or a
+ * viewer's sharing ended, the earlier file is the one that still holds it.
+ * Windows has no flush for a folder to ask for, so there that gap stays.
  *
  * One temporary name for each path, so a caller with more than one writer
- * queues them (as the history, the key and the relay's file each do). The
- * temporary file is left where a failure leaves it; a caller that minds
- * removes it.
+ * queues them (as the history, the key and the relay's file each do). A write
+ * that fails takes its temporary file with it (review of #247): it holds
+ * everything the file would have — a key, every sealed envelope — under a name
+ * nothing else reads, removes or expires.
  */
 export async function replaceFile(path: string, text: string): Promise<void> {
   const tmp = `${path}.tmp`
-  const file = await open(tmp, 'w')
   try {
-    await file.writeFile(text, 'utf8')
-    await file.sync()
-  } finally {
-    await file.close()
+    const file = await open(tmp, 'w')
+    try {
+      await file.writeFile(text, 'utf8')
+      await file.sync()
+    } finally {
+      await file.close()
+    }
+    await rename(tmp, path)
+  } catch (err) {
+    await unlink(tmp).catch(() => undefined)
+    throw err
   }
-  await rename(tmp, path)
+  await flushFolder(dirname(path))
+}
+
+/**
+ * Flushes a folder, so a rename or a new name in it is on the disk. Asked for,
+ * never required: by now the file is in place and whole, and a folder that
+ * will not flush leaves the write no worse than a power cut a moment earlier
+ * would have. Not asked for on Windows, where a folder cannot be opened to
+ * flush.
+ */
+async function flushFolder(folder: string): Promise<void> {
+  if (process.platform === 'win32') return
+  try {
+    const handle = await open(folder, 'r')
+    try {
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+  } catch {
+    /* asked for, not required: see above */
+  }
 }

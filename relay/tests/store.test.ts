@@ -332,7 +332,10 @@ describe('the file', () => {
     disk.events.length = 0
     await store.enrolDevice(device, receiveKey(), T0)
     const tmp = `${basename(path)}.tmp`
-    expect(disk.events).toEqual([`sync ${tmp}`, `rename ${tmp}`])
+    // Then the folder, where it can be: a rename lost to a power cut would bring back a
+    // viewer whose sharing had just been ended (review of #247). Windows has no such flush.
+    const folder = process.platform === 'win32' ? [] : [`sync ${basename(dir)}`]
+    expect(disk.events).toEqual([`sync ${tmp}`, `rename ${tmp}`, ...folder])
   })
 
   it('leaves no copy of the state behind when a write fails (review of #216)', async () => {
