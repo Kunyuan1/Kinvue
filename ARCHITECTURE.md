@@ -1400,7 +1400,11 @@ one person, `demo-margaret`, whose name is the demo's even where the check-ins a
   them the way it already reads a seeded day from before KV-16 (`asAskedNow`): any record
   with `seeded: true` is listed as the demo person's, on the way out, and never written
   back. So a real person's baseline stops counting them from then on, with the file as it
-  was.
+  was. **The share set asks the same question the same way** (KV-236): it reads whose a
+  record is through `ownerOf`, not off `personId`, so how far back a new viewer's history
+  reaches — the date the person is shown when they approve — is the same whether it is
+  handed the store's list or the file's records as stored. It is the privacy boundary
+  (KV-37), and must not depend on which list its caller happened to have.
 - **This re-takes KV-53's decision, and accepts its cost** (review of #199). *Why the demo
   history is seeded* weighed keeping invented days out of a real reading's baseline and
   kept them in, so a real capture on the demo persona could be compared at all. With the

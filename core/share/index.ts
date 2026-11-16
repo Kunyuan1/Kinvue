@@ -11,6 +11,7 @@ import {
   type Nested,
 } from '../session/check'
 import { checkFormat, formatOf, RECORD_FORMAT } from '../session/format'
+import { ownerOf } from '../session/people'
 import type {
   Assessment,
   BaselineSpan,
@@ -423,22 +424,31 @@ function leaving(
  * there is no usual yet", which is narrower than the code).
  *
  * The one place the share set is chosen, so `shareSet` and `shareSetStart`
- * cannot disagree (review of #180). Seeded days count toward the usual, as
- * they did when the latest check-in was scored, but are never sent: they set
- * how far back the share reaches, never where what is sent begins.
+ * cannot disagree (review of #180).
+ *
+ * **Whose a record is, is `ownerOf`'s to say** (KV-18, KV-236), as it is for
+ * the store and the lifecycle: a seeded day is the demo's, whatever `personId`
+ * it was written with. So a real person's share reads none — they are not in
+ * their usual since KV-18, and so not in how far back the share reaches — and
+ * the answer is the same whether this is handed the store's list, where a
+ * seeded day already says it is the demo's, or the file's records as stored,
+ * where one seeded before KV-18 still sits under a real person's id. The
+ * demo's own share is always empty: a seeded day never leaves.
  */
 function toBeSent(records: readonly SessionRecord[], personId: string): SessionRecord[] {
   const theirs = records
     // Read nothing of a record before it is checked (review of #183): a
     // malformed one — `vitals` that are null — would throw in `unusableReason`
     // or the baseline window before `mayLeave` could refuse it. Checked, not
-    // `mayLeave`: seeded days are well formed, and still count toward the usual.
-    .filter((r) => checkRecord(r) === null && r.personId === personId)
+    // `mayLeave`: a record that may not leave can still count toward the usual
+    // (a withheld one, say). Whose it is comes after the check too: `ownerOf`
+    // reads the record.
+    .filter((r) => checkRecord(r) === null && ownerOf(r) === personId)
     // The same plain order as the comparisons below, not `localeCompare`'s
     // collation, so the sort and the selection cannot disagree.
     .sort((a, b) => (a.capturedAt < b.capturedAt ? -1 : a.capturedAt > b.capturedAt ? 1 : 0))
-  // A real one: a seeded day standing in for "the latest" would let demo data
-  // decide whether a person's real check-ins are sent (second review of #180).
+  // One that may leave: for the demo, whose days are all seeded, there is none,
+  // and nothing is sent (second review of #180).
   const latest = theirs.filter((r) => mayLeave(r) && unusableReason(r.vitals) === null).at(-1)
   if (latest === undefined) return []
   // Where the latest card's usual began, as it stored it (KV-154): the window

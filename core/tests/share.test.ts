@@ -14,6 +14,7 @@ import {
   type Policy,
   type Viewer,
 } from '@kinvue/core/share'
+import { DEMO_PERSON_ID } from '@kinvue/core/session/people'
 import type { Assessment, CheckInAnswers, SessionRecord, Vitals } from '@kinvue/core/session/types'
 import { scoreSession } from '@kinvue/core/scoring'
 import { localDateOf } from '@kinvue/core/session/time'
@@ -445,6 +446,34 @@ describe('shareSet: what a new viewer is sent (KV-32)', () => {
     // Seeded days only: nothing would be sent, so there is no date to show.
     expect(shareSetStart(seeded, 'test-person')).toBeNull()
     expect(shareSet(seeded, 'test-person', VIEWER)).toEqual([])
+  })
+
+  it('reads a seeded day as the demo\u2019s, whatever id it was stored under (KV-236)', () => {
+    // A history from before KV-18, as its file holds it: demo days under the
+    // real person's own id. Ten real check-ins, a demo fortnight seeded after
+    // them, then the latest. Read by `personId`, the fortnight was the latest's
+    // usual and the share began at the ninth; it is not their usual (KV-18),
+    // so the share reaches the first.
+    const real = [...Array.from({ length: 10 }, (_, i) => on(i)), on(30)]
+    const seededAs = (personId: string): SessionRecord[] =>
+      Array.from({ length: 12 }, (_, i) => ({
+        ...on(10 + i, { seeded: true, id: `seed-${i}` }),
+        personId,
+      }))
+    const sent = (records: SessionRecord[]): string[] =>
+      shareSet(records, 'test-person', VIEWER).map((r) => r.id)
+
+    const alone = sent(real)
+    expect(alone).toEqual(real.map((r) => r.id))
+    // As stored before KV-18, and as `store.list` hands them over: the same.
+    for (const seeded of [seededAs('test-person'), seededAs(DEMO_PERSON_ID)]) {
+      const all = [...seeded, ...real]
+      expect(sent(all)).toEqual(alone)
+      expect(shareSetStart(all, 'test-person')).toEqual(shareSetStart(real, 'test-person'))
+    }
+    // The demo's own share is empty either way: a seeded day never leaves.
+    expect(shareSet([...seededAs('test-person'), ...real], DEMO_PERSON_ID, VIEWER)).toEqual([])
+    expect(shareSetStart([...seededAs('test-person'), ...real], DEMO_PERSON_ID)).toBeNull()
   })
 
   it('reaches back as far as the latest card says its usual began, and no further', () => {
