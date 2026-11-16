@@ -521,8 +521,9 @@ that weight does two different things:
   below it moves.
 
 It also changes the card's headline on a day where it is the only thing that fired: "Broadly
-normal, with one or two things worth noting" rather than "A normal day for them", as any
-fired rule does.
+normal, with one thing worth noting" rather than "A normal day for them", as any fired rule
+does. The headline counts what the card lists — "two things", "three things" — since three
+rules can fire under the threshold (KV-227).
 
 That made *one* answer visible, not the question. "Slept well" and "slept ok" still fired
 nothing, so a card with no sleep line could not tell them apart — or from a record written
@@ -2183,6 +2184,11 @@ code that wrote it. What #30 asked, and what was decided:
   to a threshold, weight, rule or sentence fails until both move together. It catches what
   that set exercises, which is why it straddles the lines. Verdicts from before it carry
   none, and read as unknown: several earlier scorers gave them, and which is not recorded.
+  **A different version does not by itself mean a different verdict.** Version 2 (KV-227)
+  changed a sentence and no rule, so the check-in device shows a version 1 card with no
+  drift line. What each version changed is listed beside `RULES_VERSION`; whether #42 says
+  "older rules" for a words-only version is #42's to decide, and a viewer that wants the
+  current sentence can compose it from the stored facts, which needs no rescoring.
 - **Person identity was settled by KV-32.** `personId` never leaves the device — the
   share's own opaque id replaces it (KV-37) — so a readable local id like `demo-margaret`
   is sent nowhere, and the global uniqueness the ticket asked for is the share id's. A

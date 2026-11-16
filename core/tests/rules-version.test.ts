@@ -22,8 +22,8 @@ import { session, sessionBeforeKV16 } from './helpers'
  * is the same in every zone.
  */
 const PINNED = {
-  rulesVersion: 1,
-  fingerprint: '88d1f2c1cd913fa6',
+  rulesVersion: 2,
+  fingerprint: 'ce89c2c6204018f6',
 }
 
 /** mulberry32: the same check-ins on every run, without fixtures to keep. */

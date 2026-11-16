@@ -43,8 +43,13 @@ export const ELEVATED_SEVERITY_THRESHOLD = 0.6
  * moves any of it fails there until this is bumped with it. It catches what
  * that set exercises; a threshold moved by a hair between two of its cases can
  * pass unnoticed, which is why the set straddles each rule's line.
+ *
+ * What each version changed, so a reader of an older verdict can tell words
+ * from rules:
+ * - 2 (KV-227): words only. A normal day's headline counts what the card
+ *   lists. No verdict, rule or severity moved.
  */
-export const RULES_VERSION = 1
+export const RULES_VERSION = 2
 
 /** What an assessment's fired rules sum to: the number compared against the threshold. */
 export function totalSeverity(assessment: Assessment): number {
@@ -86,6 +91,32 @@ function fire(rules: readonly Rule[], session: SessionRecord, baseline: Baseline
 }
 
 /**
+ * Six, because a card has six lines to give: HRV, pulse, breathing, sleep or
+ * pain, the meal, and mood. Each of the others is one rule of a pair or a
+ * three that cannot fire together.
+ */
+const COUNT_WORDS = ['one', 'two', 'three', 'four', 'five', 'six']
+
+/**
+ * The headline of a normal day: how many lines the card lists under it, as
+ * the count itself and not "one or two" (KV-227). Three rules can fire under
+ * the threshold — low mood, poor sleep and a skipped meal sum to 0.55 — and
+ * the card then listed three things under a sentence that said one or two.
+ *
+ * Three is the most today's rules reach: the four smallest that can fire
+ * together (poor sleep 0.05, low mood 0.20, breathing 0.20, pulse 0.225) sum
+ * to 0.675, which is `elevated`. Four and up can only be a stored card's,
+ * shown through `present`, which counts whatever rules the record carries:
+ * weights have moved since the first ones and will again (#22). A count past
+ * the table is written in figures.
+ */
+function normalHeadline(count: number): string {
+  if (count === 0) return 'A normal day for them.'
+  const number = COUNT_WORDS[count - 1] ?? String(count)
+  return `Broadly normal, with ${number} thing${count === 1 ? '' : 's'} worth noting.`
+}
+
+/**
  * The summary for a check-in that was compared, from the verdict the rules
  * reached *before* KV-87 withheld anything, and the gaps that withholding
  * rests on. Taking the gaps rather than the withheld flag ties the sentence
@@ -103,11 +134,7 @@ function summarise(
     // just said — this says *why*, and the note under it says which metric.
     return 'Only partly compared with their usual — see the note below.'
   }
-  if (scored === 'normal') {
-    return fired.length === 0
-      ? 'A normal day for them.'
-      : 'Broadly normal, with one or two things worth noting.'
-  }
+  if (scored === 'normal') return normalHeadline(fired.length)
   const top = fired[0]
   return top === undefined
     ? 'Different from their usual.'
