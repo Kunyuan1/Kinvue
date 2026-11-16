@@ -413,6 +413,19 @@ function Dashboard(): React.JSX.Element {
     setError({ text: dashboardErrorText(e, fallback), failure: classifyDashboardError(e) })
   }, [])
 
+  /**
+   * A write that landed, and the reload after it that did not (KV-235): `text`
+   * is said whole, whatever failed. Not `showFailure`, which gives a store
+   * failure its own sentence — and each of those ends "Nothing has been
+   * changed", which is false over a check-in just saved or just deleted. Which
+   * failure it is still decides whether the way out is offered, and the
+   * original is kept.
+   */
+  const showStale = useCallback((e: unknown, text: string): void => {
+    console.error(e)
+    setError({ text, failure: classifyDashboardError(e) })
+  }, [])
+
   useEffect(() => {
     void refresh().catch((e: unknown) => showFailure(e, 'The check-ins could not be shown.'))
   }, [refresh, showFailure])
@@ -708,13 +721,8 @@ function Dashboard(): React.JSX.Element {
           // sent the person back to take a second reading of the same moment,
           // which would then enter the baseline twice.
           await refresh().catch((e: unknown) => {
-            // The sentence is deliberate (KV-95), but which failure it is still
-            // decides whether the way out is offered, and the original is kept.
-            console.error(e)
-            setError({
-              text: 'The check-in was saved, but the list could not be reloaded.',
-              failure: classifyDashboardError(e),
-            })
+            // The sentence is deliberate (KV-95): see `showStale`.
+            showStale(e, 'The check-in was saved, but the list could not be reloaded.')
           })
           setAnswering(null)
           setReading(null)
@@ -1107,10 +1115,18 @@ function Dashboard(): React.JSX.Element {
                 }
                 onDone={async (removed) => {
                   setDeleting(null)
-                  await refresh()
-                  setNotice(
-                    removed === 1 ? 'Deleted 1 check-in.' : `Deleted ${String(removed)} check-ins.`,
-                  )
+                  const said =
+                    removed === 1 ? 'Deleted 1 check-in.' : `Deleted ${String(removed)} check-ins.`
+                  // Deleted is deleted, and cannot be undone: a reload that
+                  // fails now is a stale list, and must not be said as the
+                  // deletion failing with "nothing has been changed" (KV-235).
+                  try {
+                    await refresh()
+                  } catch (e) {
+                    showStale(e, `${said} The list could not be reloaded.`)
+                    return
+                  }
+                  setNotice(said)
                 }}
               />
             ) : (
@@ -1156,6 +1172,7 @@ function Dashboard(): React.JSX.Element {
               await refresh()
             }}
             onFailure={showFailure}
+            onStale={showStale}
           />
         </SectionBoundary>
       )}

@@ -62,6 +62,7 @@ export default function HistoryPanel({
   onChanged,
   onRestored,
   onFailure,
+  onStale,
 }: {
   personId: string
   /** The person shown's name; null when they have not been named yet. */
@@ -87,6 +88,12 @@ export default function HistoryPanel({
    */
   onRestored: (into: RestoredInto) => Promise<void>
   onFailure: (e: unknown, fallback: string) => void
+  /**
+   * A deletion that landed, and the reload after it that did not (KV-235):
+   * `text` is said whole, never replaced by a failure's own "nothing has been
+   * changed".
+   */
+  onStale: (e: unknown, text: string) => void
 }) {
   const [said, setSaid] = useState<string | null>(null)
   const [before, setBefore] = useState('')
@@ -365,8 +372,15 @@ export default function HistoryPanel({
           }
           onDone={async (removed) => {
             setRemoving(null)
-            await onChanged()
-            setSaid(`Deleted ${String(removed)} check-in${removed === 1 ? '' : 's'}.`)
+            // Said before the reload, and kept if the reload fails, as a
+            // restore is (`landed`): deleted is deleted (KV-235).
+            const done = `Deleted ${String(removed)} check-in${removed === 1 ? '' : 's'}.`
+            setSaid(done)
+            try {
+              await onChanged()
+            } catch (e) {
+              onStale(e, `${done} The list could not be reloaded.`)
+            }
           }}
         />
       )}

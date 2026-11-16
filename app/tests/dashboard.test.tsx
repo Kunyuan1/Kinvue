@@ -1420,6 +1420,58 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
       await screen.findByText('The check-ins could not be deleted. Nothing has been changed.'),
     ).toBeTruthy()
   })
+
+  describe('a deletion that landed, with the reload after it failing (KV-235)', () => {
+    // The reload fails the way the store says it: another program holding the
+    // file. That sentence is the store's own and ends "Nothing has been
+    // changed", which is true of the read and false of the deletion before it.
+    const heldAfterDeleting = (): void => {
+      listSessions.mockRejectedValue(
+        fromMain(new UnreachableStoreError(PATH, 'EBUSY', new Error('busy')), 'sessions:list'),
+      )
+    }
+    const saidOnce = async (text: string): Promise<void> => {
+      const alert = await screen.findByRole('alert')
+      expect(alert.textContent).toBe(text)
+      expect(document.body.textContent).not.toMatch(/Nothing has been changed/)
+      expect(document.body.textContent).not.toMatch(/could not be deleted/)
+    }
+
+    it('says one card was deleted', async () => {
+      listSessions.mockResolvedValue(days())
+      removeCheckIns.mockResolvedValue(1)
+      render(<App />)
+      fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+      heldAfterDeleting()
+      fireEvent.click(screen.getByText('Delete'))
+      await saidOnce('Deleted 1 check-in. The list could not be reloaded.')
+    })
+
+    it('says the check-ins before a date were deleted', async () => {
+      listSessions.mockResolvedValue(days())
+      removeCheckIns.mockResolvedValue(2)
+      render(<App />)
+      await screen.findByText('Last exported: never.')
+      fireEvent.change(screen.getByLabelText('Delete check-ins taken before'), {
+        target: { value: '2026-09-03' },
+      })
+      fireEvent.click(screen.getByText('Review'))
+      await screen.findByText(/^Delete 2 check-ins, the last taken/)
+      heldAfterDeleting()
+      fireEvent.click(screen.getByText('Delete'))
+      await saidOnce('Deleted 2 check-ins. The list could not be reloaded.')
+    })
+
+    it('says a whole history was deleted', async () => {
+      listSessions.mockResolvedValue(days())
+      removeCheckIns.mockResolvedValue(3)
+      render(<App />)
+      fireEvent.click(await screen.findByText('Delete all of Margaret’s check-ins…'))
+      heldAfterDeleting()
+      fireEvent.click(screen.getByText('Delete'))
+      await saidOnce('Deleted 3 check-ins. The list could not be reloaded.')
+    })
+  })
 })
 
 describe('whose history the panel is: one person’s, never the household’s (KV-209)', () => {

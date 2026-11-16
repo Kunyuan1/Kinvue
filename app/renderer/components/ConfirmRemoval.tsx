@@ -61,7 +61,11 @@ export default function ConfirmRemoval({
   which: Removal
   /** Makes an export first, resolving to what to say, or null (`ConfirmDeletion`). */
   onExport: (passphrase?: string) => Promise<string | null>
-  /** Called with how many were deleted, once they are. */
+  /**
+   * Called with how many were deleted, once they are. Whatever it does next,
+   * a reload most of all, it answers for itself: a throw from here reaches
+   * `onFailure`, which says the deletion failed (KV-235).
+   */
   onDone: (removed: number) => Promise<void>
   onCancel: () => void
   /** A step that failed: the dashboard says so the way it says any other. */
