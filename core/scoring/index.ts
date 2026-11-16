@@ -44,7 +44,7 @@ export const ELEVATED_SEVERITY_THRESHOLD = 0.6
  * that set exercises; a threshold moved by a hair between two of its cases can
  * pass unnoticed, which is why the set straddles each rule's line.
  */
-export const RULES_VERSION = 1
+export const RULES_VERSION = 2
 
 /** What an assessment's fired rules sum to: the number compared against the threshold. */
 export function totalSeverity(assessment: Assessment): number {
@@ -86,6 +86,18 @@ function fire(rules: readonly Rule[], session: SessionRecord, baseline: Baseline
 }
 
 /**
+ * How many lines the card lists under a normal verdict, in words: the count
+ * itself, not "one or two" (KV-227). Three rules can fire under the threshold
+ * — low mood, poor sleep and a skipped meal sum to 0.55 — and the card then
+ * listed three things under a sentence that said one or two.
+ */
+const COUNT_WORDS = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine']
+function thingsNoted(count: number): string {
+  if (count === 1) return 'one thing'
+  return `${COUNT_WORDS[count - 1] ?? String(count)} things`
+}
+
+/**
  * The summary for a check-in that was compared, from the verdict the rules
  * reached *before* KV-87 withheld anything, and the gaps that withholding
  * rests on. Taking the gaps rather than the withheld flag ties the sentence
@@ -106,7 +118,7 @@ function summarise(
   if (scored === 'normal') {
     return fired.length === 0
       ? 'A normal day for them.'
-      : 'Broadly normal, with one or two things worth noting.'
+      : `Broadly normal, with ${thingsNoted(fired.length)} worth noting.`
   }
   const top = fired[0]
   return top === undefined

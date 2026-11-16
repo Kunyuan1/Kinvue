@@ -521,8 +521,9 @@ that weight does two different things:
   below it moves.
 
 It also changes the card's headline on a day where it is the only thing that fired: "Broadly
-normal, with one or two things worth noting" rather than "A normal day for them", as any
-fired rule does.
+normal, with one thing worth noting" rather than "A normal day for them", as any fired rule
+does. The headline counts what the card lists — "two things", "three things" — since three
+rules can fire under the threshold (KV-227).
 
 That made *one* answer visible, not the question. "Slept well" and "slept ok" still fired
 nothing, so a card with no sleep line could not tell them apart — or from a record written

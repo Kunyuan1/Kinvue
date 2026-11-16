@@ -178,9 +178,25 @@ describe('scoreSession', () => {
     )
     // It fired, so the headline is the "worth noting" one rather than "a normal
     // day" — the same as any other rule that fires without flagging.
-    expect(assessment.summary).toBe(
-      'Broadly normal, with one or two things worth noting.',
+    expect(assessment.summary).toBe('Broadly normal, with one thing worth noting.')
+  })
+
+  it('counts what a normal day lists, three rules included (KV-227)', () => {
+    // Low mood (0.20), poor sleep without pain (0.05) and a skipped meal (0.30)
+    // sum to 0.55, under the line: three lines on the card, which the headline
+    // used to call "one or two things".
+    const three = scoreSession(
+      session({ answers: { mood: 'low', sleep: 'poorly', skippedMeal: true } }),
+      history(5),
     )
+    expect(three.flag).toBe('normal')
+    expect(three.firedRules).toHaveLength(3)
+    expect(three.summary).toBe('Broadly normal, with three things worth noting.')
+
+    const two = scoreSession(session({ answers: { mood: 'low', sleep: 'poorly' } }), history(5))
+    expect(two.flag).toBe('normal')
+    expect(two.firedRules).toHaveLength(2)
+    expect(two.summary).toBe('Broadly normal, with two things worth noting.')
   })
 
   it('flags exactly these answer combinations with nothing wrong on camera', () => {
@@ -1371,6 +1387,27 @@ describe('present: what an old card says once the scorer has changed (KV-138)', 
       expect(shown?.summary).toBe(learning.assessment.summary)
       expect(shown?.drift).toBeNull()
     }
+  })
+
+  it('counts the lines of an older card in the words used now, with no drift for the wording alone (KV-227)', () => {
+    // Scored under rules version 1, which called any number of lines "one or
+    // two things". The same three rules fire today, so nothing has drifted:
+    // only the sentence is composed again.
+    const past = history(5)
+    const s = session({ answers: { mood: 'low', sleep: 'poorly', skippedMeal: true } })
+    const now = scoreSession(s, past)
+    const old = {
+      ...s,
+      assessment: {
+        ...now,
+        rulesVersion: 1,
+        summary: 'Broadly normal, with one or two things worth noting.',
+      },
+    }
+    const shown = present(old, past)
+    expect(shown?.summary).toBe('Broadly normal, with three things worth noting.')
+    expect(shown?.firedRules).toHaveLength(3)
+    expect(shown?.drift).toBeNull()
   })
 
   it('drops "today" from a summary scored before KV-93, keeping the verdict', () => {
