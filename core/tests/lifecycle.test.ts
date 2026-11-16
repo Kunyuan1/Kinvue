@@ -3,6 +3,7 @@ import { DEMO_PERSON_ID, type Person } from '@kinvue/core/session/people'
 import {
   chosenFor,
   describeAdded,
+  describeDeleted,
   describeLastExport,
   describeRefusal,
   describeRestore,
@@ -536,5 +537,14 @@ describe('whose an export is: by key, never by id (KV-18)', () => {
     expect(describeAdded(null)).toBe('')
     expect(describeAdded('named')).toBe(' They were not on this computer, so they have been added.')
     expect(describeAdded('unnamed')).toMatch(/added, without a name/)
+  })
+
+  it('says how many were deleted, and never "Deleted 0 check-ins" (KV-235)', () => {
+    expect(describeDeleted(1)).toBe('Deleted 1 check-in.')
+    expect(describeDeleted(2)).toBe('Deleted 2 check-ins.')
+    // None goes only when the list on screen was out of date.
+    expect(describeDeleted(0)).toBe(
+      'Nothing was deleted: what was chosen had already been deleted.',
+    )
   })
 })

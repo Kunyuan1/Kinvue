@@ -61,8 +61,11 @@ export default function ConfirmRemoval({
   which: Removal
   /** Makes an export first, resolving to what to say, or null (`ConfirmDeletion`). */
   onExport: (passphrase?: string) => Promise<string | null>
-  /** Called with how many were deleted, once they are. */
-  onDone: (removed: number) => Promise<void>
+  /**
+   * Called with how many were deleted, once they are. Whatever it does next,
+   * a reload most of all, it answers for itself (`ConfirmDeletion`, KV-235).
+   */
+  onDone: (removed: number) => void
   onCancel: () => void
   /** A step that failed: the dashboard says so the way it says any other. */
   onFailure: (e: unknown) => void
@@ -83,9 +86,8 @@ export default function ConfirmRemoval({
       }
       deleteLabel="Delete"
       afterNote="An export is a copy to keep: restoring it will not bring these back."
-      onDelete={async () => {
-        await onDone(await window.kinvue.removeCheckIns(personId, which))
-      }}
+      onDelete={() => window.kinvue.removeCheckIns(personId, which)}
+      onDeleted={onDone}
       onExport={onExport}
       onCancel={onCancel}
       onFailure={onFailure}

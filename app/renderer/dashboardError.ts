@@ -33,6 +33,43 @@ const FLOOR: Record<Exclude<DashboardFailure, 'unknown'>, string> = {
 }
 
 /**
+ * Why the list could not be reloaded, for each failure, said after a write that
+ * landed (KV-235). The store's own sentence for each ends "Nothing has been
+ * changed", which is true of the read that failed and false of the check-in
+ * just saved or deleted before it. These keep what that sentence is for — the
+ * cause, and what to do about it — without the clause. An unreadable history
+ * most of all: *Start a new history* is offered under it, and must not appear
+ * under a sentence that never said the history could not be read.
+ */
+const RELOAD_CAUSE: Record<Exclude<DashboardFailure, 'unknown'>, string> = {
+  'store-unreadable': 'The saved check-in history could not be read.',
+  'store-unreachable':
+    'The saved check-in history could not be opened: another program may be using it, or ' +
+    'its permissions may need checking.',
+  'store-newer':
+    'The saved check-in history was written by a newer version of Kinvue, which can read it.',
+  'store-record-unknown':
+    'One entry in the saved check-in history could not be read, and the file needs someone ' +
+    'to look at it.',
+  'store-locked':
+    "The saved check-in history is encrypted, and this computer's key store is not available " +
+    'just now; it should open once the key store is available.',
+  'store-undecryptable':
+    "The saved check-in history could not be opened with this account's key.",
+}
+
+/**
+ * What the error box says when a write landed and the reload after it did not
+ * (KV-235): what landed, that the list is out of date, and why when the store
+ * said why. The one place "The list could not be reloaded." is written.
+ */
+export function staleText(error: unknown, landed: string): string {
+  const failure = classifyDashboardError(error)
+  const said = `${landed} The list could not be reloaded.`
+  return failure === 'unknown' ? said : `${said} ${RELOAD_CAUSE[failure]}`
+}
+
+/**
  * What the dashboard's error box says when the check-in list cannot be shown
  * or the demo cannot be seeded (KV-95).
  *

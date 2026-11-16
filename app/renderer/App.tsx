@@ -39,7 +39,8 @@ import type { KeyStatus } from '../shared/api-key'
 import type { PeopleNow, PersonShown } from '../shared/people'
 import SessionCard from './components/SessionCard'
 import TrendChart from './components/TrendChart'
-import { dashboardErrorText } from './dashboardError'
+import { dashboardErrorText, staleText } from './dashboardError'
+import { describeDeleted } from '@kinvue/core/session/lifecycle'
 
 /**
  * What a finished capture actually produced.
@@ -234,7 +235,13 @@ function Dashboard(): React.JSX.Element {
   const [sessions, setSessions] = useState<SessionRecord[] | null>(null)
   // The sentence, and which failure it is: an unreadable history is the one
   // that offers a way out (KV-98), so the box needs to know which it is showing.
-  const [error, setError] = useState<{ text: string; failure: DashboardFailure } | null>(null)
+  // `landed` is there when a write went through and only the reload after it
+  // failed (KV-235): what landed, so the box can offer the reload again.
+  const [error, setError] = useState<{
+    text: string
+    failure: DashboardFailure
+    landed?: string
+  } | null>(null)
   // Said once a new history has been started, naming where the old one went.
   const [notice, setNotice] = useState<string | null>(null)
   // A press on a button that touches the store, still in flight. Two presses of
@@ -408,10 +415,56 @@ function Dashboard(): React.JSX.Element {
 
   // An unreadable history says so in its own words; anything else gets a plain
   // sentence here and the original in the console (KV-95).
-  const showFailure = useCallback((e: unknown, fallback: string): void => {
+  /** The error box: the original kept, and which failure it is, which decides the way out. */
+  const fail = useCallback((e: unknown, text: string, landed?: string): void => {
     console.error(e)
-    setError({ text: dashboardErrorText(e, fallback), failure: classifyDashboardError(e) })
+    setError({
+      text,
+      failure: classifyDashboardError(e),
+      ...(landed === undefined ? {} : { landed }),
+    })
   }, [])
+
+  const showFailure = useCallback(
+    (e: unknown, fallback: string): void => fail(e, dashboardErrorText(e, fallback)),
+    [fail],
+  )
+
+  /**
+   * A write that landed, and the reload after it that did not (KV-235):
+   * `landed` says what went through, and `staleText` adds that the list is out
+   * of date and why. Not `showFailure`, which gives a store failure its own
+   * sentence — and each of those ends "Nothing has been changed", which is
+   * false over a check-in just saved or just deleted. An earlier notice goes:
+   * it describes a moment before this one, and would stand beside the alert as
+   * though it were about it.
+   */
+  const showStale = useCallback(
+    (e: unknown, landed: string): void => {
+      setNotice(null)
+      fail(e, staleText(e, landed), landed)
+    },
+    [fail],
+  )
+
+  /**
+   * The reload after a write that landed: `notice` once the list is current
+   * (what landed, unless told otherwise; null for nothing), and the stale
+   * sentence when it is not. Never rejects, so nothing awaiting it can mistake
+   * a failed reload for a failed write.
+   */
+  const reloadAfter = useCallback(
+    async (landed: string, notice: string | null = landed): Promise<void> => {
+      try {
+        await refresh()
+      } catch (e) {
+        showStale(e, landed)
+        return
+      }
+      if (notice !== null) setNotice(notice)
+    },
+    [refresh, showStale],
+  )
 
   useEffect(() => {
     void refresh().catch((e: unknown) => showFailure(e, 'The check-ins could not be shown.'))
@@ -559,6 +612,17 @@ function Dashboard(): React.JSX.Element {
     }
   }
 
+  /** "Reload the list", under a write that landed and a reload that did not. */
+  const reloadAgain = async (landed: string): Promise<void> => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await reloadAfter(landed)
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const seedThenReload = async (): Promise<void> => {
     try {
       await window.kinvue.seedDemo()
@@ -569,9 +633,7 @@ function Dashboard(): React.JSX.Element {
     // The demo is a person of its own (KV-18): seeded, it is what is shown —
     // by the reload below, which reads the choice when it runs.
     wanted.current = DEMO_PERSON_ID
-    await refresh().catch((e: unknown) =>
-      showFailure(e, 'The demo history was added, but the list could not be reloaded.'),
-    )
+    await reloadAfter('The demo history was added.', null)
   }
 
   // What each card says, composed as it is shown (KV-138): a real check-in
@@ -707,15 +769,8 @@ function Dashboard(): React.JSX.Element {
           // the screen that clearing `answering` unmounts. Dropped silently, it
           // sent the person back to take a second reading of the same moment,
           // which would then enter the baseline twice.
-          await refresh().catch((e: unknown) => {
-            // The sentence is deliberate (KV-95), but which failure it is still
-            // decides whether the way out is offered, and the original is kept.
-            console.error(e)
-            setError({
-              text: 'The check-in was saved, but the list could not be reloaded.',
-              failure: classifyDashboardError(e),
-            })
-          })
+          // The sentence is deliberate (KV-95): see `showStale`.
+          await reloadAfter('The check-in was saved.', null)
           setAnswering(null)
           setReading(null)
           setSubmitting(false)
@@ -1012,6 +1067,19 @@ function Dashboard(): React.JSX.Element {
           <p role="alert" className="text-(--color-elevated)">
             {error.text}
           </p>
+          {/* After a write that landed, the cards below are from before it
+              (KV-235): a deleted one is still drawn, with its Delete still
+              live. So the reload is offered again, where the sentence is. */}
+          {error.landed !== undefined && (
+            <button
+              type="button"
+              onClick={() => void reloadAgain(error.landed!)}
+              disabled={busy}
+              className="mt-3 rounded-lg border border-(--color-line) px-4 py-2 hover:bg-(--color-raised)"
+            >
+              Reload the list
+            </button>
+          )}
           {/* Never for a key store that is only out of reach (store-locked): that
               history opens once it is reachable, and setting it aside would move
               a readable history (KV-175, review of #186). */}
@@ -1105,12 +1173,12 @@ function Dashboard(): React.JSX.Element {
                 onFailure={(e) =>
                   showFailure(e, 'The check-in could not be deleted. Nothing has been changed.')
                 }
-                onDone={async (removed) => {
+                onDone={(removed) => {
                   setDeleting(null)
-                  await refresh()
-                  setNotice(
-                    removed === 1 ? 'Deleted 1 check-in.' : `Deleted ${String(removed)} check-ins.`,
-                  )
+                  // Deleted is deleted, and cannot be undone: a reload that
+                  // fails now is a stale list, and must not be said as the
+                  // deletion failing with "nothing has been changed" (KV-235).
+                  void reloadAfter(describeDeleted(removed))
                 }}
               />
             ) : (
@@ -1156,6 +1224,7 @@ function Dashboard(): React.JSX.Element {
               await refresh()
             }}
             onFailure={showFailure}
+            onStale={showStale}
           />
         </SectionBoundary>
       )}
@@ -1238,7 +1307,7 @@ function Dashboard(): React.JSX.Element {
                       `${changing.name} could not be deleted. Nothing has been changed.`,
                     )
                   }
-                  onDone={async (removed) => {
+                  onDone={(removed) => {
                     const { id, name } = changing
                     setChanging(null)
                     // A reading held for them can no longer be stored as theirs,
@@ -1254,13 +1323,7 @@ function Dashboard(): React.JSX.Element {
                     // word of what just happened. A reading asks for a name, as
                     // any would with nobody here (review of #206).
                     if (readers.length === 1) setPastSetup(true)
-                    try {
-                      await refresh()
-                    } catch (e) {
-                      showFailure(e, `${name} was deleted, but the list could not be reloaded.`)
-                      return
-                    }
-                    setNotice(
+                    void reloadAfter(
                       removed === 0
                         ? `Deleted ${name}.`
                         : `Deleted ${name} and ${
@@ -1287,9 +1350,7 @@ function Dashboard(): React.JSX.Element {
                       save={(name) => window.kinvue.renamePerson(changing.id, name)}
                       onNamed={() => {
                         setChanging(null)
-                        void refresh().catch((e: unknown) =>
-                          showFailure(e, 'The name was saved, but the list could not be reloaded.'),
-                        )
+                        void reloadAfter('The name was saved.', null)
                       }}
                     />
                   )}

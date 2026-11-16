@@ -147,6 +147,13 @@ const PATH = String.raw`C:\Users\someone\AppData\Roaming\kinvue\sessions\session
 const fromMain = (err: Error, channel: string): Error =>
   new Error(`Error invoking remote method '${channel}': ${String(err)}`)
 
+/** Why a reload failed, as said after a write that landed, for a file another program holds (KV-235). */
+const HELD =
+  'The saved check-in history could not be opened: another program may be using it, or its ' +
+  'permissions may need checking.'
+/** How many times `text` is on the screen. */
+const timesSaid = (text: string): number => (document.body.textContent ?? '').split(text).length - 1
+
 let listSessions: ReturnType<typeof vi.fn<(personId: string) => Promise<SessionRecord[]>>>
 let seedDemo: ReturnType<typeof vi.fn<() => Promise<number>>>
 let startNewHistory: ReturnType<typeof vi.fn<() => Promise<string | null>>>
@@ -263,18 +270,23 @@ describe('the dashboard when the history cannot be shown', () => {
 
 describe('seeding the demo', () => {
   it('does not say the demo was not added when only the reload after it failed', async () => {
-    // Seeding wrote the fortnight; the list that follows is what failed.
+    // Seeding wrote the fortnight; the list that follows is what failed, the
+    // way the store says it, with a sentence that ends "Nothing has been
+    // changed" (KV-235).
     listSessions
       .mockResolvedValueOnce([])
-      .mockRejectedValueOnce(fromMain(new Error('EBUSY-ish'), 'sessions:list'))
+      .mockRejectedValueOnce(
+        fromMain(new UnreachableStoreError(PATH, 'EBUSY', new Error('busy')), 'sessions:list'),
+      )
     seedDemo.mockResolvedValue(12)
     render(<App />)
 
     fireEvent.click(await screen.findByText('Seed demo history'))
 
-    expect(
-      await screen.findByText('The demo history was added, but the list could not be reloaded.'),
-    ).toBeTruthy()
+    expect((await screen.findByRole('alert')).textContent).toBe(
+      `The demo history was added. The list could not be reloaded. ${HELD}`,
+    )
+    expect(document.body.textContent).not.toMatch(/Nothing has been changed/)
     expect(screen.queryByText('The demo history could not be added.')).toBeNull()
   })
 
@@ -1419,6 +1431,134 @@ describe('exporting, restoring and deleting at the device (KV-21)', () => {
     expect(
       await screen.findByText('The check-ins could not be deleted. Nothing has been changed.'),
     ).toBeTruthy()
+  })
+
+  describe('a deletion that landed, with the reload after it failing (KV-235)', () => {
+    // The reload fails the way the store says it: another program holding the
+    // file. That sentence is the store's own and ends "Nothing has been
+    // changed", which is true of the read and false of the deletion before it.
+    const heldAfterDeleting = (): void => {
+      listSessions.mockRejectedValue(
+        fromMain(new UnreachableStoreError(PATH, 'EBUSY', new Error('busy')), 'sessions:list'),
+      )
+    }
+    /** The alert says what was deleted and why the list is stale; nothing says it twice. */
+    const saidOnce = async (deleted: string): Promise<void> => {
+      const alert = await screen.findByRole('alert')
+      expect(alert.textContent).toBe(`${deleted} The list could not be reloaded. ${HELD}`)
+      expect(timesSaid(deleted)).toBe(1)
+      expect(document.body.textContent).not.toMatch(/Nothing has been changed/)
+      expect(document.body.textContent).not.toMatch(/could not be deleted/)
+      // The deletion was asked for, once, and its step has closed.
+      expect(removeCheckIns).toHaveBeenCalledTimes(1)
+      expect(screen.queryByText('Keep them')).toBeNull()
+    }
+
+    it('says one card was deleted', async () => {
+      listSessions.mockResolvedValue(days())
+      removeCheckIns.mockResolvedValue(1)
+      render(<App />)
+      fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+      heldAfterDeleting()
+      fireEvent.click(screen.getByText('Delete'))
+      await saidOnce('Deleted 1 check-in.')
+    })
+
+    it('offers the reload again, and says what was deleted once the list is current', async () => {
+      const records = days()
+      listSessions.mockResolvedValue(records)
+      removeCheckIns.mockResolvedValue(1)
+      render(<App />)
+      fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+      heldAfterDeleting()
+      fireEvent.click(screen.getByText('Delete'))
+      await screen.findByRole('alert')
+      // The cards are from before the deletion: all three still drawn.
+      expect(screen.getAllByText(/Delete this check-in/)).toHaveLength(3)
+
+      // Still held: the same sentence, not the store's.
+      fireEvent.click(screen.getByRole('button', { name: 'Reload the list' }))
+      await vi.waitFor(() => expect(listSessions).toHaveBeenCalledTimes(3))
+      await saidOnce('Deleted 1 check-in.')
+
+      listSessions.mockResolvedValue(records.slice(0, 2))
+      fireEvent.click(screen.getByRole('button', { name: 'Reload the list' }))
+      await vi.waitFor(() => expect(screen.queryByRole('alert')).toBeNull())
+      expect(await screen.findByText('Deleted 1 check-in.')).toBeTruthy()
+      expect(screen.getAllByText(/Delete this check-in/)).toHaveLength(2)
+      expect(screen.queryByRole('button', { name: 'Reload the list' })).toBeNull()
+    })
+
+    it('says the history could not be read, above the way out it offers', async () => {
+      listSessions.mockResolvedValue(days())
+      removeCheckIns.mockResolvedValue(1)
+      render(<App />)
+      fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+      listSessions.mockRejectedValue(
+        fromMain(new UnreadableStoreError(PATH, 'it is not valid JSON'), 'sessions:list'),
+      )
+      fireEvent.click(screen.getByText('Delete'))
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        'Deleted 1 check-in. The list could not be reloaded. ' +
+          'The saved check-in history could not be read.',
+      )
+      // Which failure it is still decides the way out.
+      expect(screen.getByRole('button', { name: 'Start a new history' })).toBeTruthy()
+      expect(document.body.textContent).not.toMatch(/Nothing has been changed/)
+    })
+
+    it('drops an earlier notice, so it is not read as part of the alert', async () => {
+      const records = days()
+      listSessions.mockResolvedValue(records)
+      removeCheckIns.mockResolvedValue(1)
+      render(<App />)
+      fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+      listSessions.mockResolvedValue(records.slice(0, 2))
+      fireEvent.click(screen.getByText('Delete'))
+      expect(await screen.findByText('Deleted 1 check-in.')).toBeTruthy()
+
+      fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+      heldAfterDeleting()
+      fireEvent.click(screen.getByText('Delete'))
+      await screen.findByRole('alert')
+      expect(timesSaid('Deleted 1 check-in.')).toBe(1)
+    })
+
+    it('never says "Deleted 0 check-ins" for a card that had already gone', async () => {
+      listSessions.mockResolvedValue(days())
+      removeCheckIns.mockResolvedValue(0)
+      render(<App />)
+      fireEvent.click((await screen.findAllByText(/Delete this check-in/))[0]!)
+      fireEvent.click(screen.getByText('Delete'))
+      expect(
+        await screen.findByText('Nothing was deleted: what was chosen had already been deleted.'),
+      ).toBeTruthy()
+    })
+
+    it('says the check-ins before a date were deleted', async () => {
+      listSessions.mockResolvedValue(days())
+      removeCheckIns.mockResolvedValue(2)
+      render(<App />)
+      await screen.findByText('Last exported: never.')
+      fireEvent.change(screen.getByLabelText('Delete check-ins taken before'), {
+        target: { value: '2026-09-03' },
+      })
+      fireEvent.click(screen.getByText('Review'))
+      await screen.findByText(/^Delete 2 check-ins, the last taken/)
+      heldAfterDeleting()
+      fireEvent.click(screen.getByText('Delete'))
+      await saidOnce('Deleted 2 check-ins.')
+    })
+
+    it('says a whole history was deleted', async () => {
+      listSessions.mockResolvedValue(days())
+      removeCheckIns.mockResolvedValue(3)
+      render(<App />)
+      fireEvent.click(await screen.findByText('Delete all of Margaret’s check-ins…'))
+      heldAfterDeleting()
+      fireEvent.click(screen.getByText('Delete'))
+      await saidOnce('Deleted 3 check-ins.')
+    })
   })
 })
 
@@ -2582,13 +2722,20 @@ describe('more than one person: who is taking the reading, and whose check-ins a
         outcome,
         into: { personId: BILL.id, added: null },
       })
-      listPeople.mockRejectedValue(fromMain(new Error('held by a backup agent'), 'people:list'))
+      // Held by a backup agent, said the way the store says it: with a
+      // sentence that ends "Nothing has been changed" (KV-235).
+      listPeople.mockRejectedValue(
+        fromMain(new UnreachableStoreError(PATH, 'EBUSY', new Error('busy')), 'people:list'),
+      )
       fireEvent.click(screen.getByRole('button', { name: 'Restore from an export…' }))
 
-      expect(await screen.findByText('Restored 3 check-ins.')).toBeTruthy()
       const alert = await screen.findByRole('alert')
-      expect(alert.textContent).toMatch(/could not be reloaded/)
-      expect(alert.textContent).not.toMatch(/Nothing has been changed/)
+      expect(alert.textContent).toBe(
+        `Restored 3 check-ins. The list could not be reloaded. ${HELD}`,
+      )
+      // Once, in the alert, and not in the panel's own line as well.
+      expect(timesSaid('Restored 3 check-ins.')).toBe(1)
+      expect(document.body.textContent).not.toMatch(/Nothing has been changed/)
     })
 
     it('lets go of an export from before keys on Cancel, writing nothing', async () => {
@@ -2641,6 +2788,46 @@ describe('more than one person: who is taking the reading, and whose check-ins a
       await dashboard('Ann')
       expect(removePerson).toHaveBeenCalledWith(BILL.id)
       expect(await screen.findByText('Deleted Bill and 3 check-ins.')).toBeTruthy()
+    })
+
+    it('says they were deleted when only the reload after it fails (KV-235)', async () => {
+      two()
+      const removePerson = vi.fn(() => Promise.resolve(3))
+      Object.assign(window.kinvue, { removePerson })
+      await toBill()
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Bill…' }))
+      listPeople.mockRejectedValue(
+        fromMain(new UnreachableStoreError(PATH, 'EBUSY', new Error('busy')), 'people:list'),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Delete Bill' }))
+
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        `Deleted Bill and 3 check-ins. The list could not be reloaded. ${HELD}`,
+      )
+      expect(removePerson).toHaveBeenCalledTimes(1)
+      expect(document.body.textContent).not.toMatch(/Nothing has been changed/)
+      expect(document.body.textContent).not.toMatch(/could not be deleted/)
+    })
+
+    it('says a name was saved when only the reload after it fails (KV-235)', async () => {
+      two()
+      const renamePerson = vi.fn(() =>
+        Promise.resolve({ ok: true as const, person: { id: ANN.id, name: 'Anne' } }),
+      )
+      Object.assign(window.kinvue, { renamePerson, addPerson: vi.fn() })
+      render(<App />)
+      await dashboard('Ann')
+      fireEvent.click(screen.getByRole('button', { name: 'Rename Ann…' }))
+      fireEvent.change(screen.getByLabelText('New name for Ann'), { target: { value: 'Anne' } })
+      listPeople.mockRejectedValue(
+        fromMain(new UnreachableStoreError(PATH, 'EBUSY', new Error('busy')), 'people:list'),
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Save the name' }))
+
+      expect((await screen.findByRole('alert')).textContent).toBe(
+        `The name was saved. The list could not be reloaded. ${HELD}`,
+      )
+      expect(document.body.textContent).not.toMatch(/Nothing has been changed/)
     })
 
     it('stays on the dashboard, saying so, when the only person is deleted (review of #206)', async () => {
