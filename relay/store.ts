@@ -7,6 +7,7 @@ import {
   ENROL_TOKEN_TTL_MS,
   ENVELOPE_RETENTION_MS,
   isKey,
+  MAX_DELIVERIES_KEPT_PER_VIEWER,
   MAX_WAITING_PER_VIEWER,
   isPairingId,
   PAIRING_TTL_MS,
@@ -34,7 +35,8 @@ import {
  *
  * **Retention is enforced here, and is the operator's policy, not a control** (KV-33, T3,
  * T4): an envelope older than 14 days and a fetch older than 30 are dropped on every
- * write, and an operator who wanted more could change this file. What holds against that
+ * write, and so is a viewer's oldest fetch past `MAX_DELIVERIES_KEPT_PER_VIEWER` of them
+ * (KV-224). An operator who wanted more could change this file. What holds against that
  * operator is what the file holds.
  *
  * **Retention runs on this machine's clock.** A clock jumping forward 14 days drops every
@@ -63,14 +65,37 @@ import {
  */
 export const RELAY_FILE_VERSION = 2
 
+/**
+ * An envelope as the relay holds it: what the viewer fetches, and whether a fetch has
+ * handed these bytes to them yet (KV-224). `given` is the relay's own note and never
+ * leaves it. Absent until a fetch hands the envelope over, and taken off again when a
+ * reseal puts different bytes at the stream — so it goes where the envelope goes, on an
+ * ack and at expiry, and there is no number beside the mailbox to fall out of step with
+ * it (review of #250).
+ */
+type Held = Waiting & { given?: true }
+
+/** What a fetch hands over: the envelope, without the relay's note on it. */
+const handedOver = ({ stream, sealed, postedAt }: Held): Waiting => ({ stream, sealed, postedAt })
+
+/** The newest `MAX_DELIVERIES_KEPT_PER_VIEWER` of a viewer's fetch times, oldest first. */
+const newestKept = (times: number[]): number[] =>
+  times.length > MAX_DELIVERIES_KEPT_PER_VIEWER
+    ? times.slice(-MAX_DELIVERIES_KEPT_PER_VIEWER)
+    : times
+
 interface ViewerEntry {
   /** Their X25519 key, which the check-in device seals to. Kept, never used here. */
   receiveKey: string
   enrolledAt: number
   /** Everything up to this stream number has been acknowledged, and is not taken again. */
   ackedThrough: number
-  waiting: Waiting[]
-  /** When a fetch delivered them envelopes, inside #31's window. Empty fetches are not kept. */
+  waiting: Held[]
+  /**
+   * When a fetch handed them envelopes it had not handed them before, inside #31's
+   * window and under `MAX_DELIVERIES_KEPT_PER_VIEWER`. Empty fetches are not kept, and
+   * neither is a fetch of what was already given (KV-224).
+   */
   fetchedAt: number[]
 }
 
@@ -130,11 +155,18 @@ export interface RelayStore {
   roleOf(key: string): Promise<Role | null>
   /** Envelopes into their viewers' mailboxes, all of them or none. */
   post(envelopes: Envelope[], at: number): Promise<PostResult>
-  /** What waits for `viewer`, recording that they fetched when anything did. */
+  /**
+   * What waits for `viewer`. Recorded as a delivery when any of it is bytes this viewer
+   * has not been handed before; the same envelopes fetched again are handed over and
+   * recorded once (KV-224).
+   */
   fetch(viewer: string, at: number): Promise<Waiting[]>
   /** `viewer` holds every stream up to `through`; those go. Refused over a gap. */
   ack(viewer: string, through: number, at: number): Promise<AckResult>
-  /** When each enrolled viewer fetched, inside the window, and where their stream stands. */
+  /**
+   * When each enrolled viewer was handed something new, inside the window and at most
+   * `MAX_DELIVERIES_KEPT_PER_VIEWER` times, and where their stream stands.
+   */
   deliveries(at: number): Promise<Deliveries>
   /** Sharing with `viewer` ends: their mailbox and enrolment go together. False if unknown. */
   revoke(viewer: string, at: number): Promise<boolean>
@@ -291,9 +323,13 @@ function problemWith(value: unknown): string | null {
     // over what waits relies on.
     let previous = acked
     for (const waiting of viewer.waiting as unknown[]) {
-      const w = waiting as Partial<Waiting> | null
+      const w = waiting as (Partial<Waiting> & { given?: unknown }) | null
       if (w === null || !isStream(w.stream) || !isNumber(w.postedAt)) {
         return `viewers.${key}.waiting: an envelope without its stream or time`
+      }
+      // Absent or true, as `fetch` writes it: anything else is not this relay's note.
+      if (!(w.given === undefined || w.given === true)) {
+        return `viewers.${key}.waiting: stream ${w.stream} given is not true`
       }
       if (!isSealed(w.sealed)) return `viewers.${key}.waiting: an envelope without its bytes`
       if (w.stream <= previous) {
@@ -369,7 +405,12 @@ function pruned(state: RelayState, at: number): boolean {
   let changed = false
   for (const viewer of Object.values(state.viewers)) {
     const waiting = viewer.waiting.filter((w) => at - w.postedAt < ENVELOPE_RETENTION_MS)
-    const fetchedAt = viewer.fetchedAt.filter((t) => at - t < DELIVERY_RETENTION_MS)
+    // The window, then the ceiling: a file that grew past it before there was one is
+    // brought under it here, on any write and every hour, and not only when that viewer
+    // is next handed something new (review of #250).
+    const fetchedAt = newestKept(
+      viewer.fetchedAt.filter((t) => at - t < DELIVERY_RETENTION_MS),
+    )
     if (waiting.length !== viewer.waiting.length || fetchedAt.length !== viewer.fetchedAt.length) {
       changed = true
       viewer.waiting = waiting
@@ -495,6 +536,8 @@ export function createRelayStore(path: string): RelayStore {
             // again, as a new envelope's would (the protocol's resume contract).
             there.sealed = envelope.sealed
             there.postedAt = at
+            // Different bytes: whatever was handed over at this stream, these were not.
+            delete there.given
             posted.replaced += 1
           } else {
             if (viewer.waiting.length >= MAX_WAITING_PER_VIEWER) {
@@ -518,8 +561,18 @@ export function createRelayStore(path: string): RelayStore {
         // relay delivered, and a viewer's app polling an empty mailbox would otherwise bury
         // the looks under thousands of polls, and rewrite the file for each (review of #216).
         if (viewer === undefined || viewer.waiting.length === 0) return { result: [], then: 'keep' }
-        viewer.fetchedAt.push(at)
-        return { result: viewer.waiting.map((w) => ({ ...w })), then: 'write' }
+        const result = viewer.waiting.map(handedOver)
+        // Nor is a fetch of what they were already given (KV-224). Waiting envelopes stay
+        // until acknowledged, so a viewer that fetches and never acknowledges is handed
+        // the same ones on every poll: one delivery, recorded once, and nothing written
+        // for the rest. Asked of each envelope, never of how far the streams have got: a
+        // reseal, a stream filled in below one already given, and an envelope sealed
+        // again after it expired are all bytes this viewer has not held (review of #250).
+        if (viewer.waiting.every((w) => w.given === true)) return { result, then: 'keep' }
+        for (const w of viewer.waiting) w.given = true
+        // The newest stay: a full list reaches back less far, and never loses the latest.
+        viewer.fetchedAt = newestKept([...viewer.fetchedAt, at])
+        return { result, then: 'write' }
       }),
 
     ack: (key, through, at) =>
@@ -548,7 +601,8 @@ export function createRelayStore(path: string): RelayStore {
           const waiting = entry.waiting.filter((w) => at - w.postedAt < ENVELOPE_RETENTION_MS)
           return {
             viewer,
-            fetchedAt: entry.fetchedAt.filter((t) => at - t < DELIVERY_RETENTION_MS),
+            // As `pruned` would leave it, though a read writes nothing.
+            fetchedAt: newestKept(entry.fetchedAt.filter((t) => at - t < DELIVERY_RETENTION_MS)),
             ackedThrough: entry.ackedThrough,
             highestWaiting: waiting.at(-1)?.stream ?? null,
           }
