@@ -211,7 +211,10 @@ export interface Ack {
 /** One viewer, as GET /v1/deliveries gives them to the check-in device. */
 export interface ViewerStanding {
   viewer: string
-  /** When the relay delivered envelopes to them, inside the access-history window. */
+  /**
+   * When the relay delivered them envelopes they had not been given before, inside the
+   * access-history window: at most `MAX_DELIVERIES_KEPT_PER_VIEWER`, the newest.
+   */
   fetchedAt: number[]
   /** Every stream up to this one is acknowledged; 0 before the first. */
   ackedThrough: number
@@ -256,6 +259,24 @@ export const MAX_WAITING_PER_VIEWER = 256
 // one file, cloned and rewritten on each change, so this is also the worst a change has to
 // carry for each viewer. At the expected size — a few dozen envelopes of a few KB — that is
 // a few hundred KB; the ceiling is what keeps the rest from becoming the relay's problem.
+
+/**
+ * The most delivery times the relay keeps for one viewer, newest first to stay (KV-224).
+ *
+ * **A delivery is recorded when it carries something the viewer has not been given
+ * before**, and only then. A viewer's app that fetches and never acknowledges — a bug, a
+ * crash between the two, or a viewer who means to — is handed the same envelopes each
+ * time, and that is one delivery, recorded once: KV-31's history is of what the relay
+ * delivered, and the same envelopes fetched a thousand times are not a thousand looks.
+ * So a viewer cannot grow this list by polling; only new envelopes do, and those are the
+ * check-in device's to send.
+ *
+ * The ceiling is for that side. A few check-ins a day for each person a viewer follows is
+ * a hundred or so deliveries in the 30-day window; this is room for that, the same room
+ * a mailbox has. Past it the oldest go first, so the history reaches back less far and
+ * never loses the latest look.
+ */
+export const MAX_DELIVERIES_KEPT_PER_VIEWER = 256
 
 
 /** What one envelope's JSON adds around its sealed bytes: its key, stream and quoting. */

@@ -7,6 +7,7 @@ import {
   ENROL_TOKEN_TTL_MS,
   ENVELOPE_RETENTION_MS,
   isKey,
+  MAX_DELIVERIES_KEPT_PER_VIEWER,
   MAX_WAITING_PER_VIEWER,
   isPairingId,
   PAIRING_TTL_MS,
@@ -70,8 +71,19 @@ interface ViewerEntry {
   /** Everything up to this stream number has been acknowledged, and is not taken again. */
   ackedThrough: number
   waiting: Waiting[]
-  /** When a fetch delivered them envelopes, inside #31's window. Empty fetches are not kept. */
+  /**
+   * When a fetch delivered them envelopes they had not been given before, inside #31's
+   * window and under `MAX_DELIVERIES_KEPT_PER_VIEWER`. Empty fetches are not kept, and
+   * neither is a fetch of what was already delivered (KV-224).
+   */
   fetchedAt: number[]
+  /**
+   * The highest stream a fetch has given them: what tells a delivery from the same
+   * envelopes fetched again. Absent in a file written before KV-224, and read then as
+   * nothing delivered: whatever waits is news once, and what was acknowledged no longer
+   * waits.
+   */
+  deliveredThrough?: number
 }
 
 interface PairingEntry {
@@ -285,6 +297,10 @@ function problemWith(value: unknown): string | null {
     }
     if (!Array.isArray(viewer.fetchedAt) || !viewer.fetchedAt.every(isNumber)) {
       return `viewers.${key}.fetchedAt: not a list of times`
+    }
+    const delivered = viewer.deliveredThrough
+    if (!(delivered === undefined || delivered === 0 || isStream(delivered))) {
+      return `viewers.${key}.deliveredThrough: not 0 or a stream number`
     }
     if (!Array.isArray(viewer.waiting)) return `viewers.${key}.waiting: not a list`
     // Above the ack, each once, in order: what `post` and `ack` keep, and `ack`'s walk
@@ -518,8 +534,22 @@ export function createRelayStore(path: string): RelayStore {
         // relay delivered, and a viewer's app polling an empty mailbox would otherwise bury
         // the looks under thousands of polls, and rewrite the file for each (review of #216).
         if (viewer === undefined || viewer.waiting.length === 0) return { result: [], then: 'keep' }
+        const result = viewer.waiting.map((w) => ({ ...w }))
+        // Nor is a fetch of what they were already given (KV-224). Waiting envelopes stay
+        // until acknowledged, so a viewer that fetches and never acknowledges is handed
+        // the same ones on every poll: one delivery, recorded once, and nothing written
+        // for the rest. What waits is in stream order, so the last is the highest.
+        const highest = viewer.waiting.at(-1)!.stream
+        if (highest <= (viewer.deliveredThrough ?? 0)) {
+          return { result, then: 'keep' }
+        }
+        viewer.deliveredThrough = highest
         viewer.fetchedAt.push(at)
-        return { result: viewer.waiting.map((w) => ({ ...w })), then: 'write' }
+        // The newest stay: a full list reaches back less far, and never loses the latest.
+        if (viewer.fetchedAt.length > MAX_DELIVERIES_KEPT_PER_VIEWER) {
+          viewer.fetchedAt = viewer.fetchedAt.slice(-MAX_DELIVERIES_KEPT_PER_VIEWER)
+        }
+        return { result, then: 'write' }
       }),
 
     ack: (key, through, at) =>

@@ -4,6 +4,7 @@ import { basename, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DELIVERY_RETENTION_MS,
+  MAX_DELIVERIES_KEPT_PER_VIEWER,
   ENROL_TOKEN_TTL_MS,
   ENVELOPE_RETENTION_MS,
 } from '@kinvue/core/sync/protocol'
@@ -127,6 +128,106 @@ describe('retention, as KV-33 sets it', () => {
     expect(before.viewers[0]?.fetchedAt).toEqual([T0])
     const after = await store.deliveries(T0 + DELIVERY_RETENTION_MS)
     expect(after.viewers[0]?.fetchedAt).toEqual([])
+  })
+
+  describe('what a fetch records (KV-224)', () => {
+    const times = async (store: Awaited<ReturnType<typeof enrolled>>, at: number) =>
+      (await store.deliveries(at)).viewers.find((v) => v.viewer === ann)?.fetchedAt
+
+    it('records the same envelopes once, however often they are fetched, and stops writing', async () => {
+      // A viewer's app that fetches and never acknowledges: what waits stays, so every
+      // poll is handed the same envelopes. One delivery, and a file that does not grow.
+      const store = await enrolled()
+      await store.post([{ viewer: ann, stream: 1, sealed: sealed('one') }], T0)
+      expect(await store.fetch(ann, T0 + 1)).toHaveLength(1)
+      const after = await readFile(path, 'utf8')
+      for (let poll = 2; poll <= 50; poll++) {
+        expect(await store.fetch(ann, T0 + poll)).toHaveLength(1)
+      }
+      expect(await times(store, T0 + 60)).toEqual([T0 + 1])
+      expect(await readFile(path, 'utf8')).toBe(after)
+    })
+
+    it('records again when something new waits, acknowledged or not', async () => {
+      const store = await enrolled()
+      await store.post([{ viewer: ann, stream: 1, sealed: sealed('one') }], T0)
+      await store.fetch(ann, T0 + 1)
+      await store.post([{ viewer: ann, stream: 2, sealed: sealed('two') }], T0 + 2)
+      // Both are handed over; the second is the news.
+      expect(await store.fetch(ann, T0 + 3)).toHaveLength(2)
+      await store.ack(ann, 2, T0 + 4)
+      await store.post([{ viewer: ann, stream: 3, sealed: sealed('three') }], T0 + 5)
+      await store.fetch(ann, T0 + 6)
+      expect(await times(store, T0 + 7)).toEqual([T0 + 1, T0 + 3, T0 + 6])
+    })
+
+    it('still knows what was delivered after a restart', async () => {
+      const store = await enrolled()
+      await store.post([{ viewer: ann, stream: 1, sealed: sealed('one') }], T0)
+      await store.fetch(ann, T0 + 1)
+      const restarted = createRelayStore(path)
+      await restarted.fetch(ann, T0 + 2)
+      expect(await times(restarted, T0 + 3)).toEqual([T0 + 1])
+    })
+
+    it(`keeps the newest ${MAX_DELIVERIES_KEPT_PER_VIEWER} deliveries, and the file stops growing`, async () => {
+      // A file already at the ceiling: one delivery for each stream so far, all acknowledged.
+      const full = MAX_DELIVERIES_KEPT_PER_VIEWER
+      await writeFile(
+        path,
+        fileOf({
+          device,
+          viewers: {
+            [ann]: {
+              ...viewerEntry(receiveKey()),
+              ackedThrough: full,
+              deliveredThrough: full,
+              fetchedAt: Array.from({ length: full }, (_, i) => T0 + i + 1),
+            },
+          },
+        }),
+      )
+      const store = createRelayStore(path)
+      const past = full + 5
+      const sizes: number[] = []
+      for (let stream = full + 1; stream <= past; stream++) {
+        await store.post([{ viewer: ann, stream, sealed: sealed('x') }], T0 + stream)
+        await store.fetch(ann, T0 + stream)
+        await store.ack(ann, stream, T0 + stream)
+        sizes.push((await readFile(path, 'utf8')).length)
+      }
+      const kept = await times(store, T0 + past)
+      expect(kept).toHaveLength(MAX_DELIVERIES_KEPT_PER_VIEWER)
+      // The oldest went: the latest look is never the one lost.
+      expect(kept?.[0]).toBe(T0 + 6)
+      expect(kept?.at(-1)).toBe(T0 + past)
+      // Every delivery past the ceiling leaves the file the size the one before left it.
+      expect(new Set(sizes).size).toBe(1)
+    })
+
+    it('reads a file from before it kept what was delivered: what waits is news once', async () => {
+      // No `deliveredThrough`: stream 3 waits above an ack of 2.
+      await writeFile(
+        path,
+        fileOf({
+          viewers: {
+            [ann]: { ...viewerEntry(receiveKey()), ackedThrough: 2, waiting: [{ ...waiting(3), postedAt: T0 }] },
+          },
+        }),
+      )
+      const store = createRelayStore(path)
+      await store.fetch(ann, T0)
+      await store.fetch(ann, T0 + 1)
+      expect(await times(store, T0 + 2)).toEqual([T0])
+    })
+
+    it('refuses a file whose record of what was delivered is not a stream number', async () => {
+      await writeFile(
+        path,
+        fileOf({ viewers: { [ann]: { ...viewerEntry(receiveKey()), deliveredThrough: -1 } } }),
+      )
+      await expect(createRelayStore(path).roleOf(ann)).rejects.toThrow(/deliveredThrough/)
+    })
   })
 
   it('reads without writing, and leaves out what has expired (review of #218)', async () => {

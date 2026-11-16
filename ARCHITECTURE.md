@@ -1908,7 +1908,13 @@ a remote viewer, is on no list and cannot be revoked; that is the device's own b
   the relay delivered to each viewer, **not reported by the viewer's own app**, which a
   viewer who is the danger could silence or alter. Two costs, said plainly: the relay then
   holds when each viewer fetched, which #36's T4 wants kept small; and reading a copy
-  already on the viewer's phone, offline, is not seen at all. KV-33 keeps those delivery
+  already on the viewer's phone, offline, is not seen at all. **What a look is, at the
+  relay** (KV-224): a fetch that gave the viewer something they had not been given before.
+  The same envelopes fetched again — an app that never acknowledges, by fault or on
+  purpose — are one delivery, so the history counts what reached them and when, and a
+  viewer can neither pad it nor bury a look in it by polling. It follows that opening the
+  dashboard forty times with nothing new is not forty looks: how often someone reads what
+  they already hold is not something a relay can see. KV-33 keeps those delivery
   records for this window only, 30 days. The list is also offered unprompted,
   periodically: a list nobody revisits protects nobody.
 - **Revocation is on the check-in device, immediate, and needs nobody's sign-off.** The
@@ -2062,7 +2068,9 @@ holds it:
   from there (the resume contract, in the protocol). A viewer whose sharing ended is told
   only that, on every route, after any gap.
 - **Retention as KV-33 sets it** — envelopes 14 days, fetch times 30 — dropped on every
-  write and every hour regardless. **Enforced by the relay, which is T3's and T4's
+  write and every hour regardless. A fetch time is kept only for a delivery of something
+  new, and at most 256 for each viewer, the newest (`MAX_DELIVERIES_KEPT_PER_VIEWER`,
+  KV-224): polling cannot grow the file, and a full list loses its oldest look first. **Enforced by the relay, which is T3's and T4's
   adversary**: it is the operator's policy, and an operator who wanted more could change
   it. What holds against that operator is what the file holds: keys, times and sealed
   bytes.

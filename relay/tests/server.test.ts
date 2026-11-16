@@ -70,16 +70,23 @@ describe('store and forward', () => {
     expect(mailbox.envelopes.map((e) => e.sealed)).toEqual([sealed('for bill')])
   })
 
-  it('records each fetch that delivered, and gives the device those times (KV-31)', async () => {
+  it('records each fetch that delivered something new, and gives the device those times (KV-31)', async () => {
     await post([{ viewer: ann.key, stream: 1, sealed: sealed('one') }])
+    const first = clock
     await fetchAs(ann)
+    // The same envelope again, never acknowledged: handed over, and not a second look
+    // (KV-224).
     clock += 1000
+    const again = (await fetchAs(ann)).json as { envelopes: { stream: number }[] }
+    expect(again.envelopes.map((e) => e.stream)).toEqual([1])
+    clock += 1000
+    await post([{ viewer: ann.key, stream: 2, sealed: sealed('two') }])
     await fetchAs(ann)
     const deliveries = await call(base, device, { method: 'GET', path: ROUTES.deliveries })
     expect(deliveries.status).toBe(200)
     const viewers = (deliveries.json as { viewers: { viewer: string; fetchedAt: number[] }[] })
       .viewers
-    expect(viewers.find((v) => v.viewer === ann.key)?.fetchedAt).toEqual([clock - 1000, clock])
+    expect(viewers.find((v) => v.viewer === ann.key)?.fetchedAt).toEqual([first, clock])
     expect(viewers.find((v) => v.viewer === bill.key)?.fetchedAt).toEqual([])
   })
 
