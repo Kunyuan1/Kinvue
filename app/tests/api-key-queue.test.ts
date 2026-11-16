@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { createApiKeyStore, type KeyCipher } from '../main/api-key'
 
 /**
@@ -11,17 +11,29 @@ import { createApiKeyStore, type KeyCipher } from '../main/api-key'
  * real timing to show; this makes it certain.
  */
 
-const slow = { first: true }
+const slow = vi.hoisted(() => ({ first: true }))
+/** What reached the disk, in order (KV-223): each flush and each rename, by file name. */
+const disk = vi.hoisted(() => ({ events: [] as string[] }))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...real,
-    writeFile: async (...args: Parameters<typeof real.writeFile>) => {
+    open: async (...args: Parameters<typeof real.open>) => {
       if (slow.first && String(args[0]).endsWith('api-key.json.tmp')) {
         slow.first = false
         await new Promise((r) => setTimeout(r, 60))
       }
-      return real.writeFile(...args)
+      const file = await real.open(...args)
+      const sync = file.sync.bind(file)
+      file.sync = async (): Promise<void> => {
+        await sync()
+        disk.events.push(`sync ${basename(String(args[0]))}`)
+      }
+      return file
+    },
+    rename: async (from: string, to: string): Promise<void> => {
+      await real.rename(from, to)
+      disk.events.push(`rename ${basename(from)}`)
     },
   }
 })
@@ -57,5 +69,31 @@ describe('the key store writes one at a time', () => {
     const next = createApiKeyStore(path, cipher({ landed: true }))
     await next.load()
     expect(next.current()).toBe('ss-live-second-key-0000')
+  })
+
+  it('flushes the key file to the disk before renaming it into place (KV-223)', async () => {
+    // Without the flush a power cut just after a save can leave the key file empty.
+    const dir = await mkdtemp(join(tmpdir(), 'kinvue-keyq-'))
+    dirs.push(dir)
+    const store = createApiKeyStore(join(dir, 'api-key.json'), cipher({ landed: true }))
+    await store.load()
+    disk.events.length = 0
+    await store.set('ss-live-flushed-key-0000')
+    // Then the folder, where it can be flushed; Windows has no such flush.
+    const folder = process.platform === 'win32' ? [] : [`sync ${basename(dir)}`]
+    expect(disk.events).toEqual(['sync api-key.json.tmp', 'rename api-key.json.tmp', ...folder])
+  })
+
+  it('leaves no copy of the key behind when a save fails (review of #247)', async () => {
+    // A temporary file left by a refused save holds the key, unencrypted where there is no
+    // key store, under a name `forget` never removes. Here the rename fails: the file's
+    // place is taken by a folder.
+    const dir = await mkdtemp(join(tmpdir(), 'kinvue-keyq-'))
+    dirs.push(dir)
+    const store = createApiKeyStore(join(dir, 'api-key.json'), cipher({ landed: true }))
+    await store.load()
+    await mkdir(join(dir, 'api-key.json'))
+    await expect(store.set('ss-live-refused-key-0000')).rejects.toThrow()
+    expect(await readdir(dir)).toEqual(['api-key.json'])
   })
 })

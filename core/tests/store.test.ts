@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import {
   createJsonSessionStore,
   NewerStoreError,
@@ -24,16 +24,47 @@ import { session, sessionBeforeKV16 } from './helpers'
  */
 const renameControl = vi.hoisted(() => ({ failNext: false }))
 
+/**
+ * What reached the disk, in order (KV-223): each flush, each rename and each
+ * removal, by the file's name. And a flush that can be made to fail once.
+ */
+const disk = vi.hoisted(() => ({ events: [] as string[], failNextSync: false }))
+
+/**
+ * The flush of the folder `path` is in, as `replaceFile` asks for it after its
+ * rename: everywhere but Windows, which has none to ask for.
+ */
+const folderFlush = (path: string): string[] =>
+  process.platform === 'win32' ? [] : [`sync ${basename(dirname(path))}`]
+
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const file = await actual.open(...args)
+      const sync = file.sync.bind(file)
+      file.sync = async (): Promise<void> => {
+        if (disk.failNextSync) {
+          disk.failNextSync = false
+          throw new Error('EIO: sync failed')
+        }
+        await sync()
+        disk.events.push(`sync ${basename(String(args[0]))}`)
+      }
+      return file
+    },
     rename: async (from: string, to: string): Promise<void> => {
       if (renameControl.failNext) {
         renameControl.failNext = false
         throw new Error('EIO: rename failed')
       }
       await actual.rename(from, to)
+      disk.events.push(`rename ${basename(from)}`)
+    },
+    unlink: async (...args: Parameters<typeof actual.unlink>): Promise<void> => {
+      await actual.unlink(...args)
+      disk.events.push(`unlink ${basename(String(args[0]))}`)
     },
   }
 })
@@ -330,8 +361,50 @@ describe('the temp-then-rename write', () => {
     await expect(store.append(session({ id: 'doomed' }))).rejects.toThrow(/rename failed/)
 
     expect(await readFile(path, 'utf8')).toBe(before)
-    // And the leftover temp file does not poison the next successful append:
-    // it is overwritten, never read.
+    // The temp file goes with the write that failed (review of #247): it holds
+    // the whole history under a name nothing else reads or removes.
+    expect(await readdir(dirname(path))).toEqual(['sessions.json'])
+    // And the next append goes through.
+    await store.append(session({ id: 'next', capturedAt: '2026-09-02T09:00:00.000Z' }))
+    expect((await createJsonSessionStore(path).list('test-person')).map((s) => s.id)).toEqual([
+      'safe',
+      'next',
+    ])
+  })
+
+  it('flushes the temporary file to the disk before it is renamed into place (KV-223)', async () => {
+    // A rename can reach the disk before the text it names. Without the flush
+    // a power cut just after a write leaves `sessions.json` empty or zeros:
+    // the whole history gone, and an empty file read as a first run.
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    disk.events.length = 0
+    await store.append(session({ id: 'kept', capturedAt: '2026-09-01T09:00:00.000Z' }))
+
+    // Then the folder, where it can be, so the rename itself is on the disk: a
+    // lost one would bring back whatever this write took out (review of #247).
+    expect(disk.events).toEqual([
+      'sync sessions.json.tmp',
+      'rename sessions.json.tmp',
+      ...folderFlush(path),
+    ])
+  })
+
+  it('renames nothing into place when the flush fails', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'safe', capturedAt: '2026-09-01T09:00:00.000Z' }))
+    const before = await readFile(path, 'utf8')
+
+    disk.events.length = 0
+    disk.failNextSync = true
+    await expect(store.append(session({ id: 'doomed' }))).rejects.toThrow(/sync failed/)
+
+    // Nothing renamed, and the temp file removed, not left (review of #247).
+    expect(disk.events).toEqual(['unlink sessions.json.tmp'])
+    expect(await readdir(dirname(path))).toEqual(['sessions.json'])
+    expect(await readFile(path, 'utf8')).toBe(before)
+    // The file is closed, not left held: the next write goes through.
     await store.append(session({ id: 'next', capturedAt: '2026-09-02T09:00:00.000Z' }))
     expect((await createJsonSessionStore(path).list('test-person')).map((s) => s.id)).toEqual([
       'safe',
@@ -408,6 +481,36 @@ describe('starting a new history when the old one cannot be read (KV-98)', () =>
     await expect(store.list('test-person')).resolves.toEqual([])
     await store.append(session({ id: 'first' }))
     expect((await store.list('test-person')).map((s) => s.id)).toEqual(['first'])
+  })
+
+  it('flushes the copy to the disk before the original is removed (review of #247)', async () => {
+    // The copy is the only one there will be. Removed first, or unflushed, a
+    // power cut leaves the name of a file set aside and nothing in it.
+    const { path } = await storeIn()
+    await writeFile(path, BROKEN, 'utf8')
+    const store = createJsonSessionStore(path, () => ON)
+    disk.events.length = 0
+
+    await store.startNewHistory()
+
+    expect(disk.events).toEqual([
+      'sync sessions.json.unreadable-2026-09-22',
+      'unlink sessions.json',
+    ])
+  })
+
+  it('removes nothing when the copy cannot be flushed', async () => {
+    const { path } = await storeIn()
+    await writeFile(path, BROKEN, 'utf8')
+    const store = createJsonSessionStore(path, () => ON)
+
+    disk.failNextSync = true
+    await expect(store.startNewHistory()).rejects.toThrow(/sync failed/)
+
+    expect(await readFile(path, 'utf8')).toBe(BROKEN)
+    // The next press sets it aside under the next name, as after a removal
+    // that failed.
+    await expect(store.startNewHistory()).resolves.toBe(`${path}.unreadable-2026-09-22-2`)
   })
 
   it('never moves a history it can read', async () => {

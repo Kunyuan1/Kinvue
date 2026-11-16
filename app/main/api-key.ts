@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, unlink, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, unlink } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import { replaceFile } from '@kinvue/core/session/replace'
 import type { StoreCipher } from '@kinvue/core/session/store'
 import type { KeyStatus } from '../shared/api-key'
 
@@ -105,9 +106,8 @@ export function createApiKeyStore(path: string, cipher: KeyCipher): ApiKeyStore 
 
   const write = async (contents: KeyFile): Promise<void> => {
     await mkdir(dirname(path), { recursive: true })
-    const tmp = `${path}.tmp`
-    await writeFile(tmp, JSON.stringify(contents), 'utf8')
-    await rename(tmp, path)
+    // Flushed before it is renamed into place, as the history is (KV-223).
+    await replaceFile(path, JSON.stringify(contents))
   }
 
   const seal = async (value: string): Promise<void> => {

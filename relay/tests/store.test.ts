@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { basename, join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DELIVERY_RETENTION_MS,
   ENROL_TOKEN_TTL_MS,
@@ -14,6 +14,32 @@ import {
   UnreadableRelayFileError,
 } from '../store'
 import { identity, receiveKey, sealed } from './helpers'
+
+/**
+ * What reached the disk, in order (KV-223): each flush of a file and each rename, by the
+ * file's name. Everything else is the real file system.
+ */
+const disk = vi.hoisted(() => ({ events: [] as string[] }))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const file = await actual.open(...args)
+      const sync = file.sync.bind(file)
+      file.sync = async (): Promise<void> => {
+        await sync()
+        disk.events.push(`sync ${basename(String(args[0]))}`)
+      }
+      return file
+    },
+    rename: async (from: string, to: string): Promise<void> => {
+      await actual.rename(from, to)
+      disk.events.push(`rename ${basename(from)}`)
+    },
+  }
+})
 
 let dir: string
 let path: string
@@ -297,6 +323,19 @@ describe('the file', () => {
 
   it('reads as version 2: the device’s receiving key, tokens and pairings', () => {
     expect(RELAY_FILE_VERSION).toBe(2)
+  })
+
+  it('flushes its file to the disk before renaming it into place (KV-223)', async () => {
+    // Without the flush a power cut just after a write can leave the relay's file empty:
+    // every enrolled key gone, and every viewer a stranger.
+    const store = createRelayStore(path)
+    disk.events.length = 0
+    await store.enrolDevice(device, receiveKey(), T0)
+    const tmp = `${basename(path)}.tmp`
+    // Then the folder, where it can be: a rename lost to a power cut would bring back a
+    // viewer whose sharing had just been ended (review of #247). Windows has no such flush.
+    const folder = process.platform === 'win32' ? [] : [`sync ${basename(dir)}`]
+    expect(disk.events).toEqual([`sync ${tmp}`, `rename ${tmp}`, ...folder])
   })
 
   it('leaves no copy of the state behind when a write fails (review of #216)', async () => {
