@@ -212,8 +212,9 @@ export interface Ack {
 export interface ViewerStanding {
   viewer: string
   /**
-   * When the relay delivered them envelopes they had not been given before, inside the
-   * access-history window: at most `MAX_DELIVERIES_KEPT_PER_VIEWER`, the newest.
+   * When the relay handed them envelopes it had not handed them before, inside the
+   * access-history window, oldest first: at most `MAX_DELIVERIES_KEPT_PER_VIEWER`, and
+   * with exactly that many, older ones may have been dropped.
    */
   fetchedAt: number[]
   /** Every stream up to this one is acknowledged; 0 before the first. */
@@ -261,20 +262,28 @@ export const MAX_WAITING_PER_VIEWER = 256
 // a few hundred KB; the ceiling is what keeps the rest from becoming the relay's problem.
 
 /**
- * The most delivery times the relay keeps for one viewer, newest first to stay (KV-224).
+ * The most delivery times the relay keeps for one viewer; the newest are the ones kept
+ * (KV-224).
  *
- * **A delivery is recorded when it carries something the viewer has not been given
+ * **A delivery is recorded when it hands the viewer bytes they have not been handed
  * before**, and only then. A viewer's app that fetches and never acknowledges — a bug, a
  * crash between the two, or a viewer who means to — is handed the same envelopes each
  * time, and that is one delivery, recorded once: KV-31's history is of what the relay
  * delivered, and the same envelopes fetched a thousand times are not a thousand looks.
- * So a viewer cannot grow this list by polling; only new envelopes do, and those are the
- * check-in device's to send.
+ * So a viewer cannot grow this list by polling; only envelopes posted do, and those are
+ * the check-in device's to send.
  *
- * The ceiling is for that side. A few check-ins a day for each person a viewer follows is
- * a hundred or so deliveries in the 30-day window; this is room for that, the same room
- * a mailbox has. Past it the oldest go first, so the history reaches back less far and
- * never loses the latest look.
+ * "Not handed before" is kept for each envelope, not as a stream number reached: a
+ * reseal is different bytes at a stream already given, a post can fill a stream below
+ * one already given, and an envelope that expired and is sealed again is new to the
+ * relay. Each is recorded when it is fetched (review of #250). The relay cannot open a
+ * box, so it cannot know a reseal says what the last one did; handed over, it counts.
+ *
+ * The ceiling is for the device's side. A few check-ins a day for each person a viewer
+ * follows is a hundred or so deliveries in the 30-day window; this is room for that, the
+ * same room a mailbox has. Past it the oldest go first, so the history reaches back less
+ * far and never loses the latest. **Nothing tells the device a list was cut**: one
+ * holding exactly this many may have been, and whoever shows it says so (#40).
  */
 export const MAX_DELIVERIES_KEPT_PER_VIEWER = 256
 

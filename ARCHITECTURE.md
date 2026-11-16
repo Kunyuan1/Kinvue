@@ -1909,14 +1909,20 @@ a remote viewer, is on no list and cannot be revoked; that is the device's own b
   viewer who is the danger could silence or alter. Two costs, said plainly: the relay then
   holds when each viewer fetched, which #36's T4 wants kept small; and reading a copy
   already on the viewer's phone, offline, is not seen at all. **What a look is, at the
-  relay** (KV-224): a fetch that gave the viewer something they had not been given before.
+  relay** (KV-224): a fetch that handed the viewer bytes it had not handed them before.
   The same envelopes fetched again — an app that never acknowledges, by fault or on
   purpose — are one delivery, so the history counts what reached them and when, and a
-  viewer can neither pad it nor bury a look in it by polling. It follows that opening the
+  viewer cannot pad it by polling. Whether every hand-over is recorded rests on the relay
+  keeping that note for each envelope, and not on anything the viewer does: a reseal, a
+  stream filled in below one already given, and an envelope sealed again after it expired
+  are each recorded when fetched (review of #250). Two things follow. Opening the
   dashboard forty times with nothing new is not forty looks: how often someone reads what
-  they already hold is not something a relay can see. KV-33 keeps those delivery
-  records for this window only, 30 days. The list is also offered unprompted,
-  periodically: a list nobody revisits protects nobody.
+  they already hold is not something a relay can see. And after a reseal the relay
+  cannot tell holding from receiving — the box is shut to it — so it records, and the
+  list may show a delivery of what the viewer had already read. KV-33 keeps those
+  delivery records for this window only, 30 days, and at most 256 for each viewer; a list
+  that long may have lost older ones, and nothing in it says so. The list is also offered
+  unprompted, periodically: a list nobody revisits protects nobody.
 - **Revocation is on the check-in device, immediate, and needs nobody's sign-off.** The
   removed viewer receives nothing new from that moment, and their app deletes the
   check-ins it holds the next time it connects; the check-in device stops sealing to it
@@ -2070,10 +2076,10 @@ holds it:
 - **Retention as KV-33 sets it** — envelopes 14 days, fetch times 30 — dropped on every
   write and every hour regardless. A fetch time is kept only for a delivery of something
   new, and at most 256 for each viewer, the newest (`MAX_DELIVERIES_KEPT_PER_VIEWER`,
-  KV-224): polling cannot grow the file, and a full list loses its oldest look first. **Enforced by the relay, which is T3's and T4's
-  adversary**: it is the operator's policy, and an operator who wanted more could change
-  it. What holds against that operator is what the file holds: keys, times and sealed
-  bytes.
+  KV-224): polling cannot grow the file, and a full list loses its oldest time first.
+  **Enforced by the relay, which is T3's and T4's adversary**: it is the operator's
+  policy, and an operator who wanted more could change it. What holds against that
+  operator is what the file holds: keys, times and sealed bytes.
 - **What any server on the internet needs** (#39's line): limits on bodies, envelopes per
   post and per mailbox, connections and time; failed guesses at the open routes counted
   per address; HTTPS required off loopback; a log of method, route, status and time only.
