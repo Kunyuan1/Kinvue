@@ -122,6 +122,12 @@ export interface Trend {
 /**
  * The trend for one person and metric, or null with no usable check-in to
  * draw. `records` is everyone's; only this person's are read.
+ *
+ * By `personId`, so this takes the store's list (`store.list`), where a seeded
+ * day already says it is the demo's (KV-18) — which is what the dashboard
+ * hands it. Unlike the share set, which asks `ownerOf` itself (KV-236), this
+ * decides nothing that leaves the device, and its seeded notes are written for
+ * the list as it is given.
  */
 export function trendOf(
   records: readonly SessionRecord[],
