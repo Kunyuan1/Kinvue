@@ -434,8 +434,9 @@ describe('shareSet: what a new viewer is sent (KV-32)', () => {
     expect(sent).not.toContain('someone-else')
   })
 
-  it('starts where what is sent starts, not at a seeded day behind the usual', () => {
-    // A demo install: twelve seeded days, then two real check-ins.
+  it('starts at the first check-in sent, whatever demo days sit under the same id', () => {
+    // A demo install: twelve seeded days, then two real check-ins. The seeded
+    // days are the demo's (KV-236), so they are not read for this person at all.
     const seeded = Array.from({ length: 12 }, (_, i) => on(i, { seeded: true, id: `seed-${i}` }))
     const real = [on(31, { id: 'real-1' }), on(32, { id: 'real-2' })]
     expect(shareSetStart([...seeded, ...real], 'test-person')?.capturedAt).toBe(real[0]!.capturedAt)
@@ -474,6 +475,82 @@ describe('shareSet: what a new viewer is sent (KV-32)', () => {
     // The demo's own share is empty either way: a seeded day never leaves.
     expect(shareSet([...seededAs('test-person'), ...real], DEMO_PERSON_ID, VIEWER)).toEqual([])
     expect(shareSetStart([...seededAs('test-person'), ...real], DEMO_PERSON_ID)).toBeNull()
+  })
+
+  describe('a latest card scored before KV-18, with demo days in its usual (review of #251)', () => {
+    // Ten real check-ins, then a demo fortnight under the same id, then the
+    // latest, scored as it was then: against the last 14 usable, which were the
+    // twelve seeded days and the two real ones before them.
+    const real = Array.from({ length: 10 }, (_, i) => on(i))
+    const seededAs = (personId: string): SessionRecord[] =>
+      Array.from({ length: 12 }, (_, i) => ({
+        ...on(10 + i, { seeded: true, id: `seed-${i}` }),
+        personId,
+      }))
+    const scoredThen = (): SessionRecord => {
+      const latest = on(30)
+      return { ...latest, assessment: scoreSession(latest, [...real, ...seededAs('test-person')]) }
+    }
+    const withoutSpan = (record: SessionRecord): SessionRecord => {
+      const { baselineSpan: _span, ...assessment } = record.assessment!
+      return { ...record, assessment }
+    }
+    const NINTH = on(8).capturedAt
+
+    it('is the card this is about: 14 behind it, 12 of them seeded, from the ninth real day', () => {
+      const { assessment } = scoredThen()
+      expect(assessment).toMatchObject({ baselineSessions: 14, baselineSeededSessions: 12 })
+      expect(assessment?.baselineSpan?.from).toBe(NINTH)
+    })
+
+    it('begins where the card says its usual began, where it stored that', () => {
+      for (const seeded of [seededAs('test-person'), seededAs(DEMO_PERSON_ID)]) {
+        const all = [...real, ...seeded, scoredThen()]
+        expect(shareSetStart(all, 'test-person')?.capturedAt).toBe(NINTH)
+        expect(shareSet(all, 'test-person', VIEWER).map((r) => r.id)).toEqual(['d-8', 'd-9', 'd-30'])
+      }
+    })
+
+    it('begins at the same check-in where the card stored no span, and not eight further back', () => {
+      // Today's window over this person's own check-ins would be all ten, and
+      // send eight the card was never compared with.
+      for (const seeded of [seededAs('test-person'), seededAs(DEMO_PERSON_ID)]) {
+        const all = [...real, ...seeded, withoutSpan(scoredThen())]
+        expect(shareSetStart(all, 'test-person')?.capturedAt).toBe(NINTH)
+        expect(shareSet(all, 'test-person', VIEWER).map((r) => r.id)).toEqual(['d-8', 'd-9', 'd-30'])
+      }
+    })
+
+    it('begins at the latest itself when everything behind its usual was seeded', () => {
+      const fortnight = Array.from({ length: 14 }, (_, i) =>
+        on(10 + i, { seeded: true, id: `seed-${i}` }),
+      )
+      const latest = on(30)
+      const scored = withoutSpan({
+        ...latest,
+        assessment: scoreSession(latest, [...real, ...fortnight]),
+      })
+      expect(scored.assessment).toMatchObject({ baselineSessions: 14, baselineSeededSessions: 14 })
+      expect(shareSet([...real, ...fortnight, scored], 'test-person', VIEWER).map((r) => r.id)).toEqual([
+        'd-30',
+      ])
+    })
+
+    it('leaves a card with no seeded days in its usual to today\u2019s window', () => {
+      const latest = on(30)
+      const scored = withoutSpan({ ...latest, assessment: scoreSession(latest, real) })
+      expect(scored.assessment).toMatchObject({ baselineSessions: 10, baselineSeededSessions: 0 })
+      expect(shareSetStart([...real, scored], 'test-person')?.capturedAt).toBe(on(0).capturedAt)
+    })
+  })
+
+  it('sends nobody the demo, whatever is stored under its id (review of #251)', () => {
+    // Not seeded, and under the demo's id: a store edited by hand, or a caller
+    // that should not have written it. Each record would leave on its own word.
+    const stray = Array.from({ length: 3 }, (_, i) => ({ ...on(i), personId: DEMO_PERSON_ID }))
+    expect(toShared(stray[0]!, VIEWER)).not.toBeNull()
+    expect(shareSet(stray, DEMO_PERSON_ID, VIEWER)).toEqual([])
+    expect(shareSetStart(stray, DEMO_PERSON_ID)).toBeNull()
   })
 
   it('reaches back as far as the latest card says its usual began, and no further', () => {
@@ -528,7 +605,7 @@ describe('shareSet: what a new viewer is sent (KV-32)', () => {
     expect(sent).toEqual(days.map((r) => r.id))
   })
 
-  it('lets no seeded day stand in for the latest usable check-in', () => {
+  it('gives the same answer with a demo fortnight under the same id: nothing usable, nothing sent', () => {
     // The same real data — two refused captures — with and without a demo
     // fortnight behind it, gets the same answer: nothing usable, nothing sent.
     const real = [refused(60), refused(61)]

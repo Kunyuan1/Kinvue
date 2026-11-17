@@ -273,6 +273,10 @@ export function staleUsualDisclosure(assessment: Assessment, capturedAt: string)
  * Only once comparisons have started; before that, `learningStatus` has the
  * line. Seeded check-ins are named when they are in it; a usual that is all
  * seeded is the demo's own, and says nothing.
+ *
+ * By `personId`, so this takes the store's list (`store.list`), where a seeded
+ * day already says it is the demo's (KV-18), as `trendOf` does. The share set
+ * asks `ownerOf` itself (KV-236); this decides nothing that leaves the device.
  */
 export function usualReachStatus(
   records: readonly SessionRecord[],
@@ -639,6 +643,8 @@ function labelOf(flag: Flag, withheld: Recovered | undefined): string {
  * comparison (KV-53), because it can never be shown over any: the demo seeds
  * twelve usable days (`seedDemoHistory`), so a store holding them is past
  * this line before anything real is added. A test pins that.
+ *
+ * By `personId`, so this takes the store's list, as `usualReachStatus` does.
  */
 export function learningStatus(
   records: readonly SessionRecord[],

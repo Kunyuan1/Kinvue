@@ -11,7 +11,7 @@ import {
   type Nested,
 } from '../session/check'
 import { checkFormat, formatOf, RECORD_FORMAT } from '../session/format'
-import { ownerOf } from '../session/people'
+import { DEMO_PERSON_ID, ownerOf } from '../session/people'
 import type {
   Assessment,
   BaselineSpan,
@@ -428,37 +428,75 @@ function leaving(
  *
  * **Whose a record is, is `ownerOf`'s to say** (KV-18, KV-236), as it is for
  * the store and the lifecycle: a seeded day is the demo's, whatever `personId`
- * it was written with. So a real person's share reads none — they are not in
- * their usual since KV-18, and so not in how far back the share reaches — and
- * the answer is the same whether this is handed the store's list, where a
- * seeded day already says it is the demo's, or the file's records as stored,
- * where one seeded before KV-18 still sits under a real person's id. The
- * demo's own share is always empty: a seeded day never leaves.
+ * it was written with. So a real person's share reads none, and the answer is
+ * the same whether this is handed the store's list, where a seeded day already
+ * says it is the demo's, or the file's records as stored, where one seeded
+ * before KV-18 still sits under a real person's id. The demo is sent to
+ * nobody, whatever is stored under its id.
+ *
+ * **A card scored before KV-18 can still have had seeded days in its usual,**
+ * and the share reaches as far as that card's usual did, not as far as today's
+ * rules would take it (review of #251). Where the card stored its span, that
+ * span stands, seeded days in its window or not. Where it did not, the reach
+ * is worked out from what the card says of itself — see `behindLatest`. Either
+ * way a viewer is never sent check-ins from before the usual the latest card
+ * describes: agreeing today must not share weeks nobody agreed to (KV-32).
  */
 function toBeSent(records: readonly SessionRecord[], personId: string): SessionRecord[] {
+  // Nobody is sent the demo. Its days are seeded and never leave, but that is
+  // each record's word for it; this is the share's own (review of #251).
+  if (personId === DEMO_PERSON_ID) return []
   const theirs = records
     // Read nothing of a record before it is checked (review of #183): a
     // malformed one — `vitals` that are null — would throw in `unusableReason`
-    // or the baseline window before `mayLeave` could refuse it. Checked, not
-    // `mayLeave`: a record that may not leave can still count toward the usual
-    // (a withheld one, say). Whose it is comes after the check too: `ownerOf`
-    // reads the record.
+    // or the baseline window before `mayLeave` could refuse it. Whose it is
+    // comes after the check too: `ownerOf` reads the record. Checked, not
+    // `mayLeave`: the two agree for a real person's record today, since the
+    // only field that may never leave is `seeded` and those are the demo's.
+    // `mayLeave` is still asked below, so it is the tables that decide what
+    // goes and not this filter.
     .filter((r) => checkRecord(r) === null && ownerOf(r) === personId)
     // The same plain order as the comparisons below, not `localeCompare`'s
     // collation, so the sort and the selection cannot disagree.
     .sort((a, b) => (a.capturedAt < b.capturedAt ? -1 : a.capturedAt > b.capturedAt ? 1 : 0))
-  // One that may leave: for the demo, whose days are all seeded, there is none,
-  // and nothing is sent (second review of #180).
+  // One that may leave, so a record the tables hold back cannot be what dates
+  // the share.
   const latest = theirs.filter((r) => mayLeave(r) && unusableReason(r.vitals) === null).at(-1)
   if (latest === undefined) return []
   // Where the latest card's usual began, as it stored it (KV-154): the window
   // it was compared with, which a later change to the window's length must not
-  // move (second review of #180). Recomputed only for a verdict stored before
+  // move (second review of #180). Worked out only for a verdict stored before
   // the span was, or one that leaned on nothing.
   const stored: unknown = latest.assessment?.baselineSpan?.from
-  const behind = baselineWindow(theirs.filter((r) => r.capturedAt < latest.capturedAt))
+  const behind = behindLatest(
+    latest,
+    theirs.filter((r) => r.capturedAt < latest.capturedAt),
+  )
   const reach = typeof stored === 'string' ? stored : (behind[0] ?? latest).capturedAt
   return theirs.filter((r) => r.capturedAt >= reach && mayLeave(r))
+}
+
+/**
+ * This person's check-ins behind `latest`'s usual, oldest first, for a card
+ * that stored no span: `before` is theirs, taken earlier than it.
+ *
+ * Today's window over them, unless the card says some of its usual was seeded
+ * (review of #251). A card scored before KV-18 could count demo days, which
+ * are not this person's and are not in `before`; today's window would fill
+ * their places with older real check-ins the card was never compared with, and
+ * a viewer would be sent weeks behind the usual its card quotes. So the card's
+ * own counts decide: of the `baselineSessions` it was compared with,
+ * `baselineSeededSessions` were the demo's, and the rest were this person's
+ * most recent — a window is the latest ones, so any of theirs inside it were
+ * newer than any of theirs outside. None of theirs in it, and the share begins
+ * at the latest itself.
+ */
+function behindLatest(latest: SessionRecord, before: SessionRecord[]): SessionRecord[] {
+  const window = baselineWindow(before)
+  const seeded = latest.assessment?.baselineSeededSessions
+  if (latest.assessment === undefined || seeded === undefined || seeded <= 0) return window
+  const theirs = latest.assessment.baselineSessions - seeded
+  return theirs <= 0 ? [] : window.slice(-theirs)
 }
 
 /**
