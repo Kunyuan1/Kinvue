@@ -278,6 +278,8 @@ export async function startRelay(
       now,
       tls,
       log: (entry) => out.log(JSON.stringify(entry)),
+      // A request the relay failed, and a retention run that did (KV-225).
+      tell: out.tell,
     })
     await new Promise<void>((resolve, reject) => {
       server.once('error', reject)

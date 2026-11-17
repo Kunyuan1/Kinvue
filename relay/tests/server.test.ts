@@ -1,4 +1,4 @@
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Server } from 'node:http'
@@ -18,6 +18,9 @@ let store: RelayStore
 let server: Server
 let base: string
 let clock: number
+/** What the relay told whoever runs it (KV-225), and a `tell` that can be made to throw. */
+let told: string[]
+let tellThrows: boolean
 const device = identity()
 const ann = identity()
 const bill = identity()
@@ -30,7 +33,16 @@ beforeEach(async () => {
   await store.enrolDevice(device.key, receiveKey(), clock)
   await store.enrolViewer(ann.key, receiveKey(), clock)
   await store.enrolViewer(bill.key, receiveKey(), clock)
-  server = createRelayServer({ store, now: () => clock })
+  told = []
+  tellThrows = false
+  server = createRelayServer({
+    store,
+    now: () => clock,
+    tell: (line) => {
+      if (tellThrows) throw new Error('standard error is closed')
+      told.push(line)
+    },
+  })
   base = await listening(server)
 })
 
@@ -43,6 +55,56 @@ const post = (envelopes: { viewer: string; stream: number; sealed: string }[]) =
   call(base, device, { method: 'POST', path: ROUTES.envelopes, body: { envelopes } })
 const fetchAs = (who: Identity) =>
   call(base, who, { method: 'GET', path: ROUTES.envelopes, at: clock })
+
+describe('a failure of the relay\u2019s own (KV-225)', () => {
+  /** The relay's file can no longer be written: its place is taken by a folder. */
+  const fileRefusesWrites = async (): Promise<void> => {
+    await rm(join(dir, 'relay.json'))
+    await mkdir(join(dir, 'relay.json'))
+  }
+
+  it('tells whoever runs it why, with the route, and tells the caller only that it failed', async () => {
+    await fileRefusesWrites()
+    const secret = sealed('what the envelope holds')
+    const answer = await post([{ viewer: ann.key, stream: 1, sealed: secret }])
+    expect(answer).toEqual({ status: 500, json: { error: 'the relay failed' } })
+
+    expect(told).toHaveLength(1)
+    // The route as the log writes it, then the operating system's own reason.
+    expect(told[0]).toMatch(/^The relay failed on POST \/v1\/envelopes: \S.*\.$/)
+    expect(told[0]).toMatch(/EPERM|EISDIR|EACCES|ENOTEMPTY|EEXIST/)
+    // The log's rule: no key, no body.
+    for (const kept of [device.key, ann.key, secret]) expect(told[0]).not.toContain(kept)
+  })
+
+  it('names a route by its shape, never by the key in it', async () => {
+    await fileRefusesWrites()
+    const answer = await call(base, device, {
+      method: 'DELETE',
+      path: `${ROUTES.viewers}${ann.key}`,
+    })
+    expect(answer.status).toBe(500)
+    expect(told).toHaveLength(1)
+    expect(told[0]).toMatch(/^The relay failed on DELETE \/v1\/viewers\/:viewer: /)
+    expect(told[0]).not.toContain(ann.key)
+  })
+
+  it('tells nothing for a request it refused: that is the caller\u2019s, and in the log', async () => {
+    const answer = await call(base, device, { method: 'GET', path: '/v1/nowhere' })
+    expect(answer.status).toBe(404)
+    expect(told).toEqual([])
+  })
+
+  it('still answers when what it tells cannot be written', async () => {
+    await fileRefusesWrites()
+    tellThrows = true
+    const answer = await post([{ viewer: ann.key, stream: 1, sealed: sealed('one') }])
+    expect(answer.status).toBe(500)
+    // And goes on serving: a read needs no write.
+    tellThrows = false
+    expect((await fetchAs(ann)).status).toBe(200)
+  })
+})
 
 describe('store and forward', () => {
   it('delivers what the device posts to the viewer it was sealed to', async () => {

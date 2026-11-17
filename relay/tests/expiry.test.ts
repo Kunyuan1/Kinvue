@@ -45,6 +45,55 @@ describe('retention on a timer', () => {
     expect(expire).toHaveBeenCalledTimes(2)
     stop()
   })
+
+  it('tells each run that failed, and the first that works again (KV-225)', async () => {
+    // Dropped silently, envelopes stayed past 14 days and fetch times past 30 with
+    // nothing anywhere to say so.
+    vi.useFakeTimers()
+    const expire = vi
+      .fn<RelayStore['expire']>()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('ENOSPC: no space left on device'))
+      .mockRejectedValueOnce(new Error('ENOSPC: no space left on device'))
+      .mockResolvedValue(undefined)
+    const told: string[] = []
+    const stop = expireEvery(storeWith(expire), 1000, () => 0, (line) => told.push(line))
+
+    // A run that works says nothing.
+    await vi.advanceTimersByTimeAsync(1000)
+    expect(told).toEqual([])
+    // Each that fails is told, not only the first.
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(told).toEqual([
+      'Retention could not run, so envelopes and fetch times past their time are still kept: ' +
+        'ENOSPC: no space left on device. It is tried again within the hour.',
+      'Retention could not run, so envelopes and fetch times past their time are still kept: ' +
+        'ENOSPC: no space left on device. It is tried again within the hour.',
+    ])
+    // The first to work again is told once, and the ones after it are quiet.
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(told.slice(2)).toEqual([
+      'Retention ran again: what is past its time has been dropped.',
+    ])
+    stop()
+  })
+
+  it('quotes one line of an error, and not all of a long one', async () => {
+    vi.useFakeTimers()
+    const expire = vi
+      .fn<RelayStore['expire']>()
+      .mockRejectedValueOnce(new Error('first line\n    at somewhere (stack)'))
+      .mockRejectedValueOnce(new Error('x'.repeat(5000)))
+      .mockRejectedValueOnce(new Error(''))
+    const told: string[] = []
+    const stop = expireEvery(storeWith(expire), 1000, () => 0, (line) => told.push(line))
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(told[0]).toContain('still kept: first line. It is tried')
+    expect(told[0]).not.toContain('stack')
+    expect(told[1]!.length).toBeLessThan(500)
+    expect(told[2]).toContain('still kept: no reason given. It is tried')
+    stop()
+  })
 })
 
 describe('the relay', () => {
@@ -68,5 +117,20 @@ describe('the relay', () => {
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
+  })
+
+  it('tells whoever runs it when its own retention run fails (KV-225)', async () => {
+    vi.useFakeTimers()
+    const expire = vi.fn<RelayStore['expire']>().mockRejectedValue(new Error('disk full'))
+    const told: string[] = []
+    const server = createRelayServer({
+      store: storeWith(expire),
+      now: () => 0,
+      tell: (line) => told.push(line),
+    })
+    await vi.advanceTimersByTimeAsync(EXPIRE_EVERY_MS)
+    expect(told).toHaveLength(1)
+    expect(told[0]).toMatch(/^Retention could not run, .*: disk full\. /)
+    server.emit('close')
   })
 })

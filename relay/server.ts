@@ -110,6 +110,11 @@ export interface RelayOptions {
   now?: () => number
   /** Where each request's `LogEntry` goes. Nowhere, unless given. */
   log?: (entry: LogEntry) => void
+  /**
+   * Where a failure of the relay's own is said, in words for whoever runs it (KV-225):
+   * standard error, in `main`. Nowhere, unless given. See `failureLine`.
+   */
+  tell?: (line: string) => void
   /** How long a request may take to send its headers: `HEADERS_TIMEOUT_MS`, unless given. */
   headersTimeoutMs?: number
   /**
@@ -118,6 +123,27 @@ export interface RelayOptions {
    * terminates TLS (#46).
    */
   tls?: { cert: string | Buffer; key: string | Buffer }
+}
+
+/** The longest a failure's own words are quoted at: an error, not a transcript. */
+const FAILURE_WORDS = 300
+
+/**
+ * What an error says, for a line told to whoever runs the relay (KV-225): its message,
+ * on one line and no longer than `FAILURE_WORDS`.
+ *
+ * **The log's rule holds here too: no key, no body, no address.** These are the relay's
+ * own failures — a full disk, a rename refused, a file it cannot read — and what they
+ * quote is the relay's file and the operating system's reason. Nothing of the request is
+ * put beside it: the caller adds the route as `routeOf` writes it, with ids and keys left
+ * out, and nothing else. A message is cut to one line so an error that carries more —
+ * a stack, a cause — cannot bring it along.
+ */
+function wordsOf(err: unknown): string {
+  const said = err instanceof Error ? err.message : String(err)
+  const line = (said.split(/\r?\n/, 1)[0] ?? '').trim()
+  if (line === '') return 'no reason given'
+  return line.length > FAILURE_WORDS ? `${line.slice(0, FAILURE_WORDS)}…` : line
 }
 
 /** A path as its route, for the log: what it names left out. */
@@ -281,10 +307,34 @@ export const EXPIRE_EVERY_MS = 60 * 60 * 1000
  * Runs `store.expire` every `every` milliseconds until the returned function is called. The
  * timer does not keep the process alive, and a failed run is left for the next: the file
  * holds what it held, and nothing is half written.
+ *
+ * **A failed run is told, each time** (KV-225). Dropped silently, envelopes stayed past
+ * their 14 days and fetch times past their 30 with nothing anywhere to say so, which is
+ * the one promise the relay makes about what it keeps. And the first run to work after a
+ * failure is told too, so whoever reads the lines knows it has stopped failing rather
+ * than stopped being said.
  */
-export function expireEvery(store: RelayStore, every: number, now: () => number): () => void {
+export function expireEvery(
+  store: RelayStore,
+  every: number,
+  now: () => number,
+  tell: (line: string) => void = () => {},
+): () => void {
+  let failing = false
   const timer = setInterval(() => {
-    store.expire(now()).catch(() => undefined)
+    store.expire(now()).then(
+      () => {
+        if (failing) tell('Retention ran again: what is past its time has been dropped.')
+        failing = false
+      },
+      (err: unknown) => {
+        failing = true
+        tell(
+          `Retention could not run, so envelopes and fetch times past their time are still ` +
+            `kept: ${wordsOf(err)}. It is tried again within the hour.`,
+        )
+      },
+    )
   }, every)
   timer.unref()
   return () => clearInterval(timer)
@@ -294,6 +344,7 @@ export function createRelayServer({
   store,
   now = Date.now,
   log = () => {},
+  tell = () => {},
   headersTimeoutMs = HEADERS_TIMEOUT_MS,
   tls,
 }: RelayOptions): Server {
@@ -509,6 +560,18 @@ export function createRelayServer({
     }
   }
 
+  /**
+   * A failure said, and never one more thing to fail (KV-225): it runs where a throw is
+   * an unhandled rejection or an uncaught exception, as `record` does.
+   */
+  const say = (line: string): void => {
+    try {
+      tell(line)
+    } catch {
+      // Dropped, as a log line is.
+    }
+  }
+
   /** When each connection opened, so a request Node cuts is logged with how long it held one. */
   const opened = new WeakMap<object, number>()
 
@@ -535,6 +598,12 @@ export function createRelayServer({
         if (!res.headersSent) send(res, err.status, { error: err.reason })
         return
       }
+      // The relay's own failure: a full disk, a rename refused. The caller is told only
+      // that it failed; why is for whoever runs it, with the route as the log writes it
+      // and nothing of the request (KV-225). Without this a run of 500s had no cause
+      // anywhere.
+      const path = (req.url ?? '').split('?')[0] ?? ''
+      say(`The relay failed on ${req.method ?? ''} ${routeOf(path)}: ${wordsOf(err)}.`)
       if (!res.headersSent) send(res, 500, { error: 'the relay failed' })
     })
   })
@@ -554,7 +623,7 @@ export function createRelayServer({
       socket.destroy()
     })
   }
-  const stopExpiring = expireEvery(store, EXPIRE_EVERY_MS, now)
+  const stopExpiring = expireEvery(store, EXPIRE_EVERY_MS, now, say)
   server.on('close', stopExpiring)
   server.on('connection', (socket) => opened.set(socket, now()))
   /**

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -203,6 +203,23 @@ describe('starting it', () => {
     const relay = await startRelay({ ...config, tls }, output())
     running.push(relay)
     expect(relay.url).toMatch(/^https:\/\/127\.0\.0\.1:\d+$/)
+  })
+
+  it('says on standard error why a request failed, beside the 500 in its log (KV-225)', async () => {
+    const relay = await start()
+    const token = shownToken()
+    // The file can no longer be written: its place is taken by a folder.
+    await rm(config.dataFile)
+    await mkdir(config.dataFile)
+    said = []
+    const enrol = await call(relay.url, identity(), {
+      method: 'POST',
+      path: ROUTES.enrol,
+      body: { token, receiveKey: receiveKey() },
+    })
+    expect(enrol.status).toBe(500)
+    expect(said.some((line) => /^The relay failed on POST \/v1\/enrol: \S/.test(line))).toBe(true)
+    expect(said.join('\n')).not.toContain(token)
   })
 
   it('says where it listens', async () => {
