@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ENVELOPE_RETENTION_MS } from '@kinvue/core/sync/protocol'
-import { createRelayServer, EXPIRE_EVERY_MS, expireEvery } from '../server'
+import { createRelayServer, EXPIRE_EVERY_MS, expireEvery, FAILURE_WORDS } from '../server'
 import { createRelayStore, type RelayStore } from '../store'
 import { identity, receiveKey, sealed } from './helpers'
 
@@ -78,19 +78,41 @@ describe('retention on a timer', () => {
     stop()
   })
 
+  it('is not stopped, or left with a rejection nobody handles, by a tell that throws (review of #253)', async () => {
+    // Called directly, as it is exported to be: the guard is its own, not its caller's.
+    vi.useFakeTimers()
+    const expire = vi
+      .fn<RelayStore['expire']>()
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValue(undefined)
+    const tell = vi.fn(() => {
+      throw new Error('standard error is closed')
+    })
+    const stop = expireEvery(storeWith(expire), 1000, () => 0, tell)
+    // Failing, then working again: both lines are tried, and both throw.
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(tell).toHaveBeenCalledTimes(2)
+    expect(expire).toHaveBeenCalledTimes(3)
+    stop()
+  })
+
   it('quotes one line of an error, and not all of a long one', async () => {
     vi.useFakeTimers()
     const expire = vi
       .fn<RelayStore['expire']>()
       .mockRejectedValueOnce(new Error('first line\n    at somewhere (stack)'))
-      .mockRejectedValueOnce(new Error('x'.repeat(5000)))
+      .mockRejectedValueOnce(new Error('full '.repeat(1000)))
       .mockRejectedValueOnce(new Error(''))
     const told: string[] = []
     const stop = expireEvery(storeWith(expire), 1000, () => 0, (line) => told.push(line))
     await vi.advanceTimersByTimeAsync(3000)
     expect(told[0]).toContain('still kept: first line. It is tried')
     expect(told[0]).not.toContain('stack')
-    expect(told[1]!.length).toBeLessThan(500)
+    // Cut at `FAILURE_WORDS` characters, and said to be cut.
+    expect(told[1]).toBe(
+      'Retention could not run, so envelopes and fetch times past their time are still kept: ' +
+        `${'full '.repeat(1000).slice(0, FAILURE_WORDS)}…. It is tried again within the hour.`,
+    )
     expect(told[2]).toContain('still kept: no reason given. It is tried')
     stop()
   })
@@ -131,6 +153,7 @@ describe('the relay', () => {
     await vi.advanceTimersByTimeAsync(EXPIRE_EVERY_MS)
     expect(told).toHaveLength(1)
     expect(told[0]).toMatch(/^Retention could not run, .*: disk full\. /)
+    // Never listened, so there is nothing to close: the event is what stops the timer.
     server.emit('close')
   })
 })

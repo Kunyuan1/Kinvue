@@ -419,11 +419,18 @@ KINVUE_RELAY_DATA=/var/lib/kinvue/relay.json node main.js start
   error.
 - **Its own failures go to standard error too** (KV-225), under the same rule. A request
   it could not carry out — a full disk, a file it cannot write — is a `500` in the log and
-  one line saying why: `The relay failed on POST /v1/envelopes: ENOSPC: no space left on
-  device.` The route is written as the log writes it, with no key in it, and nothing of
-  the request is quoted. An hourly retention run that fails says so each time, since until
-  it works envelopes and fetch times are kept past their time, and the first run to work
-  again says that. These lines are what #46's monitoring has to watch.
+  one line saying why, in the operating system's words: `The relay failed on POST
+  /v1/envelopes: ENOSPC: no space left on device, write.` Expect a path of the relay's own
+  in some of them (a failed rename names both files). A fault in the relay itself carries
+  its kind: `…: TypeError: Cannot read properties of undefined.` The route is written as
+  the log writes it, with no key in it; nothing of the request is quoted; and anything in
+  an error shaped like a key or sealed bytes is left out, whoever wrote it there. An
+  hourly retention run that fails says so each time, since until it works envelopes and
+  fetch times are kept past their time, and the first run to work again says that. These
+  lines are what #46's monitoring has to watch, so they are kept to the relay's own
+  failures: a request it refused, or one cut off before it was whole — a phone leaving
+  Wi-Fi mid-upload — says nothing here. A pipe closed behind either stream loses its lines
+  and does not stop the relay.
 - **Running it for real is #46's**: backups, monitoring, a breach plan, and an owner. The
   household runs it for itself, and ideally not on a viewer's machine (KV-35).
 

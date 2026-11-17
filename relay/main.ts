@@ -25,6 +25,9 @@ import { createRelayStore, DeviceEnrolledError } from './store'
  *   second relay started on the same file refuses rather than overwriting the first's.
  * - **Its log is one JSON line a request** on standard output — method, route, status,
  *   time; never a key, a body or an address (`relay/server.ts`).
+ * - **Its own failures are told on standard error** (KV-225), under the same rule: a
+ *   request it could not carry out, and a retention run that failed. A pipe closed behind
+ *   either stream does not stop it (`writerTo`).
  */
 
 /** Where the relay keeps its file, and where it listens. */
@@ -228,6 +231,30 @@ export interface Running {
   close: () => Promise<void>
 }
 
+/**
+ * Lines written to `stream`, in a way that cannot stop the relay (review of #253).
+ *
+ * A pipe closed behind standard output or standard error does not make `write` throw. The
+ * stream emits `'error'` on a later turn, and an `'error'` nobody listens for is an
+ * uncaught exception: the relay would end because its log's reader went away — and since
+ * KV-225 standard error is written at the very moment the relay is already failing. So
+ * the stream gets a listener that does nothing, and the write its own guard for the
+ * failures that do throw. A line that cannot be written is the one thing lost.
+ */
+export function writerTo(stream: {
+  write: (text: string) => unknown
+  on: (event: 'error', listener: (err: Error) => void) => unknown
+}): (line: string) => void {
+  stream.on('error', () => undefined)
+  return (line) => {
+    try {
+      stream.write(`${line}${String.fromCharCode(10)}`)
+    } catch {
+      // Dropped.
+    }
+  }
+}
+
 /** Where the relay's lines go. */
 export interface Output {
   /** One JSON line a request: method, route, status, time. Standard output, in `main`. */
@@ -362,8 +389,8 @@ async function main(): Promise<void> {
     return
   }
   const relay = await startRelay(config, {
-    log: (line) => process.stdout.write(`${line}\n`),
-    tell: (line) => process.stderr.write(`${line}\n`),
+    log: writerTo(process.stdout),
+    tell: writerTo(process.stderr),
     showToken: process.stderr.isTTY === true,
   })
   // Stopped once, however many signals arrive while it drains (reviews of #219); a close

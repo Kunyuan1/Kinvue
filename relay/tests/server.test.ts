@@ -1,10 +1,18 @@
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
+import { randomBytes, sign } from 'node:crypto'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Server } from 'node:http'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { ENDED, MAX_BODY_BYTES, REQUEST_WINDOW_MS, ROUTES } from '@kinvue/core/sync/protocol'
-import { createRelayServer } from '../server'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import {
+  ENDED,
+  HEADERS,
+  MAX_BODY_BYTES,
+  REQUEST_WINDOW_MS,
+  ROUTES,
+} from '@kinvue/core/sync/protocol'
+import { createRelayServer, FAILURE_WORDS, safely, wordsOf } from '../server'
 import { createRelayStore, type RelayStore } from '../store'
 import { call, identity, listening, receiveKey, sealed, type Identity } from './helpers'
 
@@ -93,6 +101,141 @@ describe('a failure of the relay\u2019s own (KV-225)', () => {
     const answer = await call(base, device, { method: 'GET', path: '/v1/nowhere' })
     expect(answer.status).toBe(404)
     expect(told).toEqual([])
+  })
+
+  it('tells nothing when the caller hangs up mid-body, signed or not (review of #253)', async () => {
+    // A phone leaving Wi-Fi mid-upload is not the relay failing. And the body is read
+    // before the signature is checked, so anyone who can reach the port can do this: the
+    // headers below are the right shape and signed over nothing.
+    const { port } = new URL(base)
+    const head = [
+      `POST ${ROUTES.envelopes} HTTP/1.1`,
+      'Host: relay',
+      `${HEADERS.key}: ${stranger.key}`,
+      `${HEADERS.at}: ${String(clock)}`,
+      `${HEADERS.nonce}: ${randomBytes(16).toString('base64url')}`,
+      `${HEADERS.signature}: ${sign(null, Buffer.from('nothing'), stranger.privateKey).toString('base64url')}`,
+      'Content-Type: application/json',
+      'Content-Length: 1000',
+    ].join('\r\n')
+    await new Promise<void>((resolve, reject) => {
+      const socket = connect(Number(port), '127.0.0.1', () => {
+        // Three bytes of the thousand promised, then gone.
+        socket.write(`${head}\r\n\r\n{"e`, () => socket.destroy())
+      })
+      socket.on('close', () => resolve())
+      socket.on('error', reject)
+    })
+    // The relay has seen it go by the time it answers the next request.
+    await vi.waitFor(async () => expect((await fetchAs(ann)).status).toBe(200))
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(told).toEqual([])
+  })
+
+  describe('what it quotes of an error (review of #253)', () => {
+    /** A relay whose store fails every fetch with `err`, and what it then tells. */
+    const failingWith = async (err: unknown): Promise<string[]> => {
+      const said: string[] = []
+      const broken = createRelayServer({
+        store: { ...store, fetch: () => Promise.reject(err) },
+        now: () => clock,
+        tell: (line) => said.push(line),
+      })
+      try {
+        const at = await listening(broken)
+        const answer = await call(at, ann, { method: 'GET', path: ROUTES.envelopes, at: clock })
+        expect(answer).toEqual({ status: 500, json: { error: 'the relay failed' } })
+      } finally {
+        await new Promise((resolve) => broken.close(resolve))
+      }
+      return said
+    }
+
+    it('leaves out a key, whoever wrote it into the message', async () => {
+      // The store has such a message, for a file that holds an ended viewer's key twice.
+      // It cannot reach here today only because the file is read before the server
+      // starts; this holds whatever the order.
+      const said = await failingWith(new Error(`${ann.key}: an ended viewer's key, held again`))
+      expect(said).toEqual([
+        "The relay failed on GET /v1/envelopes: [left out]: an ended viewer's key, held again.",
+      ])
+    })
+
+    it('leaves out sealed bytes, and keeps a path of the relay’s own', async () => {
+      const bytes = sealed('what an envelope holds, long enough to be told from a word')
+      const path = join(dir, 'relay.json')
+      const [line] = await failingWith(new Error(`EPERM: operation not permitted, rename '${path}' ${bytes}`))
+      expect(line).not.toContain(bytes)
+      expect(line).toContain(path)
+    })
+
+    it('says a bug in the relay by its name, so it reads apart from a full disk', async () => {
+      expect(await failingWith(new TypeError("Cannot read properties of undefined (reading 'waiting')"))).toEqual([
+        "The relay failed on GET /v1/envelopes: TypeError: Cannot read properties of undefined (reading 'waiting').",
+      ])
+      // A plain Error, and the operating system's, say what they said and no more.
+      expect(await failingWith(new Error('ENOSPC: no space left on device, write'))).toEqual([
+        'The relay failed on GET /v1/envelopes: ENOSPC: no space left on device, write.',
+      ])
+    })
+
+    it('ends at the first line break of any kind, and carries no control character', () => {
+      for (const br of ['\n', '\r\n', '\r', '\u2028', '\u2029']) {
+        expect(wordsOf(new Error(`first line${br}    at somewhere (stack)`))).toBe('first line')
+      }
+      // An escape that would move a terminal's cursor, and a bell.
+      expect(wordsOf(new Error('disk \u001b[2Kfull\u0007'))).toBe('disk [2Kfull')
+    })
+
+    it(`cuts at ${String(FAILURE_WORDS)} characters, by character, and says it was cut`, () => {
+      const long = 'full '.repeat(200)
+      expect(wordsOf(new Error(long))).toBe(`${long.slice(0, FAILURE_WORDS)}…`)
+      expect(wordsOf(new Error('full '.repeat(60)))).toBe('full '.repeat(60).trim())
+      // A character that is two code units is never left as half of one.
+      const pairs = '\u{1F600} '.repeat(FAILURE_WORDS)
+      const cut = wordsOf(new Error(pairs))
+      expect(Array.from(cut)).toHaveLength(FAILURE_WORDS + 1)
+      expect(cut.endsWith('…')).toBe(true)
+      // No first half of a pair without its second.
+      expect(cut).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/)
+    })
+
+    it('never throws, whatever it is handed', () => {
+      const hostile = new Error('x')
+      Object.defineProperty(hostile, 'message', {
+        get: () => {
+          throw new Error('no message for you')
+        },
+      })
+      const unprintable = {
+        toString: () => {
+          throw new Error('no string either')
+        },
+      }
+      const numbered = Object.assign(new Error('x'), { message: 42 as unknown as string })
+      expect(wordsOf(hostile)).toBe('no reason given')
+      expect(wordsOf(unprintable)).toBe('no reason given')
+      expect(wordsOf(numbered)).toBe('42')
+      expect(wordsOf(undefined)).toBe('undefined')
+      expect(wordsOf(new Error(''))).toBe('no reason given')
+    })
+
+    it('guards the line being made as well as the telling of it', () => {
+      const told: string[] = []
+      const say = safely((line) => told.push(line))
+      expect(() =>
+        say(() => {
+          throw new Error('could not make the line')
+        }),
+      ).not.toThrow()
+      expect(() =>
+        safely(() => {
+          throw new Error('standard error is closed')
+        })(() => 'a line'),
+      ).not.toThrow()
+      say(() => 'a line')
+      expect(told).toEqual(['a line'])
+    })
   })
 
   it('still answers when what it tells cannot be written', async () => {
