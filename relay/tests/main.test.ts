@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -10,6 +11,7 @@ import {
   DEFAULT_PORT,
   RelayLockedError,
   startRelay,
+  writerTo,
   type Output,
   type RelayConfig,
   type Running,
@@ -79,6 +81,49 @@ describe('the configuration', () => {
     expect(configFrom({ ...data, [name]: '' })).toBe(
       `${name} is set but empty. Give it a value, or unset it.`,
     )
+  })
+})
+
+describe('where its lines are written (review of #253)', () => {
+  /** A stream as Node's are: `write`, and an `'error'` that throws when nobody listens. */
+  const stream = () => {
+    const events = new EventEmitter()
+    const written: string[] = []
+    return {
+      written,
+      emit: (err: Error) => events.emit('error', err),
+      write: (text: string) => written.push(text),
+      on: (event: 'error', listener: (err: Error) => void) => events.on(event, listener),
+    }
+  }
+
+  it('writes each line with its newline', () => {
+    const out = stream()
+    const write = writerTo(out)
+    write('one')
+    write('two')
+    expect(out.written).toEqual(['one\n', 'two\n'])
+  })
+
+  it('is not ended by a pipe closed behind it, which fails later and does not throw', () => {
+    // An `'error'` nobody listens for is thrown: the relay would end because whatever
+    // read its log went away.
+    const bare = stream()
+    expect(() => bare.emit(new Error('EPIPE'))).toThrow('EPIPE')
+
+    const out = stream()
+    writerTo(out)
+    expect(() => out.emit(new Error('EPIPE'))).not.toThrow()
+  })
+
+  it('drops a line whose write throws', () => {
+    const write = writerTo({
+      write: () => {
+        throw new Error('ERR_STREAM_DESTROYED')
+      },
+      on: () => undefined,
+    })
+    expect(() => write('lost')).not.toThrow()
   })
 })
 
@@ -203,6 +248,23 @@ describe('starting it', () => {
     const relay = await startRelay({ ...config, tls }, output())
     running.push(relay)
     expect(relay.url).toMatch(/^https:\/\/127\.0\.0\.1:\d+$/)
+  })
+
+  it('says on standard error why a request failed, beside the 500 in its log (KV-225)', async () => {
+    const relay = await start()
+    const token = shownToken()
+    // The file can no longer be written: its place is taken by a folder.
+    await rm(config.dataFile)
+    await mkdir(config.dataFile)
+    said = []
+    const enrol = await call(relay.url, identity(), {
+      method: 'POST',
+      path: ROUTES.enrol,
+      body: { token, receiveKey: receiveKey() },
+    })
+    expect(enrol.status).toBe(500)
+    expect(said.some((line) => /^The relay failed on POST \/v1\/enrol: \S/.test(line))).toBe(true)
+    expect(said.join('\n')).not.toContain(token)
   })
 
   it('says where it listens', async () => {
