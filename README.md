@@ -2,8 +2,8 @@
 
 Kinvue is a daily check-in that tells a **caregiver** when the older adult they look
 after is having a day that is different from that person's own usual. Sit in front of a
-camera for ~30 seconds → the Presage SmartSpectra SDK reads pulse, breathing and HRV
-from the video → three or four short questions cover mood, sleep, food and pain → the
+camera for up to a minute and a half → the Presage SmartSpectra SDK reads pulse, breathing
+and HRV from the video → three or four short questions cover mood, sleep, food and pain → the
 session is scored against that person's own baseline and surfaced on a caregiver
 dashboard, with the reason it was flagged written out in plain language.
 
@@ -21,8 +21,10 @@ It should be enough to understand how the system fits together and where to make
 > several assumptions this code was built on. What the SDK sends to Presage has been
 > measured (KV-65): a licence meter, not the video. Since KV-18 one check-in computer can
 > hold a household — several people, each with their own baseline, and, where more than
-> one takes readings, asked before each reading who is taking it. Nothing here has been
-> used by anyone it was built for.
+> one takes readings, asked before each reading who is taking it. Remote access (Phase 5)
+> has begun with the household's own relay (KV-39), which runs but which nothing connects
+> to yet: pairing (#40) and the outbox (#41) come next. Nothing here has been used by
+> anyone it was built for.
 
 ---
 
@@ -33,7 +35,8 @@ It should be enough to understand how the system fits together and where to make
 | **app/main** | Electron 44 (Node 24) · owns the camera, the API key and the session file |
 | **app/preload** | `contextBridge` · a named-call IPC surface, no generic passthrough |
 | **app/renderer** | React 19 · Tailwind CSS v4 · TypeScript — the caregiver dashboard |
-| **core/** | Framework-free TypeScript: baseline, rules, scoring, session types, demo seed |
+| **core/** | Framework-free TypeScript: baseline, rules, scoring, session types, demo seed, the share set, the sync protocol |
+| **relay/** | Node 22+ · `node:http(s)` and `node:crypto` only, bundled with core into one file by esbuild — the household's own relay (KV-39); nothing connects to it yet |
 | **Vitals** | [Presage SmartSpectra](https://smartspectra.presagetech.com/) `@smartspectra/node-sdk` v3 — camera-based pulse, breathing and HRV |
 | **Data** | A single JSON file under Electron's `userData`. No server and no database of ours; the SDK itself calls out during a capture (KV-65) |
 | **Build** | electron-vite 5 on Vite 7 · TypeScript 5.9 · Vitest · ESLint 10 |
@@ -107,7 +110,8 @@ evidence agreeing is as far as this goes without asking Presage directly.
    │ webcam  │───────────►  app/main  ── owns API key, camera, session file
    └─────────┘                 │
                                ├─ 1. captureVitals()          (app/main/vitals.ts)
-                               │     SmartSpectra SDK, ~30s
+                               │     SmartSpectra SDK, up to 90s: ends once
+                               │     every metric has reported, plus 5s
                                │     → pulse · breathing · HRV + confidence
                                │
                                ├─ 2. answers from the renderer (mood/sleep/food/pain)
@@ -150,6 +154,8 @@ app/                     the desktop app (its package is still named `kinvue`, b
                          single-instance lock before index.ts is loaded: one Kinvue for
                          each history (KV-222)
     index.ts             window, IPC handlers, store wiring
+    security.ts          which page is Kinvue's own, and the only frame IPC answers (KV-29)
+    window-show.ts       the window reaches the screen by more than one road (KV-139)
     single-instance.ts   started again while running: the window comes forward (KV-222)
     links.ts             the one place app/main opens a link out, from a fixed list
     api-key.ts           the household's SmartSpectra key: held, sealed, or asked again
@@ -166,7 +172,16 @@ app/                     the desktop app (its package is still named `kinvue`, b
                          before keys is (KV-18); bound to the page that asked
     cipher.ts            the history's cipher from safeStorage, and which key store counts
                          as one (KV-175)
-    vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk
+    seal-loop.ts         the key and the history sealed once the OS key is on disk; no
+                         Electron (KV-175, KV-19)
+    vitals.ts            SmartSpectra capture → one Vitals object   ← KV-1, highest risk.
+                         The only module that imports the SDK; what is worth testing is
+                         split out of it, beside it:
+    metrics.ts           the SDK's message stream reduced to one Vitals
+    capture-errors.ts    the errors a capture throws, and what the SDK's codes mean
+    capture-length.ts    KINVUE_CAPTURE_SECONDS read and clamped
+    release.ts           waiting for the camera to actually close (KV-84)
+    in-flight.ts         which capture is running, so Stop reaches it (KV-76)
   preload/
     index.ts             contextBridge surface. The API key never crosses this line.
   shared/
@@ -179,10 +194,12 @@ app/                     the desktop app (its package is still named `kinvue`, b
   renderer/
     index.html           CSP: default-src 'self' — the UI loads nothing off the
                          network. img-src also allows blob:, for the self-view.
+    main.tsx             mounts App
     App.tsx              caregiver dashboard shell
+    dashboardError.ts    a sentence for every store failure, should one arrive without its own
     components/
-      CaptureScreen.tsx  the ~30s in front of the camera (settable) — the one screen the
-                         cared-for person reads, not the caregiver
+      CaptureScreen.tsx  the time in front of the camera, up to 90s (settable) — the one
+                         screen the cared-for person reads, not the caregiver
       HistoryPanel.tsx   export, restore and delete, at the foot of the dashboard (KV-21)
       ExportChoice.tsx   whether to protect an export with a passphrase (KV-175)
       ConfirmDeletion.tsx
@@ -199,6 +216,7 @@ app/                     the desktop app (its package is still named `kinvue`, b
       SetupScreen.tsx    before the first reading: a camera Windows keeps Kinvue from,
                          where to turn it on, and the household's key (KV-19)
       KeyField.tsx       the key, typed in; KeySettings.tsx replaces it from the dashboard
+      ForgetKey.tsx      the saved key deleted, for a key store that stays locked (KV-19)
       NameField.tsx      a person's name, typed in: on the setup screen, and to add or
                          rename someone from the dashboard (KV-18)
       WhoIsReading.tsx   "Who is taking the reading?", before each reading where more than
@@ -214,13 +232,14 @@ app/                     the desktop app (its package is still named `kinvue`, b
 
 core/                    `@kinvue/core`. Plain TypeScript, no dependencies: no Electron,
                          no React — unit-testable, and typechecked without the DOM's
-                         types (`document`, `window`), since the relay will run it on
-                         Node; the web globals Node has itself still typecheck.
+                         types (`document`, `window`), since the relay runs it on Node;
+                         the web globals Node has itself still typecheck.
   session/
     types.ts             Vitals, CheckInAnswers, FiredRule, Assessment, SessionRecord
     store.ts             JSON session store (MAIN PROCESS ONLY — imports node:fs)
     replace.ts           one file in place of another, flushed before the rename, so a
                          power cut cannot leave it empty (KV-223)
+    usable.ts            whether a capture is one the scorer and the baseline will use
     validate.ts          runtime checks on everything the renderer sends to main
     answers.ts           the four questions: complete, or not a check-in at all
     people.ts            the people on this computer (KV-18): the name rule, the record
@@ -240,6 +259,7 @@ core/                    `@kinvue/core`. Plain TypeScript, no dependencies: no E
     index.ts             the engine: severity sum → flag + explanation
   capture/guidance.ts    which of the camera's hints are worth showing the person
   capture/failure.ts     telling apart the ways a check-in fails to happen
+  capture/length.ts      how long a capture runs: the ceiling, the settle, the floor
   seed/persona.ts        the demo persona's invented history (KV-8, disclosed)
   trend/index.ts         the trend's series and its sentences, shaped here so the
                          caregiver's own client draws the same thing (KV-4)
@@ -432,7 +452,24 @@ KINVUE_RELAY_DATA=/var/lib/kinvue/relay.json node main.js start
   Wi-Fi mid-upload — says nothing here. A pipe closed behind either stream loses its lines
   and does not stop the relay.
 - **Running it for real is #46's**: backups, monitoring, a breach plan, and an owner. The
-  household runs it for itself, and ideally not on a viewer's machine (KV-35).
+  household runs it for itself, and ideally not on a viewer's machine (KV-35). Hardening
+  that is known to be owed before then is KV-226, and the threat model is to be revisited
+  now that the relay exists (KV-233).
+
+What it keeps, and for how long, is fixed in code — in `core/sync/protocol.ts`, where both
+ends of the protocol read it, or in `relay/server.ts` for what only the relay enforces:
+
+| Constant | Where | Value |
+|---|---|---|
+| `ENVELOPE_RETENTION_MS` | `core/sync/protocol.ts` | 14 days — a sealed envelope not fetched by then is dropped; the check-in device is the outbox and seals it again when asked (KV-33) |
+| `DELIVERY_RETENTION_MS` | `core/sync/protocol.ts` | 30 days — how long a viewer's fetch times are kept, for the person's *who looked and when* (KV-31) |
+| `MAX_WAITING_PER_VIEWER` | `core/sync/protocol.ts` | 256 envelopes in one viewer's mailbox; a post past it writes nothing |
+| `MAX_DELIVERIES_KEPT_PER_VIEWER` | `core/sync/protocol.ts` | 256 fetch times per viewer, the newest kept; a fetch is recorded only when it hands over something new (KV-224) |
+| `ENROL_TOKEN_TTL_MS` · `PAIRING_TTL_MS` | `core/sync/protocol.ts` | 15 min for the device's token · 10 min for an open pairing |
+| `REQUEST_WINDOW_MS` | `core/sync/protocol.ts` | 5 min — how far a signed request's time may be from the relay's |
+| `MAX_FAILED_ATTEMPTS` in `ATTEMPT_WINDOW_MS` | `relay/server.ts` | 10 failures in 10 min from one address at the two open routes (the device's token, joining a pairing), then refused until the window passes. Behind a reverse proxy that is one limit for everyone |
+| `MAX_CONNECTIONS` | `relay/server.ts` | 64 open at once |
+| `EXPIRE_EVERY_MS` | `relay/server.ts` | 1 hour — how often retention runs |
 
 ---
 
@@ -443,7 +480,7 @@ Everything is env-driven and read in the main process only.
 | Variable | Default | Purpose |
 |---|---|---|
 | `SMARTSPECTRA_API_KEY` | — | SmartSpectra SDK key, **development builds only**. Free from the [Presage portal](https://physiology.presagetech.com/auth/register). Read in `app/main` and never exposed to the renderer. When set, it is used over the key saved on the setup screen. A packaged build ignores it: an installed copy uses only the household's own key, asked for on first run (KV-19). |
-| `KINVUE_CAPTURE_SECONDS` | `30` | Seconds of capture. Clamped to `SHORTEST_USEFUL_SECONDS`–`LONGEST_REASONABLE_SECONDS`; a value outside that, or one that cannot be read, is replaced and the replacement is printed at startup. The countdown and the sentence under the button both follow it. Raising this is how #63 gets the timings it needs — HRV did not arrive at 43s of capture and did at 58s. |
+| `KINVUE_CAPTURE_SECONDS` | `90` (`DEFAULT_CAPTURE_SECONDS`) | The **longest** a capture runs. A capture ends once every scorable metric has reported, plus `SETTLE_AFTER_COMPLETE_SECONDS`, so this is the ceiling for the run where something is slow, not the length of every capture (KV-63). Clamped to `SHORTEST_USEFUL_SECONDS`–`LONGEST_REASONABLE_SECONDS` (30–180); a value outside that, or one that cannot be read, is replaced and the replacement is printed at startup. The countdown and the sentence under the button both follow it. Generous on purpose: HRV did not arrive at 43s of capture and did at 58s. |
 | `KINVUE_LOG_CAPTURE` | unset | Any non-empty value prints how long the camera took to close after each capture — `[capture] camera release: released in 340ms`. That figure is what `DEVICE_RELEASE_TIMEOUT_MS` is guessing at, and #63 is where it gets settled. A release that failed or outran the wait prints whether or not this is set. |
 
 `app/main/env.ts` loads `.env` into `process.env` at startup, **in development only**,
@@ -483,6 +520,7 @@ Tuned constants live in code, not env, because changing one changes what the app
 | `CAMERA_OPEN_ALLOWANCE_SECONDS` | `core/capture/length.ts` | `10 s` — how much the camera may eat before the first frame. `SHORTEST_USEFUL_SECONDS` is `MIN_CAPTURE_SECONDS` plus this, so no setting can record a duration the scorer rejects |
 | `MIN_BASELINE_SESSIONS` | `core/baseline` | `3` — below this the verdict is withheld |
 | `BASELINE_WINDOW_SESSIONS` | `core/baseline` | `14` — trailing *usable* sessions in the baseline, however old: no age bound yet (KV-99; the horizon is KV-22) |
+| `USUAL_SPAN_NOTE_AFTER_DAYS` | `core/scoring` | `28` days — past this, the dashboard's header says how far back a person's usual reaches, and a card whose usual's newest check-in is older than this says so (KV-154). A presentation choice: it changes whether the line appears, never what is compared or withheld |
 | `HRV_DROP_FIRES_AT` | `core/scoring/rules.ts` | `0.25` — fractional drop from baseline HRV |
 | `DEMO_DAY_CEILING` | `core/seed/persona.ts` | `0.5` — a seeded demo day whose rules reach this is drawn again (KV-101) |
 | `PENDING_CAPTURE_TTL_MS` | `core/session/checkin.ts` | `15 min` — past this, a reading cannot be submitted with answers given now |
@@ -638,8 +676,10 @@ rewritten in the same change that makes it untrue — not after.
 
 ## Conventions & Workflow
 
-Branches + PRs only, never commit to `main` (the initial scaffold commit aside). The
-repository settings do not enforce this or squash-only merging yet (KV-54).
+Branches + PRs only, never commit to `main` (the initial scaffold commit aside). Merging
+is squash-only and a merged branch is deleted, both set on the repository; `main` itself
+is not protected yet and Dependabot's security alerts are off, so nothing but habit stops
+a push to it (KV-54).
 
 - **Tickets** are GitHub issues, and a ticket's `KV-##` number *is* its issue number —
   KV-25 is #25. Issues and pull requests share GitHub's number sequence, so a number taken
@@ -845,3 +885,7 @@ repository settings do not enforce this or squash-only merging yet (KV-54).
   [SDK docs](https://smartspectra.presagetech.com/docs/nodejs.md)).
 - **Change the dashboard** → `app/renderer/`.
 - **Add an IPC call** → `app/main/index.ts` *and* `app/preload/index.ts` — both, by name.
+- **Change what may leave the device** → `core/share/index.ts`, the one function sync will
+  send from. Read *Planning for remote access* in `ARCHITECTURE.md` first.
+- **Change the relay or its protocol** → `core/sync/protocol.ts` for what both ends agree
+  on, `relay/server.ts` for the routes.
