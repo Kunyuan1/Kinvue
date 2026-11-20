@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { createApiKeyStore, type KeyCipher } from '../main/api-key'
@@ -14,6 +14,8 @@ import { createApiKeyStore, type KeyCipher } from '../main/api-key'
 const slow = vi.hoisted(() => ({ first: true }))
 /** What reached the disk, in order (KV-223): each flush and each rename, by file name. */
 const disk = vi.hoisted(() => ({ events: [] as string[] }))
+/** Each mode asked for (KV-257), by file name and mode in octal, on any platform. */
+const modes = vi.hoisted(() => ({ asked: [] as string[] }))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const real = await importOriginal<typeof import('node:fs/promises')>()
   return {
@@ -24,6 +26,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
         await new Promise((r) => setTimeout(r, 60))
       }
       const file = await real.open(...args)
+      const chmod = file.chmod.bind(file)
+      file.chmod = async (mode: string | number): Promise<void> => {
+        await chmod(mode)
+        modes.asked.push(`${basename(String(args[0]))} ${Number(mode).toString(8)}`)
+      }
       const sync = file.sync.bind(file)
       file.sync = async (): Promise<void> => {
         await sync()
@@ -34,6 +41,10 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     rename: async (from: string, to: string): Promise<void> => {
       await real.rename(from, to)
       disk.events.push(`rename ${basename(from)}`)
+    },
+    chmod: async (...args: Parameters<typeof real.chmod>): Promise<void> => {
+      await real.chmod(...args)
+      modes.asked.push(`${basename(String(args[0]))} ${Number(args[1]).toString(8)}`)
     },
   }
 })
@@ -95,5 +106,35 @@ describe('the key store writes one at a time', () => {
     await mkdir(join(dir, 'api-key.json'))
     await expect(store.set('ss-live-refused-key-0000')).rejects.toThrow()
     expect(await readdir(dir)).toEqual(['api-key.json'])
+  })
+})
+
+describe('who may read the key file (KV-257)', () => {
+  it('writes it for its own user only, and brings one from before to that as it loads', async () => {
+    // Where there is no key store, the key is in it in plain text.
+    const dir = await mkdtemp(join(tmpdir(), 'kinvue-keymode-'))
+    dirs.push(dir)
+    const path = join(dir, 'api-key.json')
+    const store = createApiKeyStore(path, cipher({ landed: true }))
+    await store.load()
+    await store.set('ss-live-private-key-0000')
+    expect(modes.asked).toContain('api-key.json.tmp 600')
+
+    modes.asked.length = 0
+    await createApiKeyStore(path, cipher({ landed: true })).load()
+    expect(modes.asked).toContain('api-key.json 600')
+  })
+
+  it.skipIf(process.platform === 'win32')('leaves the file readable by its own user only', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'kinvue-keymode-'))
+    dirs.push(dir)
+    const path = join(dir, 'api-key.json')
+    const store = createApiKeyStore(path, cipher({ landed: true }))
+    await store.load()
+    await store.set('ss-live-private-key-0000')
+    expect((await stat(path)).mode & 0o777).toBe(0o600)
+    await chmod(path, 0o644)
+    await createApiKeyStore(path, cipher({ landed: true })).load()
+    expect((await stat(path)).mode & 0o777).toBe(0o600)
   })
 })

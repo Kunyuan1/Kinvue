@@ -1,4 +1,4 @@
-import { open, rename, unlink } from 'node:fs/promises'
+import { chmod, open, rename, unlink } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 /**
@@ -34,6 +34,25 @@ import { dirname } from 'node:path'
  * everything the file would have — a key, every sealed envelope — under a name
  * nothing else reads, removes or expires.
  */
+/**
+ * Readable and writable by the file's own user, and nobody else (KV-257): the mode for
+ * a file holding the history, the household's key, or the relay's state. POSIX only; on
+ * Windows a mode sets at most the read-only bit, and who may read a file under a
+ * profile is the profile's to decide.
+ */
+export const OWN_USER_ONLY = 0o600
+
+/**
+ * Brings a file a build before KV-257 left as the umask made it — often readable by
+ * every user — to `OWN_USER_ONLY`, without waiting for its next write. Asked, never
+ * required: a file that is not there is the first run, and one this user cannot change
+ * the mode of is no reason to refuse to open it. Its next write replaces it with one
+ * that is `OWN_USER_ONLY`.
+ */
+export async function keepToOwnUser(path: string): Promise<void> {
+  await chmod(path, OWN_USER_ONLY).catch(() => undefined)
+}
+
 export async function replaceFile(path: string, text: string, mode?: number): Promise<void> {
   const tmp = `${path}.tmp`
   try {

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import {
@@ -31,6 +31,14 @@ const renameControl = vi.hoisted(() => ({ failNext: false }))
 const disk = vi.hoisted(() => ({ events: [] as string[], failNextSync: false }))
 
 /**
+ * Each mode asked for (KV-257), by the file's name and the mode in octal: on an open file,
+ * by name, or as a new file is written. Recorded on every platform, though only POSIX
+ * honours them, so what is asked for is pinned here and what a mode does is pinned by the
+ * POSIX-only tests beside these.
+ */
+const modes = vi.hoisted(() => ({ asked: [] as string[], refuse: false }))
+
+/**
  * The flush of the folder `path` is in, as `replaceFile` asks for it after its
  * rename: everywhere but Windows, which has none to ask for.
  */
@@ -43,6 +51,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     ...actual,
     open: async (...args: Parameters<typeof actual.open>) => {
       const file = await actual.open(...args)
+      const chmod = file.chmod.bind(file)
+      file.chmod = async (mode: string | number): Promise<void> => {
+        await chmod(mode)
+        modes.asked.push(`${basename(String(args[0]))} ${Number(mode).toString(8)}`)
+      }
       const sync = file.sync.bind(file)
       file.sync = async (): Promise<void> => {
         if (disk.failNextSync) {
@@ -65,6 +78,19 @@ vi.mock('node:fs/promises', async (importOriginal) => {
     unlink: async (...args: Parameters<typeof actual.unlink>): Promise<void> => {
       await actual.unlink(...args)
       disk.events.push(`unlink ${basename(String(args[0]))}`)
+    },
+    chmod: async (...args: Parameters<typeof actual.chmod>): Promise<void> => {
+      // As on a file this user can read but does not own.
+      if (modes.refuse) throw Object.assign(new Error('EPERM: chmod'), { code: 'EPERM' })
+      await actual.chmod(...args)
+      modes.asked.push(`${basename(String(args[0]))} ${Number(args[1]).toString(8)}`)
+    },
+    writeFile: async (...args: Parameters<typeof actual.writeFile>): Promise<void> => {
+      await actual.writeFile(...args)
+      const options = args[2]
+      if (typeof options === 'object' && options !== null && options.mode !== undefined) {
+        modes.asked.push(`${basename(String(args[0]))} ${Number(options.mode).toString(8)} new`)
+      }
     },
   }
 })
@@ -953,4 +979,72 @@ describe('a version-1 history whose upgrade cannot be written (KV-18, review of 
     expect(again).toEqual(first)
     expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({ ...v1, version: 2, people: first })
   })
+})
+
+describe('who may read the history (KV-257)', () => {
+  it('writes the history for its own user only, from before a byte is in it', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'one', capturedAt: '2026-09-01T09:00:00.000Z' }))
+    expect(modes.asked).toContain('sessions.json.tmp 600')
+  })
+
+  it('brings a history from before to its own user only on the store\u2019s first read, once', async () => {
+    const { path } = await storeIn()
+    await createJsonSessionStore(path).append(session({ id: 'one' }))
+    modes.asked.length = 0
+    const store = createJsonSessionStore(path)
+    await store.list('test-person')
+    await store.list('test-person')
+    expect(modes.asked.filter((m) => m === 'sessions.json 600')).toHaveLength(1)
+  })
+
+  it('opens a history it cannot change the mode of, and a missing one, as it always has', async () => {
+    const { path } = await storeIn()
+    // None yet: the first run, with nothing to make private.
+    expect(await createJsonSessionStore(path).list('test-person')).toEqual([])
+    await createJsonSessionStore(path).append(session({ id: 'kept' }))
+    modes.refuse = true
+    try {
+      const listed = await createJsonSessionStore(path).list('test-person')
+      expect(listed.map((r) => r.id)).toEqual(['kept'])
+    } finally {
+      modes.refuse = false
+    }
+  })
+
+  it('sets a history aside, and writes its note, for its own user only', async () => {
+    const { path } = await storeIn()
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, 'not json', 'utf8')
+    modes.asked.length = 0
+    const aside = await createJsonSessionStore(path, () => new Date('2026-09-22T12:00:00')).startNewHistory()
+    expect(aside).not.toBeNull()
+    expect(modes.asked).toContain(`${basename(aside!)} 600`)
+    expect(modes.asked).toContain('sessions.json.unreadable-README.txt 600 new')
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'leaves every file of the history readable by its own user only',
+    async () => {
+      const { path } = await storeIn()
+      await mkdir(dirname(path), { recursive: true })
+      // A history and a temporary file from before, as the umask left them.
+      await writeFile(path, '', { mode: 0o644 })
+      await chmod(path, 0o644)
+      await writeFile(`${path}.tmp`, 'half', { mode: 0o666 })
+      await chmod(`${path}.tmp`, 0o666)
+      const store = createJsonSessionStore(path)
+      await store.list('test-person')
+      expect((await stat(path)).mode & 0o777).toBe(0o600)
+      await store.append(session({ id: 'one' }))
+      expect((await stat(path)).mode & 0o777).toBe(0o600)
+
+      await writeFile(path, 'not json', { mode: 0o644 })
+      await chmod(path, 0o644)
+      const aside = await createJsonSessionStore(path).startNewHistory()
+      expect((await stat(aside!)).mode & 0o777).toBe(0o600)
+      expect((await stat(`${path}.unreadable-README.txt`)).mode & 0o777).toBe(0o600)
+    },
+  )
 })

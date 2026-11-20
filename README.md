@@ -607,7 +607,9 @@ them checkable:
   The cost, stated in ARCHITECTURE.md: the vendor's licence meter now arrives under the
   household's own registration, so it can tie when check-ins happen to that account.
 - **Session data is local**, under Electron's `userData`, and `.gitignore` covers
-  `sessions/` and video files so a check-in cannot be committed by accident.
+  `sessions/` and video files so a check-in cannot be committed by accident. On Linux and
+  macOS the history, a history set aside, and the key file are readable by their own user
+  only (`0o600`, KV-257); on Windows that is down to the profile folder they sit in.
 - **Names are kept with the check-ins, and nowhere else** (KV-18). A name is given on
   the setup screen, or when someone is added or renamed from the dashboard, and kept in
   the same file, encrypted with it. Each person also has a random key that tells them from
