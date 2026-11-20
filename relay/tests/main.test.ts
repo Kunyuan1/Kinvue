@@ -294,9 +294,13 @@ describe('starting it', () => {
   it.skipIf(process.platform === 'win32')(
     'holds its lock for its own user only, and brings a data file from before to that (KV-226)',
     async () => {
-      // Written before KV-226, as the umask left it: readable by every user.
-      await writeFile(config.dataFile, '', { mode: 0o644 })
+      // A file a relay wrote, then left as an older relay would have: readable by every
+      // user. Written by a real start, since an empty file is refused as unreadable.
+      const first = await start()
+      await first.close()
+      running = []
       await chmod(config.dataFile, 0o644)
+      expect((await stat(config.dataFile)).mode & 0o777).toBe(0o644)
       await start()
       expect((await stat(lockPath())).mode & 0o777).toBe(0o600)
       expect((await stat(config.dataFile)).mode & 0o777).toBe(0o600)
