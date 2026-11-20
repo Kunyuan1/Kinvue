@@ -1,4 +1,4 @@
-import { link, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, link, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { uptime } from 'node:os'
 import { isAbsolute } from 'node:path'
 import { isIP } from 'node:net'
@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { pathToFileURL } from 'node:url'
 import { ENROL_TOKEN_TTL_MS } from '@kinvue/core/sync/protocol'
 import { createRelayServer } from './server'
-import { createRelayStore, DeviceEnrolledError } from './store'
+import { createRelayStore, DeviceEnrolledError, RELAY_FILE_MODE } from './store'
 
 /**
  * Running the household's relay (KV-39): `npm run relay`, configured from the
@@ -23,12 +23,39 @@ import { createRelayStore, DeviceEnrolledError } from './store'
  *   token lasts `ENROL_TOKEN_TTL_MS`; restarting prints another.
  * - **One relay per file.** A lock beside the file says which process holds it, so a
  *   second relay started on the same file refuses rather than overwriting the first's.
+ * - **Its files are its own user's** (KV-226): the data file, its temporary file, its lock
+ *   and the token are `0o600`, and a data file from before is brought to that at start.
+ *   POSIX only: on Windows a mode does not say who may read a file.
  * - **Its log is one JSON line a request** on standard output — method, route, status,
  *   time; never a key, a body or an address (`relay/server.ts`).
  * - **Its own failures are told on standard error** (KV-225), under the same rule: a
  *   request it could not carry out, and a retention run that failed. A pipe closed behind
  *   either stream does not stop it (`writerTo`).
  */
+
+/**
+ * What a relay started before KV-226 may have left readable by every user here, dealt
+ * with at start rather than at the next write, which on a quiet relay could be days.
+ *
+ * - **The data file** is brought to `RELAY_FILE_MODE`. One this user may read but does
+ *   not own — provisioned by someone else, say — cannot be: that is said, and the relay
+ *   starts anyway, as it did before, since its first write replaces the file with one
+ *   that is its own (review of #256). None yet is the first start.
+ * - **A temporary file a crash left** holds the whole state, sealed envelopes included,
+ *   under a name nothing reads, expires or removes. The lock is held, so nothing is
+ *   writing it: it is removed.
+ */
+async function private_(dataFile: string, out: Output): Promise<void> {
+  await rm(`${dataFile}.tmp`, { force: true })
+  await chmod(dataFile, RELAY_FILE_MODE).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === 'ENOENT') return
+    out.tell(
+      `Could not make ${dataFile} readable by this user only (${err.code ?? err.message}). ` +
+        'It is replaced by a file of its own at its next write; until then, check who can ' +
+        'read it.',
+    )
+  })
+}
 
 /** Where the relay keeps its file, and where it listens. */
 export interface RelayConfig {
@@ -170,7 +197,11 @@ async function lock(dataFile: string, now: () => number): Promise<() => Promise<
   const ours = `${path}.${process.pid}`
   const aside = `${path}.stale.${process.pid}`
   const ifUnheld = `If no relay is running on ${dataFile}, delete ${path} and start again.`
-  await writeFile(ours, mine, 'utf8')
+  // Linked into place, so the lock is this file, mode and all: its own user's (KV-226).
+  // Removed first, since a mode is set only on a file being made, and one left by a relay
+  // killed before KV-226 under a process id since reused would keep its own (review of #256).
+  await rm(ours, { force: true })
+  await writeFile(ours, mine, { encoding: 'utf8', mode: RELAY_FILE_MODE })
   try {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
@@ -290,6 +321,7 @@ export async function startRelay(
 ): Promise<Running> {
   const unlock = await lock(config.dataFile, now)
   try {
+    await private_(config.dataFile, out)
     const store = createRelayStore(config.dataFile)
     // Read now, so a file it cannot read stops it before it listens.
     await store.roleOf('')

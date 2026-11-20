@@ -22,17 +22,24 @@ import { dirname } from 'node:path'
  * viewer's sharing ended, the earlier file is the one that still holds it.
  * Windows has no flush for a folder to ask for, so there that gap stays.
  *
+ * `mode`, where given, is the file's permissions from before a byte is written (KV-226):
+ * set on the temporary file as it is opened, and kept by the rename. Set again, not only
+ * asked for at creation, because a temporary file a crash left behind is opened as it is.
+ * POSIX only: on Windows a mode sets at most the read-only bit, and who may read the file
+ * is the folder's to decide.
+ *
  * One temporary name for each path, so a caller with more than one writer
  * queues them (as the history, the key and the relay's file each do). A write
  * that fails takes its temporary file with it (review of #247): it holds
  * everything the file would have — a key, every sealed envelope — under a name
  * nothing else reads, removes or expires.
  */
-export async function replaceFile(path: string, text: string): Promise<void> {
+export async function replaceFile(path: string, text: string, mode?: number): Promise<void> {
   const tmp = `${path}.tmp`
   try {
-    const file = await open(tmp, 'w')
+    const file = await open(tmp, 'w', mode)
     try {
+      if (mode !== undefined) await file.chmod(mode)
       await file.writeFile(text, 'utf8')
       await file.sync()
     } finally {

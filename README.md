@@ -427,13 +427,32 @@ KINVUE_RELAY_DATA=/var/lib/kinvue/relay.json node main.js start
 
 - **The check-in device's one-time token** is issued once the relay is listening, while
   no device is enrolled, and is valid for 15 minutes. It is written to `<data>.token`,
-  readable by the relay's own user only, and the console says where; it is shown itself
-  only to someone at a terminal, never into a log. One is outstanding at a time. Missed
-  the window? `kill -USR2 <pid>` has the running relay issue another, or restart it. Once
-  a device is enrolled, no token enrols another (replacing one is #45's recovery card).
+  readable by the relay's own user only (not on Windows: see below), and the console
+  says where; it is shown itself only to someone at a terminal, never into a log. One is
+  outstanding at a time. Missed the window? `kill -USR2 <pid>` has the running relay
+  issue another, or restart it. Once a device is enrolled, no token enrols another
+  (replacing one is #45's recovery card).
 - **One relay per file:** a second one started on the same file refuses. A lock left by a
   crash or a power cut is taken over; one it cannot read is not, and the message says
   what to do.
+- **Its files are readable by the relay's own user only** (KV-226): the data file, its
+  temporary file, its lock and the token, `0o600`, with a data file from before brought
+  to that at start. The data file is who is paired with whom and when each viewer
+  fetched. **On Windows none of this holds:** a file mode there sets at most read-only,
+  so who can read these files is down to the folder they are in. Put it somewhere only
+  the relay's user can open.
+- **Behind a reverse proxy, failed guesses lock everyone out for a while.** Ten failed
+  attempts at enrolment or at joining a pairing, from one address, inside ten minutes,
+  close those two routes to that address until the window passes. Behind a proxy every
+  request has the proxy's address, so ten failures from anyone close them for everyone:
+  a viewer trying to join gets `429` until then. That is deliberate — the routes that let
+  someone in fail closed — and it touches only those two. Check-ins, fetches and
+  everything else enrolled devices do are never locked out this way.
+- **A forged request costs it no body at all.** A request carries its body's hash in a
+  signed header (`kinvue-body-sha256`), so the signature is checked before a byte of the
+  body is read, and the body then has to match it. Under any key, the check-in device's
+  included: that one is given to every viewer, so it is no secret. A key that signed is
+  then read 4 KiB at most, except the check-in device posting envelopes.
 - **Its log is one JSON line a request** on standard output — method, route, status,
   time — with no key, no body, no address. What a person should know goes to standard
   error.

@@ -1,8 +1,8 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ROUTES } from '@kinvue/core/sync/protocol'
 import {
   bootedAt,
@@ -17,6 +17,21 @@ import {
   type Running,
 } from '../main'
 import { call, identity, receiveKey } from './helpers'
+
+/** A `chmod` that can be made to be refused, as it is on a file this user does not own. */
+const modes = vi.hoisted(() => ({ refuse: false }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    chmod: async (...args: Parameters<typeof actual.chmod>) => {
+      if (modes.refuse) {
+        throw Object.assign(new Error('EPERM: operation not permitted, chmod'), { code: 'EPERM' })
+      }
+      return actual.chmod(...args)
+    },
+  }
+})
 
 /**
  * Running the relay (KV-39): its configuration, and starting it, in-process. The built
@@ -290,6 +305,64 @@ describe('starting it', () => {
   const lockPath = () => `${config.dataFile}.lock`
   const holder = (pid: number, at = bootedAt(Date.now())) => JSON.stringify({ pid, bootedAt: at })
   const heldBy = async () => JSON.parse(await readFile(lockPath(), 'utf8')) as { pid: number }
+
+  it('removes a temporary file a crash left, with the state in it (review of #256)', async () => {
+    // A device enrolled, so starting again issues no token and writes nothing: the file
+    // goes because it is removed, not because a write happened to take its place.
+    const first = await start()
+    const enrol = await call(first.url, identity(), {
+      method: 'POST',
+      path: ROUTES.enrol,
+      body: { token: shownToken(), receiveKey: receiveKey() },
+    })
+    expect(enrol.status).toBe(204)
+    await first.close()
+    running = []
+    await writeFile(`${config.dataFile}.tmp`, 'the whole state, sealed envelopes and all')
+    const written = (await stat(config.dataFile)).mtimeMs
+    await start()
+    expect((await stat(config.dataFile)).mtimeMs).toBe(written)
+    await expect(stat(`${config.dataFile}.tmp`)).rejects.toThrow()
+  })
+
+  it('starts, and says so, on a data file it cannot make private (review of #256)', async () => {
+    // Readable here but owned by someone else: before KV-226 it started, and its first
+    // write replaced the file with one of its own. It still does.
+    const first = await start()
+    await first.close()
+    running = []
+    said = []
+    modes.refuse = true
+    try {
+      await start()
+    } finally {
+      modes.refuse = false
+    }
+    expect(said.some((line) => line.startsWith(`Could not make ${config.dataFile} readable`))).toBe(
+      true,
+    )
+    expect(said.some((line) => line.includes('EPERM'))).toBe(true)
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'holds its lock for its own user only, and brings a data file from before to that (KV-226)',
+    async () => {
+      // A file a relay wrote, then left as an older relay would have: readable by every
+      // user. Written by a real start, since an empty file is refused as unreadable.
+      const first = await start()
+      await first.close()
+      running = []
+      await chmod(config.dataFile, 0o644)
+      expect((await stat(config.dataFile)).mode & 0o777).toBe(0o644)
+      // And the file a lock is made from, left by a relay killed under this process id: a
+      // mode is set only on a file being made, so it has to go first (review of #256).
+      await writeFile(`${lockPath()}.${String(process.pid)}`, 'old', { mode: 0o644 })
+      await chmod(`${lockPath()}.${String(process.pid)}`, 0o644)
+      await start()
+      expect((await stat(lockPath())).mode & 0o777).toBe(0o600)
+      expect((await stat(config.dataFile)).mode & 0o777).toBe(0o600)
+    },
+  )
 
   it('takes over a lock left by a relay that is no longer running', async () => {
     // A process id nothing has: a relay that crashed.

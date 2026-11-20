@@ -2076,7 +2076,10 @@ holds it:
 
 - **Every request is signed** with the Ed25519 key it names, over its method, path, time,
   nonce and body; refused outside five minutes or with a nonce seen inside them. The relay
-  checks the signature with `node:crypto` and never seals, opens or signs anything.
+  checks the signature with `node:crypto` and never seals, opens or signs anything. The
+  body's hash travels in a signed header, so the signature is checked before the body is
+  read and a forgery costs the relay no body at all (KV-226); the body, once read, must
+  hash to it.
 - **Who gets in, with no open sign-up** (KV-35). The check-in device by a one-time token
   the relay prints at start; a viewer only by a pairing the device opens, the viewer
   joins, and the device confirms once the code from all four keys matched (#40's screen).

@@ -16,11 +16,13 @@ import {
   checkPostEnvelopes,
   ENDED,
   HEADERS,
+  isBodyHash,
   isKey,
   isNonce,
   isPairingId,
   isSignature,
   MAX_BODY_BYTES,
+  MAX_SMALL_BODY_BYTES,
   requestBytes,
   REQUEST_TIMEOUT_MS,
   REQUEST_WINDOW_MS,
@@ -80,6 +82,20 @@ import type { RelayStore, Role } from './store'
  * the caller's and tells nothing.
  *
  * Errors say what was wrong with the request in a few words, and never repeat its body.
+ *
+ * **A bad signature costs it no body at all** (KV-226, review of #256). The signature is
+ * over the body's hash, and the hash travels in a header beside it, so the signature is
+ * checked before a byte of the body is read; the body, once read, has to hash to what was
+ * signed. A forgery is refused on its headers, whoever's key it claims — the device's
+ * included, which every viewer is given. Then, for a key that signed: `MAX_BODY_BYTES`,
+ * about 4 MB, for the check-in device posting envelopes, and `MAX_SMALL_BODY_BYTES`, 4 KiB,
+ * for everything else.
+ *
+ * Bad signatures are counted against an address only at the two open routes, where a
+ * stranger is guessing at a way in. Counted everywhere, a stranger behind the same reverse
+ * proxy as the household — every request has the proxy's address — could lock the
+ * household's own devices out of carrying check-ins, which is not the fail-closed choice
+ * the open routes make: refusing someone in is safe, refusing everyone's check-ins is not.
  */
 
 /** Failed attempts at the two open routes one address may make inside the window. */
@@ -255,6 +271,8 @@ interface Claim {
   at: number
   nonce: string
   signature: string
+  /** The body's SHA-256 as the request states it, and as it was signed. */
+  bodyHash: string
   /** The relay's clock when the request arrived. */
   clock: number
 }
@@ -299,13 +317,21 @@ const send = (res: ServerResponse, status: number, body?: unknown): void => {
   res.end(text)
 }
 
-const readBody = (req: IncomingMessage): Promise<Buffer> =>
+/**
+ * The body, at most `limit` bytes of it: refused on its `Content-Length` before a byte is
+ * read, and cut at the limit while it is read, for a body that never said its length.
+ */
+const readBody = (req: IncomingMessage, limit: number): Promise<Buffer> =>
   new Promise((resolve, reject) => {
+    if (Number(req.headers['content-length'] ?? 0) > limit) {
+      reject(new Refusal(413, 'body too large'))
+      return
+    }
     const chunks: Buffer[] = []
     let size = 0
     req.on('data', (chunk: Buffer) => {
       size += chunk.length
-      if (size > MAX_BODY_BYTES) {
+      if (size > limit) {
         // Answered, then the rest is read and dropped, so the answer reaches the sender
         // rather than a connection cut under it.
         req.removeAllListeners('data')
@@ -435,16 +461,23 @@ export function createRelayServer({
 
   /**
    * What a request says about who sent it and when, checked before a byte of its body is
-   * read: a request with no signature, or from outside the time window, or announcing a
-   * body over the limit, is refused without the relay holding anything for it (review of
-   * #216). The signature itself needs the body's hash, so it is checked after, in `signer`.
+   * read: a request with no signature, or from outside the time window, is refused without
+   * the relay holding anything for it (review of #216). The signature is checked next, in
+   * `signer`, against the body's hash as the request states it — still before the body.
    */
   function claim(req: IncomingMessage): Claim {
     const key = header(req, HEADERS.key)
     const atText = header(req, HEADERS.at)
     const nonce = header(req, HEADERS.nonce)
     const signature = header(req, HEADERS.signature)
-    if (!isKey(key) || !isNonce(nonce) || !isSignature(signature) || atText === undefined) {
+    const bodyHash = header(req, HEADERS.bodyHash)
+    if (
+      !isKey(key) ||
+      !isNonce(nonce) ||
+      !isSignature(signature) ||
+      !isBodyHash(bodyHash) ||
+      atText === undefined
+    ) {
       throw new Refusal(401, 'not signed')
     }
     const at = Number(atText)
@@ -452,35 +485,51 @@ export function createRelayServer({
     if (!Number.isSafeInteger(at) || Math.abs(clock - at) > REQUEST_WINDOW_MS) {
       throw new Refusal(401, 'outside the time window')
     }
-    const length = Number(header(req, 'content-length') ?? 0)
-    if (length > MAX_BODY_BYTES) throw new Refusal(413, 'body too large')
-    return { key, at, nonce, signature, clock }
+    return { key, at, nonce, signature, bodyHash, clock }
   }
 
   /**
-   * Who signed this request, checked against its body, or a refusal. `open` is for the two
-   * routes a key not yet enrolled may use: there its role is null, and it spends no nonce.
+   * Who signed this request, and what they are here, checked on its headers alone: the
+   * signature is over the body's hash as the request states it, so a forgery is refused
+   * without a byte of its body read (review of #256). `open` is for the two routes a key
+   * not yet enrolled may use: there its role is null. Elsewhere a key nobody enrolled is
+   * refused here too, before its body.
    */
-  async function signer(req: IncomingMessage, claimed: Claim, body: Buffer, open: boolean) {
-    const { key, at, nonce, signature, clock } = claimed
-    const bytes = requestBytes({
-      method: req.method ?? '',
-      path: req.url ?? '',
-      at,
-      nonce,
-      bodyHash: hashOf(body),
-    })
+  async function signer(req: IncomingMessage, claimed: Claim, open: boolean) {
+    const { key, at, nonce, signature, bodyHash } = claimed
+    const bytes = requestBytes({ method: req.method ?? '', path: req.url ?? '', at, nonce, bodyHash })
     if (!signedBy(key, bytes, signature)) throw new Refusal(401, BAD_SIGNATURE)
     const role = await store.roleOf(key)
-    if (role === null) {
-      if (open) return { key, role }
-      throw new Refusal(401, 'not enrolled')
-    }
-    // Last: after the signature, so a forged request cannot spend a nonce someone else will
-    // send, and after the role, so a key nobody enrolled spends none at all — the ledger
-    // grows only with what enrolled keys send (review of #216).
-    if (!fresh(key, nonce, at, clock)) throw new Refusal(401, 'replayed')
+    if (role === null && !open) throw new Refusal(401, 'not enrolled')
     return { key, role }
+  }
+
+  /**
+   * How much body a signed request may have (KV-226): `MAX_BODY_BYTES` for the check-in
+   * device posting envelopes, and `MAX_SMALL_BODY_BYTES` for everything else. Decided by
+   * the role a signature has proven, so nobody but the device can make the relay read more
+   * than 4 KiB.
+   */
+  const bodyLimit = (req: IncomingMessage, path: string, role: Role | null): number =>
+    req.method === 'POST' && path === ROUTES.envelopes && role === 'device'
+      ? MAX_BODY_BYTES
+      : MAX_SMALL_BODY_BYTES
+
+  /**
+   * The body, read once the signature has checked out, and refused unless it is the body
+   * that was signed. Then, for an enrolled key, the nonce is spent: after the body, so a
+   * request whose body was swapped on its way cannot spend the nonce the real one carries;
+   * and only for an enrolled key, so the ledger grows only with what enrolled keys send
+   * (review of #216). A key at an open route spends none.
+   */
+  async function proven(req: IncomingMessage, path: string, claimed: Claim, open: boolean) {
+    const { key, role } = await signer(req, claimed, open)
+    const body = await readBody(req, bodyLimit(req, path, role))
+    if (hashOf(body) !== claimed.bodyHash) throw new Refusal(401, BAD_SIGNATURE)
+    if (role !== null && !fresh(key, claimed.nonce, claimed.at, claimed.clock)) {
+      throw new Refusal(401, 'replayed')
+    }
+    return { key, role, body }
   }
 
   const only = (role: Role, wanted: Role): void => {
@@ -496,7 +545,7 @@ export function createRelayServer({
     if (open && !attempts.allowed(address, now())) throw new Refusal(429, 'too many attempts')
     /**
      * A refusal at an open route, counted against its address. What counts (reviews of
-     * #218): a bad signature, which cost a body read and a verification to find; and every
+     * #218): a bad signature, which cost a verification to find; and every
      * guess at a token or a pairing. Not what is refused on headers alone — unsigned, or
      * outside the time window — which costs nothing, and the second of which is a device
      * whose clock has drifted, better told so every time than locked out. Not what a request
@@ -508,18 +557,16 @@ export function createRelayServer({
       attempts.failed(address, now())
       return new Refusal(status, reason)
     }
-    let proven: { key: string; role: Role | null; body: Buffer }
+    let request: { key: string; role: Role | null; body: Buffer }
     try {
-      const claimed = claim(req)
-      const body = await readBody(req)
-      proven = { ...(await signer(req, claimed, body, open)), body }
+      request = await proven(req, path, claim(req), open)
     } catch (err) {
       if (open && err instanceof Refusal && err.reason === BAD_SIGNATURE) {
         throw failed(err.status, err.reason)
       }
       throw err
     }
-    const { key, role, body } = proven
+    const { key, role, body } = request
     const at = now()
 
     if (path === ROUTES.enrol && req.method === 'POST') {

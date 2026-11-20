@@ -1,5 +1,4 @@
 import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
-import { randomBytes, sign } from 'node:crypto'
 import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,12 +8,27 @@ import {
   ENDED,
   HEADERS,
   MAX_BODY_BYTES,
+  MAX_SMALL_BODY_BYTES,
   REQUEST_WINDOW_MS,
   ROUTES,
 } from '@kinvue/core/sync/protocol'
-import { createRelayServer, FAILURE_WORDS, safely, wordsOf } from '../server'
+import {
+  createRelayServer,
+  FAILURE_WORDS,
+  MAX_FAILED_ATTEMPTS,
+  safely,
+  wordsOf,
+} from '../server'
 import { createRelayStore, type RelayStore } from '../store'
-import { call, identity, listening, receiveKey, sealed, type Identity } from './helpers'
+import {
+  call,
+  identity,
+  listening,
+  receiveKey,
+  sealed,
+  signedHeaders,
+  type Identity,
+} from './helpers'
 
 /**
  * The relay over real HTTP, with real Ed25519 signatures (KV-39). Nothing here is mocked
@@ -64,6 +78,38 @@ const post = (envelopes: { viewer: string; stream: number; sealed: string }[]) =
 const fetchAs = (who: Identity) =>
   call(base, who, { method: 'GET', path: ROUTES.envelopes, at: clock })
 
+/**
+ * A request written to the socket by hand: `head` as its lines, then `chunks` as they are.
+ * What the relay answered, as text; '' if it answered nothing. `hangUp` goes once the last
+ * chunk is written. Closed after ten seconds either way, so a request the relay keeps
+ * waiting on fails here, by name, and not on the test's own timeout.
+ */
+const raw = (head: string[], chunks: string[], { hangUp = false } = {}): Promise<string> => {
+  const { port } = new URL(base)
+  return new Promise<string>((resolve, reject) => {
+    let said = ''
+    const socket = connect(Number(port), '127.0.0.1', () => {
+      socket.write(`${[...head, 'Connection: close'].join('\r\n')}\r\n\r\n`)
+      for (const chunk of chunks) socket.write(chunk)
+      if (hangUp) socket.end(() => socket.destroy())
+    })
+    const waited = setTimeout(() => {
+      socket.destroy()
+      reject(new Error(`no answer in 10 s; so far: ${JSON.stringify(said.slice(0, 80))}`))
+    }, 10_000)
+    socket.on('data', (d: Buffer) => (said += d.toString('utf8')))
+    socket.on('close', () => {
+      clearTimeout(waited)
+      resolve(said)
+    })
+    socket.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'ECONNRESET') return
+      clearTimeout(waited)
+      reject(err)
+    })
+  })
+}
+
 describe('a failure of the relay\u2019s own (KV-225)', () => {
   /** The relay's file can no longer be written: its place is taken by a folder. */
   const fileRefusesWrites = async (): Promise<void> => {
@@ -103,29 +149,18 @@ describe('a failure of the relay\u2019s own (KV-225)', () => {
     expect(told).toEqual([])
   })
 
-  it('tells nothing when the caller hangs up mid-body, signed or not (review of #253)', async () => {
-    // A phone leaving Wi-Fi mid-upload is not the relay failing. And the body is read
-    // before the signature is checked, so anyone who can reach the port can do this: the
-    // headers below are the right shape and signed over nothing.
-    const { port } = new URL(base)
-    const head = [
-      `POST ${ROUTES.envelopes} HTTP/1.1`,
+  it('tells nothing when the caller hangs up mid-body (review of #253)', async () => {
+    // A phone leaving Wi-Fi mid-upload is not the relay failing. Signed for real by an
+    // enrolled viewer, so the relay gets as far as reading the body.
+    const body = JSON.stringify({ through: 1 })
+    const answer = await raw([
+      `POST ${ROUTES.ack} HTTP/1.1`,
       'Host: relay',
-      `${HEADERS.key}: ${stranger.key}`,
-      `${HEADERS.at}: ${String(clock)}`,
-      `${HEADERS.nonce}: ${randomBytes(16).toString('base64url')}`,
-      `${HEADERS.signature}: ${sign(null, Buffer.from('nothing'), stranger.privateKey).toString('base64url')}`,
+      ...signedHeaders(ann, { method: 'POST', path: ROUTES.ack, body, at: clock }),
       'Content-Type: application/json',
-      'Content-Length: 1000',
-    ].join('\r\n')
-    await new Promise<void>((resolve, reject) => {
-      const socket = connect(Number(port), '127.0.0.1', () => {
-        // Three bytes of the thousand promised, then gone.
-        socket.write(`${head}\r\n\r\n{"e`, () => socket.destroy())
-      })
-      socket.on('close', () => resolve())
-      socket.on('error', reject)
-    })
+      `Content-Length: ${String(body.length)}`,
+    ], [body.slice(0, 3)], { hangUp: true })
+    expect(answer).toBe('')
     // The relay has seen it go by the time it answers the next request.
     await vi.waitFor(async () => expect((await fetchAs(ann)).status).toBe(200))
     await new Promise((resolve) => setTimeout(resolve, 50))
@@ -452,6 +487,143 @@ describe('signed requests', () => {
     const res = await fetch(base + ROUTES.envelopes, { method: 'POST', body: big })
     expect(res.status).toBe(401)
     expect(await res.json()).toEqual({ error: 'not signed' })
+  })
+})
+
+describe('what a bad signature can cost the relay (KV-226)', () => {
+  /** A body of about `bytes` bytes, as JSON. */
+  const padded = (bytes: number) => ({ through: 1, pad: 'a'.repeat(bytes) })
+
+  it('refuses a forgery on its headers, under any key, the device’s included (review of #256)', async () => {
+    // The device's key is no secret: every viewer is given it. A forgery under it promises
+    // 4 MB and sends none of it; refused on the headers, it is answered at once.
+    const body = 'x'.repeat(MAX_BODY_BYTES)
+    for (const claimed of [device, ann, stranger]) {
+      const answer = await raw([
+        `POST ${ROUTES.envelopes} HTTP/1.1`,
+        'Host: relay',
+        ...signedHeaders(claimed, { method: 'POST', path: ROUTES.envelopes, body, at: clock }, bill),
+        'Content-Type: application/json',
+        `Content-Length: ${String(MAX_BODY_BYTES)}`,
+      ], [])
+      expect(answer).toMatch(/^HTTP\/1\.1 401 /)
+      expect(answer).toContain('bad signature')
+    }
+  })
+
+  it('takes a request without the body’s hash as unsigned', async () => {
+    const answer = await raw([
+      `POST ${ROUTES.ack} HTTP/1.1`,
+      'Host: relay',
+      ...signedHeaders(ann, { method: 'POST', path: ROUTES.ack, body: '{}', at: clock }).filter(
+        (line) => !line.startsWith(`${HEADERS.bodyHash}:`),
+      ),
+      'Content-Length: 2',
+    ], ['{}'])
+    expect(answer).toMatch(/^HTTP\/1\.1 401 /)
+    expect(answer).toContain('not signed')
+  })
+
+  it('refuses a body over the limit on its stated length, before any of it arrives', async () => {
+    // Signed properly, promising 8 KiB on a route that takes 4, and sending none: answered
+    // at once, not after waiting for a body it would refuse.
+    const body = JSON.stringify(padded(8 * 1024))
+    const answer = await raw([
+      `POST ${ROUTES.ack} HTTP/1.1`,
+      'Host: relay',
+      ...signedHeaders(ann, { method: 'POST', path: ROUTES.ack, body, at: clock }),
+      `Content-Length: ${String(body.length)}`,
+    ], [])
+    expect(answer).toMatch(/^HTTP\/1\.1 413 /)
+  })
+
+  it('refuses a body that is not the one signed, once read', async () => {
+    const forged = await call(base, ann, {
+      method: 'POST',
+      path: ROUTES.ack,
+      body: { through: 1 },
+      signedBody: { through: 2 },
+    })
+    expect(forged).toEqual({ status: 401, json: { error: 'bad signature' } })
+  })
+
+  it('refuses a key nobody enrolled before its body, at a route that is not open', async () => {
+    const answer = await raw([
+      `POST ${ROUTES.ack} HTTP/1.1`,
+      'Host: relay',
+      ...signedHeaders(stranger, { method: 'POST', path: ROUTES.ack, body: '{}', at: clock }),
+      'Content-Type: application/json',
+      'Content-Length: 2',
+    ], [])
+    expect(answer).toMatch(/^HTTP\/1\.1 401 /)
+    expect(answer).toContain('not enrolled')
+  })
+
+  it('reads at most 4 KiB for an enrolled key on a route that takes a small body', async () => {
+    const ack = await call(base, ann, {
+      method: 'POST',
+      path: ROUTES.ack,
+      body: padded(MAX_SMALL_BODY_BYTES),
+    })
+    expect(ack).toEqual({ status: 413, json: { error: 'body too large' } })
+  })
+
+  it('reads a large post of envelopes only from the check-in device', async () => {
+    const big = (viewer: string) => ({
+      envelopes: [{ viewer, stream: 1, sealed: 'a'.repeat(64 * 1024) }],
+    })
+    const posted = await call(base, device, { method: 'POST', path: ROUTES.envelopes, body: big(ann.key) })
+    expect(posted.status).toBe(200)
+    // A viewer, properly signed: held to the small limit.
+    const asViewer = await call(base, ann, { method: 'POST', path: ROUTES.envelopes, body: big(bill.key) })
+    expect(asViewer).toEqual({ status: 413, json: { error: 'body too large' } })
+  })
+
+  it('cuts a body that never says its length at the same 4 KiB', async () => {
+    // Chunked, with no Content-Length to refuse it on: the reading itself has to stop.
+    // Signed properly, so only the limit stands between it and the route; ended, so a
+    // limit that let it through would answer something other than 413 rather than hang.
+    const body = JSON.stringify(padded(5 * 1024))
+    const chunks: string[] = []
+    for (let at = 0; at < body.length; at += 1024) {
+      const piece = body.slice(at, at + 1024)
+      chunks.push(`${piece.length.toString(16)}\r\n${piece}\r\n`)
+    }
+    chunks.push('0\r\n\r\n')
+    const answer = await raw([
+      `POST ${ROUTES.ack} HTTP/1.1`,
+      'Host: relay',
+      ...signedHeaders(ann, { method: 'POST', path: ROUTES.ack, body, at: clock }),
+      'Content-Type: application/json',
+      'Transfer-Encoding: chunked',
+    ], chunks)
+    expect(answer).toMatch(/^HTTP\/1\.1 413 /)
+    expect(answer).toContain('body too large')
+  })
+
+  it('counts no bad signature at a closed route, so nobody is locked out of check-ins', async () => {
+    // Behind a reverse proxy every request has one address: counted here, a stranger
+    // could stop the household's own devices. Ann's real requests come from the same
+    // address as the forged ones.
+    for (let i = 0; i < MAX_FAILED_ATTEMPTS + 2; i += 1) {
+      const forged = await call(base, ann, {
+        method: 'POST',
+        path: ROUTES.ack,
+        body: { through: 1 },
+        signedBody: { through: 2 },
+      })
+      expect(forged.status).toBe(401)
+    }
+    expect((await fetchAs(ann)).status).toBe(200)
+    expect((await post([{ viewer: ann.key, stream: 1, sealed: sealed('one') }])).status).toBe(200)
+    // Nor do they count toward the open routes' limit: enrolment still answers on its
+    // merits, not "too many attempts".
+    const enrol = await call(base, stranger, {
+      method: 'POST',
+      path: ROUTES.enrol,
+      body: { token: 'n'.repeat(22), receiveKey: receiveKey() },
+    })
+    expect(enrol.status).not.toBe(429)
   })
 })
 

@@ -84,6 +84,14 @@ const newestKept = (times: number[]): number[] =>
     ? times.slice(-MAX_DELIVERIES_KEPT_PER_VIEWER)
     : times
 
+/**
+ * The relay's file is its own user's to read and no one else's (KV-226): it holds who is
+ * paired with whom and when each viewer fetched, the record T4 calls the most revealing in
+ * the system. Its temporary file the same, from before a byte is in it. POSIX only; see
+ * `replaceFile`.
+ */
+export const RELAY_FILE_MODE = 0o600
+
 interface ViewerEntry {
   /** Their X25519 key, which the check-in device seals to. Kept, never used here. */
   receiveKey: string
@@ -458,7 +466,7 @@ export function createRelayStore(path: string): RelayStore {
    */
   const write = async (next: RelayState): Promise<void> => {
     await mkdir(dirname(path), { recursive: true })
-    await replaceFile(path, JSON.stringify(next, null, 2))
+    await replaceFile(path, JSON.stringify(next, null, 2), RELAY_FILE_MODE)
     state = Promise.resolve(next)
   }
 
