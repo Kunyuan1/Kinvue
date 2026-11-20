@@ -30,7 +30,7 @@ import {
   type Person,
   type PersonTombstone,
 } from './people'
-import { replaceFile } from './replace'
+import { keepToOwnUser, OWN_USER_ONLY, replaceFile } from './replace'
 import type { SessionRecord, Tombstone } from './types'
 
 /**
@@ -746,7 +746,8 @@ async function write(path: string, data: FileShape, cipher: StoreCipher): Promis
   const text = seal
     ? JSON.stringify({ version: ENVELOPE_VERSION, sealed: cipher.seal(plain) }, null, 2)
     : plain
-  await replaceFile(path, text)
+  // Its own user's only (KV-257), from before a byte of it is written.
+  await replaceFile(path, text, OWN_USER_ONLY)
 }
 
 /**
@@ -829,6 +830,9 @@ async function setAside(path: string, now: Date): Promise<string> {
     // 'r+': Windows flushes only a file opened for writing.
     const copy = await open(candidate, 'r+')
     try {
+      // A copy takes the original's mode, which a build before KV-257 left as the
+      // umask made it. This one is the whole history, kept for someone to look at.
+      await copy.chmod(OWN_USER_ONLY)
       await copy.sync()
     } finally {
       await copy.close()
@@ -859,7 +863,8 @@ async function explainSetAside(path: string): Promise<void> {
         'look at. Kinvue does not read them again.',
         '',
       ].join('\n'),
-      { encoding: 'utf8', flag: 'wx' },
+      // Made here, so the mode holds (KV-257): it says what the files beside it are.
+      { encoding: 'utf8', flag: 'wx', mode: OWN_USER_ONLY },
     )
   } catch {
     /* already written, or not writable: the file set aside is what matters */
@@ -893,6 +898,11 @@ export function createJsonSessionStore(
    */
   const madeByUpgrade = new Map<string, Person>()
   let upgradeFailureLogged = false
+  /**
+   * Whether this store has brought a file from before KV-257 to `OWN_USER_ONLY`: once,
+   * on its first read, rather than at the next check-in, which may be a day away.
+   */
+  let keptToOwnUser = false
 
   /**
    * The history as it is now, a version-1 file upgraded and written first
@@ -910,6 +920,10 @@ export function createJsonSessionStore(
    * logged once, so one that persists is still seen (second review of #200).
    */
   const current = async (): Promise<FileShape> => {
+    if (!keptToOwnUser) {
+      keptToOwnUser = true
+      await keepToOwnUser(path)
+    }
     const data = await read(path, cipher)
     if (data.version !== UPGRADES_FROM) {
       madeByUpgrade.clear()

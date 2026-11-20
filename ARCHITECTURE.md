@@ -2439,6 +2439,16 @@ export (T16) is the same history outside even that boundary.
   Linux, `getSelectedStorageBackend()`, asked after the app's `ready` event — before it,
   the answer is `unknown` — and only a real keyring counts. On Windows and macOS,
   `isEncryptionAvailable()` after `ready` is the check.
+- **Every file of it is its own user's to read** (KV-257): `sessions.json`, a history set
+  aside and the note beside it, and `api-key.json` are written `0o600`, from before a byte
+  is in them, and a file from before is brought to that the first time it is read. That
+  matters most where the file stays plain — the history, and the household's key, in the
+  clear — but it holds either way. It narrows who on the same computer can read the file
+  to its own user, which the home directory usually did already; it does nothing against
+  that user, which is the case above. **POSIX only.** On Windows a mode sets at most the
+  read-only bit, and what holds is the profile folder `userData` sits in, readable by
+  that account and administrators. A mode that cannot be set is no reason to refuse to
+  open the file; its next write replaces it with one that is set.
 - **The same file, and two version numbers, named apart** (review of #186). The encrypted
   history is still `sessions.json`: an envelope with its own `version` and the sealed
   bytes. **The envelope's `version`** starts at 2, above every plain file a build before

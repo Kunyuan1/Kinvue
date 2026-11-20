@@ -1,6 +1,6 @@
 import { mkdir, readFile, unlink } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { replaceFile } from '@kinvue/core/session/replace'
+import { keepToOwnUser, OWN_USER_ONLY, replaceFile } from '@kinvue/core/session/replace'
 import type { StoreCipher } from '@kinvue/core/session/store'
 import type { KeyStatus } from '../shared/api-key'
 
@@ -106,8 +106,9 @@ export function createApiKeyStore(path: string, cipher: KeyCipher): ApiKeyStore 
 
   const write = async (contents: KeyFile): Promise<void> => {
     await mkdir(dirname(path), { recursive: true })
-    // Flushed before it is renamed into place, as the history is (KV-223).
-    await replaceFile(path, JSON.stringify(contents))
+    // Flushed before it is renamed into place, as the history is (KV-223), and its own
+    // user's only (KV-257): where there is no key store, the key is in it in plain text.
+    await replaceFile(path, JSON.stringify(contents), OWN_USER_ONLY)
   }
 
   const seal = async (value: string): Promise<void> => {
@@ -118,6 +119,8 @@ export function createApiKeyStore(path: string, cipher: KeyCipher): ApiKeyStore 
 
   return {
     async load() {
+      // A file from before KV-257, as the umask left it, made its own user's now.
+      await keepToOwnUser(path)
       let text: string
       try {
         text = await readFile(path, 'utf8')
