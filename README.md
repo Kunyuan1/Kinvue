@@ -448,9 +448,11 @@ KINVUE_RELAY_DATA=/var/lib/kinvue/relay.json node main.js start
   a viewer trying to join gets `429` until then. That is deliberate — the routes that let
   someone in fail closed — and it touches only those two. Check-ins, fetches and
   everything else enrolled devices do are never locked out this way.
-- **What a stranger can make it read is small.** A signature is checked against the
-  body, so the body is read first: 4 KiB at most, on every route but the check-in
-  device's post of envelopes, which is read in full only under the device's key.
+- **A forged request costs it no body at all.** A request carries its body's hash in a
+  signed header (`kinvue-body-sha256`), so the signature is checked before a byte of the
+  body is read, and the body then has to match it. Under any key, the check-in device's
+  included: that one is given to every viewer, so it is no secret. A key that signed is
+  then read 4 KiB at most, except the check-in device posting envelopes.
 - **Its log is one JSON line a request** on standard output — method, route, status,
   time — with no key, no body, no address. What a person should know goes to standard
   error.

@@ -33,6 +33,30 @@ import { createRelayStore, DeviceEnrolledError, RELAY_FILE_MODE } from './store'
  *   either stream does not stop it (`writerTo`).
  */
 
+/**
+ * What a relay started before KV-226 may have left readable by every user here, dealt
+ * with at start rather than at the next write, which on a quiet relay could be days.
+ *
+ * - **The data file** is brought to `RELAY_FILE_MODE`. One this user may read but does
+ *   not own — provisioned by someone else, say — cannot be: that is said, and the relay
+ *   starts anyway, as it did before, since its first write replaces the file with one
+ *   that is its own (review of #256). None yet is the first start.
+ * - **A temporary file a crash left** holds the whole state, sealed envelopes included,
+ *   under a name nothing reads, expires or removes. The lock is held, so nothing is
+ *   writing it: it is removed.
+ */
+async function private_(dataFile: string, out: Output): Promise<void> {
+  await rm(`${dataFile}.tmp`, { force: true })
+  await chmod(dataFile, RELAY_FILE_MODE).catch((err: NodeJS.ErrnoException) => {
+    if (err.code === 'ENOENT') return
+    out.tell(
+      `Could not make ${dataFile} readable by this user only (${err.code ?? err.message}). ` +
+        'It is replaced by a file of its own at its next write; until then, check who can ' +
+        'read it.',
+    )
+  })
+}
+
 /** Where the relay keeps its file, and where it listens. */
 export interface RelayConfig {
   dataFile: string
@@ -174,6 +198,9 @@ async function lock(dataFile: string, now: () => number): Promise<() => Promise<
   const aside = `${path}.stale.${process.pid}`
   const ifUnheld = `If no relay is running on ${dataFile}, delete ${path} and start again.`
   // Linked into place, so the lock is this file, mode and all: its own user's (KV-226).
+  // Removed first, since a mode is set only on a file being made, and one left by a relay
+  // killed before KV-226 under a process id since reused would keep its own (review of #256).
+  await rm(ours, { force: true })
   await writeFile(ours, mine, { encoding: 'utf8', mode: RELAY_FILE_MODE })
   try {
     for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -294,12 +321,7 @@ export async function startRelay(
 ): Promise<Running> {
   const unlock = await lock(config.dataFile, now)
   try {
-    // A file written before KV-226 was left as the umask made it, often readable by every
-    // user here. Brought to its own user's now, not at its next write, which on a quiet
-    // relay could be days. None yet is the first start.
-    await chmod(config.dataFile, RELAY_FILE_MODE).catch((err: NodeJS.ErrnoException) => {
-      if (err.code !== 'ENOENT') throw err
-    })
+    await private_(config.dataFile, out)
     const store = createRelayStore(config.dataFile)
     // Read now, so a file it cannot read stops it before it listens.
     await store.roleOf('')

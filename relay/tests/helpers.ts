@@ -62,12 +62,37 @@ export async function call(base: string, who: Identity, request: Call): Promise<
       [HEADERS.at]: String(at),
       [HEADERS.nonce]: nonce,
       [HEADERS.signature]: signature,
+      // What was signed, which is the real body's hash unless a test altered the body.
+      [HEADERS.bodyHash]: hashOf(Buffer.from(signedText, 'utf8')),
       ...(text === '' ? {} : { 'content-type': 'application/json' }),
     },
     body: text === '' ? undefined : text,
   })
   const body = await res.text()
   return { status: res.status, json: body === '' ? null : JSON.parse(body) }
+}
+
+/**
+ * The signed headers for a request sent by hand, as `call` sends them: for a test that
+ * needs a raw socket, to cut a body short or send it in chunks. `signer` signs; by default
+ * the key that `key` names.
+ */
+export function signedHeaders(
+  key: Identity,
+  request: { method: string; path: string; body: string; at: number },
+  signer: Identity = key,
+): string[] {
+  const nonce = randomBytes(16).toString('base64url')
+  const bodyHash = hashOf(Buffer.from(request.body, 'utf8'))
+  const bytes = requestBytes({ ...request, nonce, bodyHash })
+  const signature = sign(null, Buffer.from(bytes, 'utf8'), signer.privateKey).toString('base64url')
+  return [
+    `${HEADERS.key}: ${key.key}`,
+    `${HEADERS.at}: ${String(request.at)}`,
+    `${HEADERS.nonce}: ${nonce}`,
+    `${HEADERS.signature}: ${signature}`,
+    `${HEADERS.bodyHash}: ${bodyHash}`,
+  ]
 }
 
 /** `server` listening on a free port on loopback, and its base URL. */

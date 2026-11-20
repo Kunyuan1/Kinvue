@@ -39,13 +39,25 @@ export const ENVELOPE_RETENTION_MS = 14 * DAY_MS
 /** How long the relay keeps when each viewer fetched: #31's access-history window. */
 export const DELIVERY_RETENTION_MS = 30 * DAY_MS
 
-/** The headers a signed request carries. Lower case, as Node reads them. */
+/**
+ * The headers a signed request carries. Lower case, as Node reads them.
+ *
+ * `bodyHash` is the SHA-256 of the body's bytes, in hex — the same value the signature is
+ * over (`requestBytes`), sent beside it so the relay can check the signature before it
+ * reads a byte of the body (KV-226, review of #256). A request without one is unsigned. A
+ * body that does not hash to it is refused as a bad signature, once read.
+ */
 export const HEADERS = {
   key: 'kinvue-key',
   at: 'kinvue-at',
   nonce: 'kinvue-nonce',
   signature: 'kinvue-signature',
+  bodyHash: 'kinvue-body-sha256',
 } as const
+
+/** A body's SHA-256, in hex, as `HEADERS.bodyHash` carries it. */
+export const isBodyHash = (value: unknown): value is string =>
+  typeof value === 'string' && /^[0-9a-f]{64}$/.test(value)
 
 export const ROUTES = {
   /** POST by the check-in device: envelopes into viewers' mailboxes. GET by a viewer. */
@@ -301,8 +313,8 @@ export const MAX_BODY_BYTES = MAX_ENVELOPES_PER_POST * (MAX_SEALED_CHARS + ENVEL
 /**
  * The largest body the relay reads anywhere but the check-in device's post of envelopes
  * (KV-226). Every other body is a token, a key or a stream number — under 200 bytes — and
- * most routes take none. Read before the signature can be checked, so this is what a
- * request with any signature at all can make the relay read: 4 KiB, not 4 MB.
+ * most routes take none. A body is read only once its signature has checked out, so this
+ * bounds what a key the relay knows can make it read on a route that needs little.
  */
 export const MAX_SMALL_BODY_BYTES = 4 * 1024
 

@@ -11,7 +11,6 @@ import {
 import {
   createRelayStore,
   NewerRelayFileError,
-  RELAY_FILE_MODE,
   RELAY_FILE_VERSION,
   UnreadableRelayFileError,
 } from '../store'
@@ -549,7 +548,6 @@ describe('the file', () => {
       const store = await enrolled()
       await store.post([{ viewer: ann, stream: 1, sealed: sealed('one') }], T0)
       expect((await stat(path)).mode & 0o777).toBe(0o600)
-      expect(RELAY_FILE_MODE).toBe(0o600)
     },
   )
 
