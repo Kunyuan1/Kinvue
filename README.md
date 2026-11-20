@@ -427,13 +427,30 @@ KINVUE_RELAY_DATA=/var/lib/kinvue/relay.json node main.js start
 
 - **The check-in device's one-time token** is issued once the relay is listening, while
   no device is enrolled, and is valid for 15 minutes. It is written to `<data>.token`,
-  readable by the relay's own user only, and the console says where; it is shown itself
-  only to someone at a terminal, never into a log. One is outstanding at a time. Missed
-  the window? `kill -USR2 <pid>` has the running relay issue another, or restart it. Once
-  a device is enrolled, no token enrols another (replacing one is #45's recovery card).
+  readable by the relay's own user only (not on Windows: see below), and the console
+  says where; it is shown itself only to someone at a terminal, never into a log. One is
+  outstanding at a time. Missed the window? `kill -USR2 <pid>` has the running relay
+  issue another, or restart it. Once a device is enrolled, no token enrols another
+  (replacing one is #45's recovery card).
 - **One relay per file:** a second one started on the same file refuses. A lock left by a
   crash or a power cut is taken over; one it cannot read is not, and the message says
   what to do.
+- **Its files are readable by the relay's own user only** (KV-226): the data file, its
+  temporary file, its lock and the token, `0o600`, with a data file from before brought
+  to that at start. The data file is who is paired with whom and when each viewer
+  fetched. **On Windows none of this holds:** a file mode there sets at most read-only,
+  so who can read these files is down to the folder they are in. Put it somewhere only
+  the relay's user can open.
+- **Behind a reverse proxy, failed guesses lock everyone out for a while.** Ten failed
+  attempts at enrolment or at joining a pairing, from one address, inside ten minutes,
+  close those two routes to that address until the window passes. Behind a proxy every
+  request has the proxy's address, so ten failures from anyone close them for everyone:
+  a viewer trying to join gets `429` until then. That is deliberate — the routes that let
+  someone in fail closed — and it touches only those two. Check-ins, fetches and
+  everything else enrolled devices do are never locked out this way.
+- **What a stranger can make it read is small.** A signature is checked against the
+  body, so the body is read first: 4 KiB at most, on every route but the check-in
+  device's post of envelopes, which is read in full only under the device's key.
 - **Its log is one JSON line a request** on standard output — method, route, status,
   time — with no key, no body, no address. What a person should know goes to standard
   error.

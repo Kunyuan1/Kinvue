@@ -291,8 +291,20 @@ export const MAX_DELIVERIES_KEPT_PER_VIEWER = 256
 /** What one envelope's JSON adds around its sealed bytes: its key, stream and quoting. */
 const ENVELOPE_JSON_CHARS = 128
 
-/** The largest body the relay reads: the largest post the two limits above allow. */
+/**
+ * The largest body the relay reads: the largest post the two limits above allow. Only for
+ * the check-in device's `POST /v1/envelopes`; every other body is held to
+ * `MAX_SMALL_BODY_BYTES`.
+ */
 export const MAX_BODY_BYTES = MAX_ENVELOPES_PER_POST * (MAX_SEALED_CHARS + ENVELOPE_JSON_CHARS) + 64
+
+/**
+ * The largest body the relay reads anywhere but the check-in device's post of envelopes
+ * (KV-226). Every other body is a token, a key or a stream number — under 200 bytes — and
+ * most routes take none. Read before the signature can be checked, so this is what a
+ * request with any signature at all can make the relay read: 4 KiB, not 4 MB.
+ */
+export const MAX_SMALL_BODY_BYTES = 4 * 1024
 
 /**
  * How long the relay gives one request to arrive, whole. A minute: every connection that

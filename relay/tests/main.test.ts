@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -290,6 +290,18 @@ describe('starting it', () => {
   const lockPath = () => `${config.dataFile}.lock`
   const holder = (pid: number, at = bootedAt(Date.now())) => JSON.stringify({ pid, bootedAt: at })
   const heldBy = async () => JSON.parse(await readFile(lockPath(), 'utf8')) as { pid: number }
+
+  it.skipIf(process.platform === 'win32')(
+    'holds its lock for its own user only, and brings a data file from before to that (KV-226)',
+    async () => {
+      // Written before KV-226, as the umask left it: readable by every user.
+      await writeFile(config.dataFile, '', { mode: 0o644 })
+      await chmod(config.dataFile, 0o644)
+      await start()
+      expect((await stat(lockPath())).mode & 0o777).toBe(0o600)
+      expect((await stat(config.dataFile)).mode & 0o777).toBe(0o600)
+    },
+  )
 
   it('takes over a lock left by a relay that is no longer running', async () => {
     // A process id nothing has: a relay that crashed.

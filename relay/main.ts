@@ -1,4 +1,4 @@
-import { link, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { chmod, link, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { uptime } from 'node:os'
 import { isAbsolute } from 'node:path'
 import { isIP } from 'node:net'
@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { pathToFileURL } from 'node:url'
 import { ENROL_TOKEN_TTL_MS } from '@kinvue/core/sync/protocol'
 import { createRelayServer } from './server'
-import { createRelayStore, DeviceEnrolledError } from './store'
+import { createRelayStore, DeviceEnrolledError, RELAY_FILE_MODE } from './store'
 
 /**
  * Running the household's relay (KV-39): `npm run relay`, configured from the
@@ -23,6 +23,9 @@ import { createRelayStore, DeviceEnrolledError } from './store'
  *   token lasts `ENROL_TOKEN_TTL_MS`; restarting prints another.
  * - **One relay per file.** A lock beside the file says which process holds it, so a
  *   second relay started on the same file refuses rather than overwriting the first's.
+ * - **Its files are its own user's** (KV-226): the data file, its temporary file, its lock
+ *   and the token are `0o600`, and a data file from before is brought to that at start.
+ *   POSIX only: on Windows a mode does not say who may read a file.
  * - **Its log is one JSON line a request** on standard output — method, route, status,
  *   time; never a key, a body or an address (`relay/server.ts`).
  * - **Its own failures are told on standard error** (KV-225), under the same rule: a
@@ -170,7 +173,8 @@ async function lock(dataFile: string, now: () => number): Promise<() => Promise<
   const ours = `${path}.${process.pid}`
   const aside = `${path}.stale.${process.pid}`
   const ifUnheld = `If no relay is running on ${dataFile}, delete ${path} and start again.`
-  await writeFile(ours, mine, 'utf8')
+  // Linked into place, so the lock is this file, mode and all: its own user's (KV-226).
+  await writeFile(ours, mine, { encoding: 'utf8', mode: RELAY_FILE_MODE })
   try {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
@@ -290,6 +294,12 @@ export async function startRelay(
 ): Promise<Running> {
   const unlock = await lock(config.dataFile, now)
   try {
+    // A file written before KV-226 was left as the umask made it, often readable by every
+    // user here. Brought to its own user's now, not at its next write, which on a quiet
+    // relay could be days. None yet is the first start.
+    await chmod(config.dataFile, RELAY_FILE_MODE).catch((err: NodeJS.ErrnoException) => {
+      if (err.code !== 'ENOENT') throw err
+    })
     const store = createRelayStore(config.dataFile)
     // Read now, so a file it cannot read stops it before it listens.
     await store.roleOf('')

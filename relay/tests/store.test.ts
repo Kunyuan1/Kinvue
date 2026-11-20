@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -11,6 +11,7 @@ import {
 import {
   createRelayStore,
   NewerRelayFileError,
+  RELAY_FILE_MODE,
   RELAY_FILE_VERSION,
   UnreadableRelayFileError,
 } from '../store'
@@ -538,6 +539,19 @@ describe('the file', () => {
     const folder = process.platform === 'win32' ? [] : [`sync ${basename(dir)}`]
     expect(disk.events).toEqual([`sync ${tmp}`, `rename ${tmp}`, ...folder])
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'writes its file for its own user only, a temporary file left by a crash included (KV-226)',
+    async () => {
+      // Left by a crash, readable by everyone: opened as it is, so it has to be set.
+      await writeFile(`${path}.tmp`, 'half', { mode: 0o666 })
+      await chmod(`${path}.tmp`, 0o666)
+      const store = await enrolled()
+      await store.post([{ viewer: ann, stream: 1, sealed: sealed('one') }], T0)
+      expect((await stat(path)).mode & 0o777).toBe(0o600)
+      expect(RELAY_FILE_MODE).toBe(0o600)
+    },
+  )
 
   it('leaves no copy of the state behind when a write fails (review of #216)', async () => {
     // A temporary file left by a failed write holds every sealed envelope, and retention

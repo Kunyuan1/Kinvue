@@ -9,10 +9,17 @@ import {
   ENDED,
   HEADERS,
   MAX_BODY_BYTES,
+  MAX_SMALL_BODY_BYTES,
   REQUEST_WINDOW_MS,
   ROUTES,
 } from '@kinvue/core/sync/protocol'
-import { createRelayServer, FAILURE_WORDS, safely, wordsOf } from '../server'
+import {
+  createRelayServer,
+  FAILURE_WORDS,
+  MAX_FAILED_ATTEMPTS,
+  safely,
+  wordsOf,
+} from '../server'
 import { createRelayStore, type RelayStore } from '../store'
 import { call, identity, listening, receiveKey, sealed, type Identity } from './helpers'
 
@@ -452,6 +459,116 @@ describe('signed requests', () => {
     const res = await fetch(base + ROUTES.envelopes, { method: 'POST', body: big })
     expect(res.status).toBe(401)
     expect(await res.json()).toEqual({ error: 'not signed' })
+  })
+})
+
+describe('what a bad signature can cost the relay (KV-226)', () => {
+  /** A body of `bytes` bytes, as JSON. */
+  const padded = (bytes: number) => ({ through: 1, pad: 'a'.repeat(bytes) })
+
+  it('reads at most 4 KiB on a route that takes a small body, signed or not', async () => {
+    // Ann is enrolled, and signs this one properly: the limit is the route's.
+    const ack = await call(base, ann, {
+      method: 'POST',
+      path: ROUTES.ack,
+      body: padded(MAX_SMALL_BODY_BYTES),
+    })
+    expect(ack).toEqual({ status: 413, json: { error: 'body too large' } })
+    // A stranger, signed over nothing, gets no further.
+    const stranger_ = await call(base, stranger, {
+      method: 'POST',
+      path: ROUTES.ack,
+      body: padded(MAX_SMALL_BODY_BYTES),
+      signedBody: {},
+    })
+    expect(stranger_).toEqual({ status: 413, json: { error: 'body too large' } })
+  })
+
+  it('reads a large post of envelopes only under the check-in device’s key', async () => {
+    const big = (viewer: string) => ({
+      envelopes: [{ viewer, stream: 1, sealed: 'a'.repeat(64 * 1024) }],
+    })
+    // The device: read in full, and taken.
+    const posted = await call(base, device, {
+      method: 'POST',
+      path: ROUTES.envelopes,
+      body: big(ann.key),
+    })
+    expect(posted.status).toBe(200)
+    // A viewer, properly signed: held to the small limit before anything else is asked.
+    const asViewer = await call(base, ann, {
+      method: 'POST',
+      path: ROUTES.envelopes,
+      body: big(bill.key),
+    })
+    expect(asViewer).toEqual({ status: 413, json: { error: 'body too large' } })
+    // A key nobody enrolled gets the same answer as a viewer's: it says nothing of which.
+    const asStranger = await call(base, stranger, {
+      method: 'POST',
+      path: ROUTES.envelopes,
+      body: big(bill.key),
+    })
+    expect(asStranger).toEqual(asViewer)
+  })
+
+  it('cuts a body that never says its length at the same 4 KiB', async () => {
+    // Chunked, with no Content-Length to refuse it on: the reading itself has to stop.
+    const { port } = new URL(base)
+    const head = [
+      `POST ${ROUTES.ack} HTTP/1.1`,
+      'Host: relay',
+      `${HEADERS.key}: ${stranger.key}`,
+      `${HEADERS.at}: ${String(clock)}`,
+      `${HEADERS.nonce}: ${randomBytes(16).toString('base64url')}`,
+      `${HEADERS.signature}: ${sign(null, Buffer.from('nothing'), stranger.privateKey).toString('base64url')}`,
+      'Transfer-Encoding: chunked',
+      'Connection: close',
+    ].join('\r\n')
+    const chunk = 'a'.repeat(1024)
+    const answer = await new Promise<string>((resolve, reject) => {
+      let said = ''
+      const socket = connect(Number(port), '127.0.0.1', () => {
+        socket.write(`${head}\r\n\r\n`)
+        // Five chunks of 1 KiB: past the limit, and never ended.
+        for (let i = 0; i < 5; i += 1) socket.write(`400\r\n${chunk}\r\n`)
+      })
+      socket.on('data', (d: Buffer) => {
+        said += d.toString('utf8')
+        if (said.includes('body too large') || said.includes('not signed')) {
+          socket.destroy()
+          resolve(said)
+        }
+      })
+      socket.on('close', () => resolve(said))
+      socket.on('error', reject)
+    })
+    expect(answer).toMatch(/^HTTP\/1\.1 413 /)
+    expect(answer).toContain('body too large')
+  })
+
+  it('counts no bad signature at a closed route, so nobody is locked out of check-ins', async () => {
+    // Behind a reverse proxy every request has one address: counted here, a stranger
+    // could stop the household's own devices. Ann's real requests come from the same
+    // address as the stranger's bad ones.
+    for (let i = 0; i < MAX_FAILED_ATTEMPTS + 2; i += 1) {
+      const forged = await call(base, ann, {
+        method: 'POST',
+        path: ROUTES.ack,
+        body: { through: 1 },
+        signedBody: { through: 2 },
+      })
+      expect(forged.status).toBe(401)
+    }
+    expect((await fetchAs(ann)).status).toBe(200)
+    expect((await post([{ viewer: ann.key, stream: 1, sealed: sealed('one') }])).status).toBe(200)
+    // Nor do they count toward the open routes' limit: enrolment still answers on its
+    // merits, not "too many attempts".
+    const enrol = await call(base, stranger, {
+      method: 'POST',
+      path: ROUTES.enrol,
+      body: { token: 'n'.repeat(22), receiveKey: receiveKey() },
+    })
+    expect(enrol.status).not.toBe(429)
   })
 })
 

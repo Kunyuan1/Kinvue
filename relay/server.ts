@@ -21,6 +21,7 @@ import {
   isPairingId,
   isSignature,
   MAX_BODY_BYTES,
+  MAX_SMALL_BODY_BYTES,
   requestBytes,
   REQUEST_TIMEOUT_MS,
   REQUEST_WINDOW_MS,
@@ -80,6 +81,16 @@ import type { RelayStore, Role } from './store'
  * the caller's and tells nothing.
  *
  * Errors say what was wrong with the request in a few words, and never repeat its body.
+ *
+ * **What a bad signature can cost it is bounded by size, not by counting** (KV-226). A
+ * signature is checked against the body, so the body is read first. Only the check-in
+ * device posting envelopes gets `MAX_BODY_BYTES`, about 4 MB, and only when the key it
+ * claims is the device's; every other request is held to `MAX_SMALL_BODY_BYTES`, 4 KiB.
+ * Bad signatures are counted against an address only at the two open routes, where a
+ * stranger is guessing at a way in. Counted everywhere, a stranger behind the same reverse
+ * proxy as the household — every request has the proxy's address — could lock the
+ * household's own devices out of carrying check-ins, which is not the fail-closed choice
+ * the open routes make: refusing someone in is safe, refusing everyone's check-ins is not.
  */
 
 /** Failed attempts at the two open routes one address may make inside the window. */
@@ -299,13 +310,13 @@ const send = (res: ServerResponse, status: number, body?: unknown): void => {
   res.end(text)
 }
 
-const readBody = (req: IncomingMessage): Promise<Buffer> =>
+const readBody = (req: IncomingMessage, limit: number): Promise<Buffer> =>
   new Promise((resolve, reject) => {
     const chunks: Buffer[] = []
     let size = 0
     req.on('data', (chunk: Buffer) => {
       size += chunk.length
-      if (size > MAX_BODY_BYTES) {
+      if (size > limit) {
         // Answered, then the rest is read and dropped, so the answer reaches the sender
         // rather than a connection cut under it.
         req.removeAllListeners('data')
@@ -435,9 +446,10 @@ export function createRelayServer({
 
   /**
    * What a request says about who sent it and when, checked before a byte of its body is
-   * read: a request with no signature, or from outside the time window, or announcing a
-   * body over the limit, is refused without the relay holding anything for it (review of
-   * #216). The signature itself needs the body's hash, so it is checked after, in `signer`.
+   * read: a request with no signature, or from outside the time window, is refused without
+   * the relay holding anything for it (review of #216). The signature itself needs the
+   * body's hash, so it is checked after, in `signer`; how much body is read for it is
+   * `bodyLimit`'s.
    */
   function claim(req: IncomingMessage): Claim {
     const key = header(req, HEADERS.key)
@@ -452,9 +464,21 @@ export function createRelayServer({
     if (!Number.isSafeInteger(at) || Math.abs(clock - at) > REQUEST_WINDOW_MS) {
       throw new Refusal(401, 'outside the time window')
     }
-    const length = Number(header(req, 'content-length') ?? 0)
-    if (length > MAX_BODY_BYTES) throw new Refusal(413, 'body too large')
     return { key, at, nonce, signature, clock }
+  }
+
+  /**
+   * How much body is read for a request, before its signature can be checked (KV-226):
+   * `MAX_BODY_BYTES` for envelopes posted under the check-in device's key, and
+   * `MAX_SMALL_BODY_BYTES` for everything else. Decided by the key the request claims, so a
+   * stranger with any signature is read 4 KiB, and only someone holding the device's public
+   * key can make the relay read more — which a forged signature then fails, as before. The
+   * answer is the same for every key that is not the device's, so it says nothing about
+   * whether a key is enrolled.
+   */
+  async function bodyLimit(req: IncomingMessage, path: string, key: string): Promise<number> {
+    const posting = req.method === 'POST' && path === ROUTES.envelopes
+    return posting && (await store.roleOf(key)) === 'device' ? MAX_BODY_BYTES : MAX_SMALL_BODY_BYTES
   }
 
   /**
@@ -511,7 +535,11 @@ export function createRelayServer({
     let proven: { key: string; role: Role | null; body: Buffer }
     try {
       const claimed = claim(req)
-      const body = await readBody(req)
+      const limit = await bodyLimit(req, path, claimed.key)
+      if (Number(header(req, 'content-length') ?? 0) > limit) {
+        throw new Refusal(413, 'body too large')
+      }
+      const body = await readBody(req, limit)
       proven = { ...(await signer(req, claimed, body, open)), body }
     } catch (err) {
       if (open && err instanceof Refusal && err.reason === BAD_SIGNATURE) {
