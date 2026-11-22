@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { mkdir, readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
-import { replaceFile } from '@kinvue/core/session/replace'
+import { OWN_USER_ONLY, replaceFile } from '@kinvue/core/session/replace'
 import {
   DELIVERY_RETENTION_MS,
   ENROL_TOKEN_TTL_MS,
@@ -90,7 +90,7 @@ const newestKept = (times: number[]): number[] =>
  * the system. Its temporary file the same, from before a byte is in it. POSIX only; see
  * `replaceFile`.
  */
-export const RELAY_FILE_MODE = 0o600
+export const RELAY_FILE_MODE = OWN_USER_ONLY
 
 interface ViewerEntry {
   /** Their X25519 key, which the check-in device seals to. Kept, never used here. */

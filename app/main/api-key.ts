@@ -119,8 +119,10 @@ export function createApiKeyStore(path: string, cipher: KeyCipher): ApiKeyStore 
 
   return {
     async load() {
-      // A file from before KV-257, as the umask left it, made its own user's now.
-      await keepToOwnUser(path)
+      // A file from before KV-257, as the umask left it, made its own user's now, and a
+      // temporary file a crash left removed (`keepToOwnUser`). Said if it cannot be.
+      const said = await keepToOwnUser(path)
+      if (said !== null) console.error(said)
       let text: string
       try {
         text = await readFile(path, 'utf8')

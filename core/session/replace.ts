@@ -1,4 +1,4 @@
-import { chmod, open, rename, unlink } from 'node:fs/promises'
+import { chmod, open, rename, rm, unlink } from 'node:fs/promises'
 import { dirname } from 'node:path'
 
 /**
@@ -34,31 +34,12 @@ import { dirname } from 'node:path'
  * everything the file would have — a key, every sealed envelope — under a name
  * nothing else reads, removes or expires.
  */
-/**
- * Readable and writable by the file's own user, and nobody else (KV-257): the mode for
- * a file holding the history, the household's key, or the relay's state. POSIX only; on
- * Windows a mode sets at most the read-only bit, and who may read a file under a
- * profile is the profile's to decide.
- */
-export const OWN_USER_ONLY = 0o600
-
-/**
- * Brings a file a build before KV-257 left as the umask made it — often readable by
- * every user — to `OWN_USER_ONLY`, without waiting for its next write. Asked, never
- * required: a file that is not there is the first run, and one this user cannot change
- * the mode of is no reason to refuse to open it. Its next write replaces it with one
- * that is `OWN_USER_ONLY`.
- */
-export async function keepToOwnUser(path: string): Promise<void> {
-  await chmod(path, OWN_USER_ONLY).catch(() => undefined)
-}
-
 export async function replaceFile(path: string, text: string, mode?: number): Promise<void> {
   const tmp = `${path}.tmp`
   try {
     const file = await open(tmp, 'w', mode)
     try {
-      if (mode !== undefined) await file.chmod(mode)
+      if (mode !== undefined) await setMode(file, mode)
       await file.writeFile(text, 'utf8')
       await file.sync()
     } finally {
@@ -70,6 +51,70 @@ export async function replaceFile(path: string, text: string, mode?: number): Pr
     throw err
   }
   await flushFolder(dirname(path))
+}
+
+/**
+ * Readable and writable by the file's own user, and nobody else (KV-257): the mode for
+ * the history, the household's key, and the relay's state alike. POSIX only; on Windows
+ * a mode sets at most the read-only bit, and who may read a file under a profile is the
+ * profile's to decide.
+ */
+export const OWN_USER_ONLY = 0o600
+
+/**
+ * The errors that mean a file system keeps no such mode — FAT and exFAT on Linux under
+ * their default mount, some network shares — rather than that something went wrong.
+ */
+const NO_MODES_HERE = new Set(['EPERM', 'ENOTSUP', 'EOPNOTSUPP'])
+
+/**
+ * `mode` on an open file, where the file system keeps one (review of #258). Where it
+ * keeps none, a write goes ahead without it: the mode a new file was opened with is
+ * already all such a file system will hold, and a history on a USB stick that refused
+ * every check-in for a mode it cannot keep would be the wrong way round. Anything else
+ * is a failure, and fails the write.
+ */
+export async function setMode(
+  file: { chmod: (mode: number) => Promise<void> },
+  mode: number,
+): Promise<void> {
+  try {
+    await file.chmod(mode)
+  } catch (err) {
+    if (!NO_MODES_HERE.has((err as NodeJS.ErrnoException).code ?? '')) throw err
+  }
+}
+
+/**
+ * What a build before KV-226 or KV-257 may have left readable by every user, made its
+ * own user's now rather than at the next write, which may be days away or never.
+ * The one policy for the relay, the history and the key alike (review of #258).
+ *
+ * - **A temporary file a crash left** holds the whole file — the history, a key, every
+ *   sealed envelope — under a name nothing reads, expires or removes. Each caller is the
+ *   one process writing `path` (KV-222, the relay's lock), and runs this before its
+ *   first write, so nothing is writing it: it is removed.
+ * - **The file** is brought to `OWN_USER_ONLY`.
+ *
+ * Asked, never required: a file not there is the first run, and one this user may read
+ * but not change the mode of — owned by another account, restored as root — is no
+ * reason to refuse to open it; its next write replaces it with one of its own. That is
+ * returned, in words, for the caller to say where it says things; null when there is
+ * nothing to say.
+ */
+export async function keepToOwnUser(path: string): Promise<string | null> {
+  await rm(`${path}.tmp`, { force: true }).catch(() => undefined)
+  try {
+    await chmod(path, OWN_USER_ONLY)
+    return null
+  } catch (err) {
+    const { code, message } = err as NodeJS.ErrnoException
+    if (code === 'ENOENT') return null
+    return (
+      `Could not make ${path} readable by this user only (${code ?? message}). It is ` +
+      'replaced by a file of its own at its next write; until then, check who can read it.'
+    )
+  }
 }
 
 /**

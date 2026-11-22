@@ -2441,14 +2441,19 @@ export (T16) is the same history outside even that boundary.
   `isEncryptionAvailable()` after `ready` is the check.
 - **Every file of it is its own user's to read** (KV-257): `sessions.json`, a history set
   aside and the note beside it, and `api-key.json` are written `0o600`, from before a byte
-  is in them, and a file from before is brought to that the first time it is read. That
-  matters most where the file stays plain — the history, and the household's key, in the
-  clear — but it holds either way. It narrows who on the same computer can read the file
-  to its own user, which the home directory usually did already; it does nothing against
-  that user, which is the case above. **POSIX only.** On Windows a mode sets at most the
-  read-only bit, and what holds is the profile folder `userData` sits in, readable by
-  that account and administrators. A mode that cannot be set is no reason to refuse to
-  open the file; its next write replaces it with one that is set.
+  is in them. What an earlier build left is dealt with the first time each is read: the
+  history, the histories set aside and their note are brought to `0o600`, and a
+  temporary file a crash left — the whole history, or the key — is removed (review of
+  #258). That matters most where the file stays plain — the history, and the household's
+  key, in the clear — but it holds either way. It narrows who on the same computer can
+  read the file to its own user, which the home directory usually did already; it does
+  nothing against that user, which is the case above. **POSIX only.** On Windows a mode
+  sets at most the read-only bit, and what holds is the profile folder `userData` sits
+  in, readable by that account and administrators. **A mode that cannot be set is no
+  reason to refuse:** a file system that keeps none — FAT on a USB stick — still saves
+  every check-in, and a file owned by another account still opens, with a line in the
+  log saying it is not private; its next write replaces it with one of its own. The
+  relay follows the same policy, through the same helper (`keepToOwnUser`).
 - **The same file, and two version numbers, named apart** (review of #186). The encrypted
   history is still `sessions.json`: an envelope with its own `version` and the sealed
   bytes. **The envelope's `version`** starts at 2, above every plain file a build before

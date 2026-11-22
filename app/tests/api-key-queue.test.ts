@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { chmod, mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { createApiKeyStore, type KeyCipher } from '../main/api-key'
@@ -30,6 +30,7 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       file.chmod = async (mode: string | number): Promise<void> => {
         await chmod(mode)
         modes.asked.push(`${basename(String(args[0]))} ${Number(mode).toString(8)}`)
+        disk.events.push(`chmod ${basename(String(args[0]))}`)
       }
       const sync = file.sync.bind(file)
       file.sync = async (): Promise<void> => {
@@ -63,6 +64,8 @@ const cipher = (state: { landed: boolean }): KeyCipher => ({
 const dirs: string[] = []
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((d) => rm(d, { recursive: true, force: true })))
+  // Each test's own, never an earlier test's (review of #258).
+  modes.asked.length = 0
 })
 
 describe('the key store writes one at a time', () => {
@@ -92,7 +95,12 @@ describe('the key store writes one at a time', () => {
     await store.set('ss-live-flushed-key-0000')
     // Then the folder, where it can be flushed; Windows has no such flush.
     const folder = process.platform === 'win32' ? [] : [`sync ${basename(dir)}`]
-    expect(disk.events).toEqual(['sync api-key.json.tmp', 'rename api-key.json.tmp', ...folder])
+    expect(disk.events).toEqual([
+      'chmod api-key.json.tmp',
+      'sync api-key.json.tmp',
+      'rename api-key.json.tmp',
+      ...folder,
+    ])
   })
 
   it('leaves no copy of the key behind when a save fails (review of #247)', async () => {
@@ -110,6 +118,16 @@ describe('the key store writes one at a time', () => {
 })
 
 describe('who may read the key file (KV-257)', () => {
+  it('removes a temporary file a crash left as it loads (review of #258)', async () => {
+    // Where there is no key store, the key is in it in plain text.
+    const dir = await mkdtemp(join(tmpdir(), 'kinvue-keymode-'))
+    dirs.push(dir)
+    const path = join(dir, 'api-key.json')
+    await writeFile(`${path}.tmp`, '{"key":"ss-live-left-by-a-crash"}')
+    await createApiKeyStore(path, cipher({ landed: true })).load()
+    await expect(stat(`${path}.tmp`)).rejects.toThrow()
+  })
+
   it('writes it for its own user only, and brings one from before to that as it loads', async () => {
     // Where there is no key store, the key is in it in plain text.
     const dir = await mkdtemp(join(tmpdir(), 'kinvue-keymode-'))
