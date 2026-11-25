@@ -11,6 +11,8 @@ import {
   type StoreCipher,
 } from '@kinvue/core/session/store'
 import { classifyDashboardError, classifySubmitError } from '@kinvue/core/capture/failure'
+import { seedDemoHistory } from '@kinvue/core/seed/persona'
+import { DEMO_PERSON_ID } from '@kinvue/core/session/people'
 import { session } from './helpers'
 
 /**
@@ -59,6 +61,23 @@ describe('a history encrypted at rest (KV-175)', () => {
     for (const plain of ['left hip', 'test-person', 'noted', 'sessions']) {
       expect(disk, plain).not.toContain(plain)
     }
+    expect(await store.list('test-person')).toEqual([noted])
+  })
+
+  it('seeds the demo through the seal in one write, and keeps a sealed file sealed (KV-228)', async () => {
+    const path = await storePath()
+    await createJsonSessionStore(path, ON, cipherFor('mine')).append(noted)
+    // The cipher now says it cannot seal — a key store caught mid-change — and the file
+    // on disk is sealed: the one batch is still written sealed, by the ratchet.
+    const store = createJsonSessionStore(path, ON, cipherFor('mine', { encrypts: false }))
+    const fortnight = seedDemoHistory()
+    expect(await store.appendAll(fortnight, { onlyIfNoneFor: DEMO_PERSON_ID })).toBe(
+      fortnight.length,
+    )
+    const disk = await readFile(path, 'utf8')
+    expect(JSON.parse(disk)).toEqual({ version: 2, sealed: expect.any(String) })
+    expect(disk).not.toContain(fortnight[0]!.id)
+    expect(await store.list(DEMO_PERSON_ID)).toHaveLength(fortnight.length)
     expect(await store.list('test-person')).toEqual([noted])
   })
 

@@ -624,8 +624,9 @@ function Dashboard(): React.JSX.Element {
   }
 
   const seedThenReload = async (): Promise<void> => {
+    let added: number
     try {
-      await window.kinvue.seedDemo()
+      added = await window.kinvue.seedDemo()
     } catch (e) {
       showFailure(e, 'The demo history could not be added.')
       return
@@ -633,6 +634,12 @@ function Dashboard(): React.JSX.Element {
     // The demo is a person of its own (KV-18): seeded, it is what is shown —
     // by the reload below, which reads the choice when it runs.
     wanted.current = DEMO_PERSON_ID
+    // None added is the demo already here — a second press, a second window — and
+    // is said as that, not as a success (review of #259).
+    if (added === 0) {
+      await reloadAfter('The demo history is already here, so nothing was added.')
+      return
+    }
     await reloadAfter('The demo history was added.', null)
   }
 

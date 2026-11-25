@@ -68,15 +68,20 @@ export interface SessionStore {
    */
   append(record: SessionRecord, options?: { onlyIfListed?: boolean }): Promise<void>
   /**
-   * The demo's fortnight, in one write: every day of it or none (KV-228). Only into a
-   * history that holds no demo day yet, decided in the same turn as the write, and
-   * resolves to how many went in — 0 when the demo was there already. Each was one
-   * `append` before, a read, a rewrite and a reseal of the whole file a day, and a write
-   * that failed partway — a backup agent holding the file, a full disk — left part of a
-   * fortnight that this then refused ever to complete. Only seeded records: a real one is
-   * refused, since this asks none of what `append` asks of it.
+   * Several sessions in one write: every one of them or none (KV-228). Each is held to
+   * `append`'s rules, in order, as though appended one after another — a record
+   * already stored is one record, a deleted one stays deleted, a different record
+   * under a stored id refuses the whole batch, and so does one under an id earlier in
+   * the batch. Resolves to how many went in.
+   *
+   * **With `onlyIfNoneFor`, only while that person has no session here**, decided in
+   * the same turn as the write: 0, and nothing written, when they have one. How the
+   * demo is seeded (`demo:seed`), so a second press or a second window adds nothing.
+   * Seeding was one `append` a day — a read, a rewrite and a reseal of the whole file
+   * each — and a write that failed partway left part of a fortnight that the check
+   * then refused ever to complete.
    */
-  seed(records: readonly SessionRecord[]): Promise<number>
+  appendAll(records: readonly SessionRecord[], options?: { onlyIfNoneFor?: string }): Promise<number>
   /**
    * The people who take readings here (KV-18), in the order they were added.
    * Never the demo. Everyone with a real check-in is on it: a record arriving
@@ -909,6 +914,31 @@ async function explainSetAside(path: string): Promise<void> {
   }
 }
 
+/**
+ * Whether `record` goes into `data`, by `append`'s rules (KV-30, KV-21): false for a
+ * record whose id is tombstoned — a deleted check-in arriving again stays deleted — and
+ * for the same record already stored; a throw for a different record under a stored
+ * id. One rule for `append` and `appendAll` alike (review of #259).
+ */
+function admits(
+  data: Pick<FileShape, 'sessions' | 'removed'>,
+  record: SessionRecord,
+  path: string,
+): boolean {
+  if ((data.removed ?? []).some((t) => t.id === record.id)) return false
+  const stored = data.sessions.find((s) => s.id === record.id)
+  if (stored === undefined) return true
+  // The same record again is the one already here: nothing to write.
+  if (sameRecord(stored, record)) return false
+  // Untagged, so it reads as `unknown` and invites a retry — which is right on the one
+  // path that appends: a submit tried again draws a new id.
+  throw new Error(
+    `The check-in history at ${path} already holds a different check-in with the id ` +
+      `${record.id}. Check-ins are never replaced, so it was not stored. Nothing has ` +
+      'been changed.',
+  )
+}
+
 export function createJsonSessionStore(
   path: string,
   now: () => Date = () => new Date(),
@@ -1035,21 +1065,7 @@ export function createJsonSessionStore(
     append(record, { onlyIfListed = false } = {}) {
       return exclusive(async () => {
         const data = await current()
-        // A tombstone wins over the record it names (KV-21): a deleted check-in
-        // arriving again stays deleted, and nothing is written.
-        if ((data.removed ?? []).some((t) => t.id === record.id)) return
-        const stored = data.sessions.find((s) => s.id === record.id)
-        if (stored !== undefined) {
-          // The same record again is the one already here: nothing to write.
-          if (sameRecord(stored, record)) return
-          // Untagged, so it reads as `unknown` and invites a retry — which is
-          // right on the one path that appends: a submit tried again draws a new id.
-          throw new Error(
-            `The check-in history at ${path} already holds a different check-in with the id ` +
-              `${record.id}. Check-ins are never replaced, so it was not stored. Nothing has ` +
-              'been changed.',
-          )
-        }
+        if (!admits(data, record, path)) return
         if (
           onlyIfListed &&
           ownerOf(record) !== DEMO_PERSON_ID &&
@@ -1066,19 +1082,28 @@ export function createJsonSessionStore(
         await write(path, { ...data, people }, cipher)
       })
     },
-    seed(records) {
+    appendAll(records, { onlyIfNoneFor } = {}) {
+      // Nothing to add reads nothing (review of #259): no decryption, and none of a
+      // first read's work.
+      if (records.length === 0) return Promise.resolve(0)
       return exclusive(async () => {
-        const real = records.find((r) => r.seeded !== true)
-        if (real !== undefined) {
-          throw new Error(`${real.id} is not a seeded day, so it is not the demo's to add.`)
-        }
         const data = await current()
-        if (data.sessions.some((s) => ownerOf(s) === DEMO_PERSON_ID)) return 0
-        if (records.length === 0) return 0
-        // A seeded day adds nobody to the list (`withPeopleFor`), so the people are as
-        // they were.
-        await write(path, { ...data, sessions: [...data.sessions, ...records] }, cipher)
-        return records.length
+        if (onlyIfNoneFor !== undefined && data.sessions.some((s) => ownerOf(s) === onlyIfNoneFor)) {
+          return 0
+        }
+        // In order, against what is stored and what this batch has added so far, so a
+        // repeat inside the batch is held to the same rule as one already on disk.
+        const sessions = [...data.sessions]
+        const added: SessionRecord[] = []
+        for (const record of records) {
+          if (!admits({ ...data, sessions }, record, path)) continue
+          sessions.push(record)
+          added.push(record)
+        }
+        if (added.length === 0) return 0
+        const people = withPeopleFor(data.people, added, randomUUID, now())
+        await write(path, { ...data, sessions, people }, cipher)
+        return added.length
       })
     },
     async people() {

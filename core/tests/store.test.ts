@@ -12,8 +12,8 @@ import {
 import { classifyDashboardError, classifySubmitError } from '@kinvue/core/capture/failure'
 import { DEMO_PERSON_ID } from '@kinvue/core/session/people'
 import type { SessionRecord } from '@kinvue/core/session/types'
-import { seededHistory, session, sessionBeforeKV16 } from './helpers'
 import { seedDemoHistory } from '@kinvue/core/seed/persona'
+import { seededHistory, session, sessionBeforeKV16 } from './helpers'
 
 /**
  * A rename that can be made to fail once.
@@ -1135,22 +1135,23 @@ describe('who may read the history (KV-257)', () => {
   )
 })
 
-describe('seeding the demo (KV-228)', () => {
+describe('several sessions in one write, as the demo is seeded (KV-228)', () => {
   const renames = (): number => disk.events.filter((e) => e.startsWith('rename ')).length
+  const demoOnly = { onlyIfNoneFor: DEMO_PERSON_ID }
 
   it('writes the whole fortnight in one write, and says how many', async () => {
     const { path } = await storeIn()
     const store = createJsonSessionStore(path)
     const fortnight = seedDemoHistory()
     disk.events.length = 0
-    expect(await store.seed(fortnight)).toBe(fortnight.length)
+    expect(await store.appendAll(fortnight, demoOnly)).toBe(fortnight.length)
     expect(renames()).toBe(1)
     expect((await store.list(DEMO_PERSON_ID)).map((r) => r.id).sort()).toEqual(
       fortnight.map((r) => r.id).sort(),
     )
   })
 
-  it('stores no seeded day when the write fails, and seeds whole the next time', async () => {
+  it('stores none of it when the write fails, and goes in whole the next time', async () => {
     // A backup agent holding the file, a full disk: one append a day left part of a
     // fortnight here, and refused ever to finish it.
     const { path } = await storeIn()
@@ -1158,36 +1159,96 @@ describe('seeding the demo (KV-228)', () => {
     await store.append(session({ id: 'real', capturedAt: '2026-09-01T09:00:00.000Z' }))
     const fortnight = seedDemoHistory()
     renameControl.failNext = true
-    await expect(store.seed(fortnight)).rejects.toThrow(/rename failed/)
+    await expect(store.appendAll(fortnight, demoOnly)).rejects.toThrow(/rename failed/)
     const reread = createJsonSessionStore(path)
     expect(await reread.list(DEMO_PERSON_ID)).toEqual([])
     expect((await reread.list('test-person')).map((r) => r.id)).toEqual(['real'])
-    expect(await reread.seed(fortnight)).toBe(fortnight.length)
+    expect(await reread.appendAll(fortnight, demoOnly)).toBe(fortnight.length)
     expect(await reread.list(DEMO_PERSON_ID)).toHaveLength(fortnight.length)
   })
 
-  it('adds nothing to a history that holds a demo day already', async () => {
+  it('adds nothing for someone who already has a session here', async () => {
     const { path } = await storeIn()
     const store = createJsonSessionStore(path)
-    await store.seed(seededHistory(3))
+    await store.appendAll(seededHistory(3), demoOnly)
     const before = await readFile(path, 'utf8')
-    expect(await store.seed(seedDemoHistory())).toBe(0)
+    expect(await store.appendAll(seedDemoHistory(), demoOnly)).toBe(0)
     expect(await readFile(path, 'utf8')).toBe(before)
   })
 
-  it('refuses a real check-in, and writes none of the batch', async () => {
+  it('decides that in the same turn as the write: two at once seed once (review of #259)', async () => {
+    // Two windows each drawing a fortnight of their own: the same ids, other days. Asked
+    // outside the turn, both would find no demo, and the second would collide with the
+    // first. Asked inside it, the second finds the first and adds nothing.
     const { path } = await storeIn()
     const store = createJsonSessionStore(path)
-    const batch = [...seededHistory(2), session({ id: 'not-seeded' })]
-    await expect(store.seed(batch)).rejects.toThrow(/not-seeded is not a seeded day/)
-    expect(await store.list(DEMO_PERSON_ID)).toEqual([])
-    expect(await store.list('test-person')).toEqual([])
+    const today = new Date('2026-09-20T12:00:00Z')
+    const one = seedDemoHistory(12, today, 1)
+    const other = seedDemoHistory(12, today, 2)
+    const counts = await Promise.all([
+      store.appendAll(one, demoOnly),
+      store.appendAll(other, demoOnly),
+    ])
+    expect(counts).toEqual([one.length, 0])
+    expect(await store.list(DEMO_PERSON_ID)).toEqual(
+      expect.arrayContaining(one.map((r) => expect.objectContaining({ id: r.id, vitals: r.vitals }))),
+    )
   })
 
-  it('adds nobody to the list of people', async () => {
+  describe('held to append\u2019s rules (review of #259)', () => {
+    it('takes a record repeated in the batch once', async () => {
+      const { path } = await storeIn()
+      const store = createJsonSessionStore(path)
+      const twice = [...seededHistory(2), ...seededHistory(2)]
+      expect(await store.appendAll(twice)).toBe(2)
+      expect(await store.list(DEMO_PERSON_ID)).toHaveLength(2)
+    })
+
+    it('refuses the whole batch for a different record under an id in it, and writes none', async () => {
+      const { path } = await storeIn()
+      const store = createJsonSessionStore(path)
+      const [first] = seededHistory(1)
+      const other = { ...first!, capturedAt: '2026-08-20T09:00:00.000Z' }
+      await expect(store.appendAll([...seededHistory(3), other])).rejects.toThrow(
+        /already holds a different check-in with the id seed-0/,
+      )
+      expect(await store.list(DEMO_PERSON_ID)).toEqual([])
+    })
+
+    it('refuses the whole batch for a different record under a stored id', async () => {
+      const { path } = await storeIn()
+      const store = createJsonSessionStore(path)
+      await store.append(session({ id: 'seed-1', capturedAt: '2026-09-01T09:00:00.000Z' }))
+      await expect(store.appendAll(seededHistory(3))).rejects.toThrow(/with the id seed-1/)
+      expect(await store.list(DEMO_PERSON_ID)).toEqual([])
+    })
+
+    it('leaves a deleted session deleted', async () => {
+      const { path } = await storeIn()
+      const store = createJsonSessionStore(path)
+      const gone = session({ id: 'gone', capturedAt: '2026-09-01T09:00:00.000Z' })
+      await store.append(gone)
+      await store.remove('test-person', { kind: 'one', id: 'gone' }, new Date('2026-09-02'))
+      const kept = session({ id: 'kept', capturedAt: '2026-09-03T09:00:00.000Z' })
+      expect(await store.appendAll([gone, kept])).toBe(1)
+      expect((await store.list('test-person')).map((r) => r.id)).toEqual(['kept'])
+    })
+
+    it('adds the person of a real record to the list, and nobody for a seeded day', async () => {
+      const { path } = await storeIn()
+      const store = createJsonSessionStore(path)
+      await store.appendAll(seedDemoHistory())
+      expect(await store.people()).toEqual([])
+      await store.appendAll([session({ id: 'real' })])
+      expect((await store.people()).map((p) => p.id)).toEqual(['test-person'])
+    })
+  })
+
+  it('reads nothing for nothing to add (review of #259)', async () => {
     const { path } = await storeIn()
-    const store = createJsonSessionStore(path)
-    await store.seed(seedDemoHistory())
-    expect(await store.people()).toEqual([])
+    await mkdir(dirname(path), { recursive: true })
+    await writeFile(path, 'not json', 'utf8')
+    // An unreadable history would refuse any read: none is made.
+    expect(await createJsonSessionStore(path).appendAll([], demoOnly)).toBe(0)
   })
 })
