@@ -12,7 +12,8 @@ import {
 import { classifyDashboardError, classifySubmitError } from '@kinvue/core/capture/failure'
 import { DEMO_PERSON_ID } from '@kinvue/core/session/people'
 import type { SessionRecord } from '@kinvue/core/session/types'
-import { session, sessionBeforeKV16 } from './helpers'
+import { seededHistory, session, sessionBeforeKV16 } from './helpers'
+import { seedDemoHistory } from '@kinvue/core/seed/persona'
 
 /**
  * A rename that can be made to fail once.
@@ -1132,4 +1133,61 @@ describe('who may read the history (KV-257)', () => {
       expect((await stat(`${path}.unreadable-README.txt`)).mode & 0o777).toBe(0o600)
     },
   )
+})
+
+describe('seeding the demo (KV-228)', () => {
+  const renames = (): number => disk.events.filter((e) => e.startsWith('rename ')).length
+
+  it('writes the whole fortnight in one write, and says how many', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    const fortnight = seedDemoHistory()
+    disk.events.length = 0
+    expect(await store.seed(fortnight)).toBe(fortnight.length)
+    expect(renames()).toBe(1)
+    expect((await store.list(DEMO_PERSON_ID)).map((r) => r.id).sort()).toEqual(
+      fortnight.map((r) => r.id).sort(),
+    )
+  })
+
+  it('stores no seeded day when the write fails, and seeds whole the next time', async () => {
+    // A backup agent holding the file, a full disk: one append a day left part of a
+    // fortnight here, and refused ever to finish it.
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.append(session({ id: 'real', capturedAt: '2026-09-01T09:00:00.000Z' }))
+    const fortnight = seedDemoHistory()
+    renameControl.failNext = true
+    await expect(store.seed(fortnight)).rejects.toThrow(/rename failed/)
+    const reread = createJsonSessionStore(path)
+    expect(await reread.list(DEMO_PERSON_ID)).toEqual([])
+    expect((await reread.list('test-person')).map((r) => r.id)).toEqual(['real'])
+    expect(await reread.seed(fortnight)).toBe(fortnight.length)
+    expect(await reread.list(DEMO_PERSON_ID)).toHaveLength(fortnight.length)
+  })
+
+  it('adds nothing to a history that holds a demo day already', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.seed(seededHistory(3))
+    const before = await readFile(path, 'utf8')
+    expect(await store.seed(seedDemoHistory())).toBe(0)
+    expect(await readFile(path, 'utf8')).toBe(before)
+  })
+
+  it('refuses a real check-in, and writes none of the batch', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    const batch = [...seededHistory(2), session({ id: 'not-seeded' })]
+    await expect(store.seed(batch)).rejects.toThrow(/not-seeded is not a seeded day/)
+    expect(await store.list(DEMO_PERSON_ID)).toEqual([])
+    expect(await store.list('test-person')).toEqual([])
+  })
+
+  it('adds nobody to the list of people', async () => {
+    const { path } = await storeIn()
+    const store = createJsonSessionStore(path)
+    await store.seed(seedDemoHistory())
+    expect(await store.people()).toEqual([])
+  })
 })

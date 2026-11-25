@@ -68,6 +68,16 @@ export interface SessionStore {
    */
   append(record: SessionRecord, options?: { onlyIfListed?: boolean }): Promise<void>
   /**
+   * The demo's fortnight, in one write: every day of it or none (KV-228). Only into a
+   * history that holds no demo day yet, decided in the same turn as the write, and
+   * resolves to how many went in — 0 when the demo was there already. Each was one
+   * `append` before, a read, a rewrite and a reseal of the whole file a day, and a write
+   * that failed partway — a backup agent holding the file, a full disk — left part of a
+   * fortnight that this then refused ever to complete. Only seeded records: a real one is
+   * refused, since this asks none of what `append` asks of it.
+   */
+  seed(records: readonly SessionRecord[]): Promise<number>
+  /**
    * The people who take readings here (KV-18), in the order they were added.
    * Never the demo. Everyone with a real check-in is on it: a record arriving
    * for someone it lacks adds them, unnamed.
@@ -1054,6 +1064,21 @@ export function createJsonSessionStore(
         // Everyone with a real check-in is on the list (KV-18), in the same write.
         const people = withPeopleFor(data.people, [record], randomUUID, now())
         await write(path, { ...data, people }, cipher)
+      })
+    },
+    seed(records) {
+      return exclusive(async () => {
+        const real = records.find((r) => r.seeded !== true)
+        if (real !== undefined) {
+          throw new Error(`${real.id} is not a seeded day, so it is not the demo's to add.`)
+        }
+        const data = await current()
+        if (data.sessions.some((s) => ownerOf(s) === DEMO_PERSON_ID)) return 0
+        if (records.length === 0) return 0
+        // A seeded day adds nobody to the list (`withPeopleFor`), so the people are as
+        // they were.
+        await write(path, { ...data, sessions: [...data.sessions, ...records] }, cipher)
+        return records.length
       })
     },
     async people() {
