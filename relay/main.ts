@@ -1,4 +1,4 @@
-import { chmod, link, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { link, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { uptime } from 'node:os'
 import { isAbsolute } from 'node:path'
 import { isIP } from 'node:net'
@@ -6,6 +6,7 @@ import type { AddressInfo } from 'node:net'
 import { pathToFileURL } from 'node:url'
 import { ENROL_TOKEN_TTL_MS } from '@kinvue/core/sync/protocol'
 import { createRelayServer } from './server'
+import { keepToOwnUser } from '@kinvue/core/session/replace'
 import { createRelayStore, DeviceEnrolledError, RELAY_FILE_MODE } from './store'
 
 /**
@@ -35,26 +36,15 @@ import { createRelayStore, DeviceEnrolledError, RELAY_FILE_MODE } from './store'
 
 /**
  * What a relay started before KV-226 may have left readable by every user here, dealt
- * with at start rather than at the next write, which on a quiet relay could be days.
- *
- * - **The data file** is brought to `RELAY_FILE_MODE`. One this user may read but does
- *   not own — provisioned by someone else, say — cannot be: that is said, and the relay
- *   starts anyway, as it did before, since its first write replaces the file with one
- *   that is its own (review of #256). None yet is the first start.
- * - **A temporary file a crash left** holds the whole state, sealed envelopes included,
- *   under a name nothing reads, expires or removes. The lock is held, so nothing is
- *   writing it: it is removed.
+ * with at start rather than at the next write, which on a quiet relay could be days:
+ * the data file made its own user's, and a temporary file a crash left removed. The lock
+ * is held, so nothing is writing either. The same policy as the desktop app's history
+ * and key (`keepToOwnUser`, review of #258); what could not be done is said, and the
+ * relay starts anyway (review of #256).
  */
 async function private_(dataFile: string, out: Output): Promise<void> {
-  await rm(`${dataFile}.tmp`, { force: true })
-  await chmod(dataFile, RELAY_FILE_MODE).catch((err: NodeJS.ErrnoException) => {
-    if (err.code === 'ENOENT') return
-    out.tell(
-      `Could not make ${dataFile} readable by this user only (${err.code ?? err.message}). ` +
-        'It is replaced by a file of its own at its next write; until then, check who can ' +
-        'read it.',
-    )
-  })
+  const said = await keepToOwnUser(dataFile)
+  if (said !== null) out.tell(said)
 }
 
 /** Where the relay keeps its file, and where it listens. */

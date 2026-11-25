@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, mkdir, open, readFile, unlink, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { chmod, copyFile, mkdir, open, readdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { basename, dirname, join } from 'node:path'
 import { failureTag } from '../capture/failure'
 import { asAskedNow } from './answers'
 import { checkRecord, checkTombstone, isInstant, NOT_A_RECORD } from './check'
@@ -30,7 +30,7 @@ import {
   type Person,
   type PersonTombstone,
 } from './people'
-import { replaceFile } from './replace'
+import { keepToOwnUser, OWN_USER_ONLY, replaceFile, setMode } from './replace'
 import type { SessionRecord, Tombstone } from './types'
 
 /**
@@ -746,7 +746,8 @@ async function write(path: string, data: FileShape, cipher: StoreCipher): Promis
   const text = seal
     ? JSON.stringify({ version: ENVELOPE_VERSION, sealed: cipher.seal(plain) }, null, 2)
     : plain
-  await replaceFile(path, text)
+  // Its own user's only (KV-257), from before a byte of it is written.
+  await replaceFile(path, text, OWN_USER_ONLY)
 }
 
 /**
@@ -829,6 +830,11 @@ async function setAside(path: string, now: Date): Promise<string> {
     // 'r+': Windows flushes only a file opened for writing.
     const copy = await open(candidate, 'r+')
     try {
+      // A copy takes the original's mode, which a build before KV-257 left as the
+      // umask made it. This one is the whole history, kept for someone to look at.
+      // Where the file system keeps modes (review of #258): one that keeps none must not
+      // stop a history being set aside, which would leave a copy for each press.
+      await setMode(copy, OWN_USER_ONLY)
       await copy.sync()
     } finally {
       await copy.close()
@@ -841,6 +847,32 @@ async function setAside(path: string, now: Date): Promise<string> {
     `The check-in history at ${path} could not be set aside: ${String(MAX_ASIDE_NAMES)} ` +
       'files for today already exist beside it. Nothing has been changed.',
   )
+}
+
+/**
+ * The histories set aside beside `path` and their note, as a build before KV-257 left
+ * them — readable by every user — made their own user's (review of #258). They are never
+ * read again, so no read would reach them otherwise. What could not be is returned, in
+ * words, one line each.
+ */
+async function keepSetAsideToOwnUser(path: string): Promise<string[]> {
+  const prefix = `${basename(path)}.unreadable-`
+  let names: string[]
+  try {
+    names = await readdir(dirname(path))
+  } catch {
+    return []
+  }
+  const said: string[] = []
+  for (const name of names.filter((n) => n.startsWith(prefix))) {
+    const file = join(dirname(path), name)
+    await chmod(file, OWN_USER_ONLY).catch((err: NodeJS.ErrnoException) => {
+      if (err.code !== 'ENOENT') {
+        said.push(`Could not make ${file} readable by this user only (${err.code ?? err.message}).`)
+      }
+    })
+  }
+  return said
 }
 
 /**
@@ -859,7 +891,8 @@ async function explainSetAside(path: string): Promise<void> {
         'look at. Kinvue does not read them again.',
         '',
       ].join('\n'),
-      { encoding: 'utf8', flag: 'wx' },
+      // Made here, so the mode holds (KV-257): it says what the files beside it are.
+      { encoding: 'utf8', flag: 'wx', mode: OWN_USER_ONLY },
     )
   } catch {
     /* already written, or not writable: the file set aside is what matters */
@@ -893,6 +926,14 @@ export function createJsonSessionStore(
    */
   const madeByUpgrade = new Map<string, Person>()
   let upgradeFailureLogged = false
+  /**
+   * Whether this store has made what a build before KV-257 left its own user's — the
+   * history, a temporary file a crash left, the histories set aside and their note —
+   * once, on its first read, rather than at the next check-in, which may be a day away
+   * (`keepToOwnUser`). In the store, not at start in `app/main`, because the store is
+   * what knows which files are its own.
+   */
+  let keptToOwnUser = false
 
   /**
    * The history as it is now, a version-1 file upgraded and written first
@@ -910,6 +951,13 @@ export function createJsonSessionStore(
    * logged once, so one that persists is still seen (second review of #200).
    */
   const current = async (): Promise<FileShape> => {
+    if (!keptToOwnUser) {
+      keptToOwnUser = true
+      // Said, not swallowed (review of #258): a history still readable by others,
+      // with nothing anywhere to say so, is the case this is here for.
+      const said = [await keepToOwnUser(path), ...(await keepSetAsideToOwnUser(path))]
+      for (const line of said) if (line !== null) console.error(line)
+    }
     const data = await read(path, cipher)
     if (data.version !== UPGRADES_FROM) {
       madeByUpgrade.clear()
