@@ -269,6 +269,20 @@ describe('the dashboard when the history cannot be shown', () => {
 })
 
 describe('seeding the demo', () => {
+  it('says nothing was added when the demo was already here (review of #259)', async () => {
+    // A second press, or a second window: the store added none, and said so with 0.
+    listSessions.mockResolvedValue([])
+    seedDemo.mockResolvedValue(0)
+    render(<App />)
+
+    fireEvent.click(await screen.findByText('Seed demo history'))
+
+    expect(
+      await screen.findByText('The demo history is already here, so nothing was added.'),
+    ).toBeTruthy()
+    expect(screen.queryByText('The demo history was added.')).toBeNull()
+  })
+
   it('does not say the demo was not added when only the reload after it failed', async () => {
     // Seeding wrote the fortnight; the list that follows is what failed, the
     // way the store says it, with a sentence that ends "Nothing has been

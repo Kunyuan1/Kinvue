@@ -136,7 +136,7 @@ describe('the dashboard, when the history will not open (KV-95)', () => {
   })
 
   it('does the same when seeding hits the same file', () => {
-    // `demo:seed` lists the store before writing, so it can fail identically.
+    // `demo:seed` reads the store before writing, so it can fail identically.
     const seeding = fromMain(new UnreadableStoreError(path, 'it is not valid JSON'), 'demo:seed')
     expect(classifyDashboardError(seeding)).toBe('store-unreadable')
     expect(dashboardErrorText(seeding, 'fallback')).toMatch(/^The check-in history at /)

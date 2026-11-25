@@ -680,13 +680,13 @@ function registerIpc(
   );
 
   // KV-8. Opt-in, and every record it writes is marked `seeded: true`.
-  handle("demo:seed", async (): Promise<number> => {
-    const existing = await store.list(DEMO_PERSON_ID);
-    if (existing.length > 0) return 0;
-    const seeded = seedDemoHistory();
-    for (const record of seeded) await store.append(record);
-    return seeded.length;
-  });
+  // One write, whole or not at all, and only while the demo has no day here: the
+  // store decides that in the same turn as the write (KV-228). Resolves to how many
+  // went in, 0 when the demo was here already.
+  handle(
+    "demo:seed",
+    (): Promise<number> => store.appendAll(seedDemoHistory(), { onlyIfNoneFor: DEMO_PERSON_ID }),
+  );
 }
 
 app.whenReady().then(async () => {
