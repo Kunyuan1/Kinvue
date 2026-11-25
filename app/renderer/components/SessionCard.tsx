@@ -7,7 +7,7 @@ import {
   type Presentation,
 } from '@kinvue/core/scoring'
 import { describeAnswers } from '@kinvue/core/session/answers'
-import { knownZone } from '@kinvue/core/session/time'
+import { DAMAGED_ZONE_NOTE, knownZone, zoneIsDamaged } from '@kinvue/core/session/time'
 import type { ComparedMetric, Flag, SessionRecord } from '@kinvue/core/session/types'
 import { CARD_BOX } from './boxes'
 
@@ -49,8 +49,11 @@ export default function SessionCard({
   // into a date string and parsing that back would depend on the locale's
   // format and renders the words "Invalid Date" when it does not match.
   // A record written before zones existed falls back to the reader's zone,
-  // because nothing better is knowable about it.
+  // because nothing better is knowable about it. One whose zone is there but
+  // cannot be read falls back too, and says so: it did have a zone, so the day
+  // shown may not be the day it was (KV-166).
   const zone = knownZone(session.timeZone)
+  const zoneUnread = zoneIsDamaged(session.timeZone)
   const inZone = zone === undefined ? {} : { timeZone: zone }
   const at = new Date(capturedAt)
   const when = at.toLocaleDateString(undefined, {
@@ -99,6 +102,7 @@ export default function SessionCard({
           <p>{when}</p>
           {/* Seeded demo history is labelled, never passed off as measured. */}
           {localTime !== null && <p className="text-xs">{localTime}</p>}
+          {zoneUnread && <p className="text-xs">{DAMAGED_ZONE_NOTE}</p>}
           {seeded === true && <p className="text-xs">seeded demo data</p>}
         </div>
       </header>

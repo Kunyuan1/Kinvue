@@ -853,6 +853,28 @@ describe('the trend, one metric over the baseline window (KV-4)', () => {
     expect(screen.getAllByText(/^Looks normal$/).length).toBeGreaterThan(0)
   })
 
+  it('says on the card, and under the chart, when a day is shown in the reader\u2019s zone because the recorded one could not be read (KV-166)', async () => {
+    listSessions.mockResolvedValue(
+      scored([
+        ...history(3),
+        session({ id: 'blank-zone', capturedAt: '2026-09-20T09:00:00.000Z', timeZone: '' }),
+        latest({ timeZone: 'Mars/Olympus_Mons' }),
+      ]),
+    )
+    render(<App />)
+    // The two damaged cards each say it; the three from before zones were kept do not.
+    expect(
+      await screen.findAllByText(
+        'Shown in your time zone: the time zone this check-in was taken in could not be read.',
+      ),
+    ).toHaveLength(2)
+    expect(
+      screen.getByText(
+        '2 points here are dated in your time zone: the time zone they were taken in could not be read.',
+      ),
+    ).toBeTruthy()
+  })
+
   it('quotes a fractional reading as the card does, whole (review of #162)', async () => {
     // Real captures are fractional; every other fixture here is whole, which
     // is where one decimal and none agree.

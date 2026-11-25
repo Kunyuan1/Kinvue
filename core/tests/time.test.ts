@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { knownZone, localDateOf } from '@kinvue/core/session/time'
+import { knownZone, localDateOf, zoneIsDamaged } from '@kinvue/core/session/time'
 import { session } from './helpers'
 
 /**
@@ -65,5 +65,13 @@ describe('knownZone: a zone formatting can use (review of #162)', () => {
   it('gives nothing for a zone that would throw, so nothing is shown in a wrong one', () => {
     // '' and an unknown name both throw RangeError from Intl.
     for (const zone of [undefined, '', 'Mars/Olympus_Mons']) expect(knownZone(zone)).toBeUndefined()
+  })
+})
+
+describe('zoneIsDamaged: a zone that is there and cannot be read (KV-166)', () => {
+  it('tells a damaged zone from an absent one', () => {
+    expect(zoneIsDamaged(undefined)).toBe(false)
+    expect(zoneIsDamaged('Europe/London')).toBe(false)
+    for (const zone of ['', 'Mars/Olympus_Mons']) expect(zoneIsDamaged(zone), zone).toBe(true)
   })
 })

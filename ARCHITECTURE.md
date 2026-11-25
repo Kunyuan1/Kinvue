@@ -2890,8 +2890,11 @@ three hold:
   cared-for person's *today*, and a UTC timestamp recorded without its zone can never be
   placed on the right local day afterwards. Records from before #28 have none: they are
   displayed in the reader's zone, and have no local day at all (`localDateOf` answers
-  null). An empty or unknown zone is displayed the same way, indistinguishable from none —
-  which matters once records arrive from another device (#166).
+  null). An empty or unknown zone is displayed in the reader's zone too, but is not
+  passed off as none (KV-166): the card says "Shown in your time zone: the time zone this
+  check-in was taken in could not be read.", and the chart counts such points in a note
+  of its own, since the day shown may be another calendar day. That matters once records
+  arrive from another device.
 
 **And a fourth, since KV-175: the history encrypted at rest, where the computer holds a
 key.** This holds, with one gap said here rather than left to be found (review of #187).
