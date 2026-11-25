@@ -417,3 +417,28 @@ describe('how far the chart reaches, and the not-flagged band on it (KV-165)', (
     expect(trendScale(trend)).toBeNull()
   })
 })
+
+describe('a point whose zone could not be read (KV-166)', () => {
+  it('counts it, and says it is dated in the reader\u2019s zone', () => {
+    const records = [
+      ...history(3),
+      session({ id: 'blank', capturedAt: '2026-09-20T09:00:00.000Z', timeZone: '' }),
+      latest({ timeZone: 'Mars/Olympus_Mons' }),
+    ]
+    const trend = trendOf(records, P, 'pulse')!
+    expect(trend.unreadZonePoints).toBe(2)
+    expect(trendNotes(trend)).toContain(
+      '2 points here are dated in your time zone: the time zone they were taken in could not be read.',
+    )
+    const one = trendOf([...history(3), latest({ timeZone: '' })], P, 'pulse')!
+    expect(trendNotes(one)).toContain(
+      '1 point here is dated in your time zone: the time zone it was taken in could not be read.',
+    )
+  })
+
+  it('says nothing for a point with no zone, from before zones were kept', () => {
+    const trend = trendOf([...history(3), latest({ timeZone: undefined })], P, 'pulse')!
+    expect(trend.unreadZonePoints).toBe(0)
+    expect(trendNotes(trend).join(' ')).not.toMatch(/could not be read/)
+  })
+})

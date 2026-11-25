@@ -16,6 +16,7 @@ import {
   usualRangeOf,
   type UsualRange,
 } from '../scoring'
+import { zoneIsDamaged } from '../session/time'
 import type { ComparedMetric, SessionRecord, Vitals } from '../session/types'
 import { unusableReason } from '../session/usable'
 
@@ -87,6 +88,12 @@ export interface Trend {
   latestMeasured: boolean
   /** How many of `points` are seeded demo data. */
   seededPoints: number
+  /**
+   * How many of `points` carry a zone that could not be read, and so are dated in the
+   * reader's zone (KV-166). Not those with no zone, from before KV-28: nothing better
+   * is knowable about them.
+   */
+  unreadZonePoints: number
   /**
    * Usable check-ins from the first point drawn to the latest: the stretch the
    * chart spans, which `points` undercounts when some did not measure this
@@ -202,6 +209,7 @@ export function trendOf(
     usualReadings: stat?.n ?? 0,
     latestMeasured: read(latest.vitals) !== null,
     seededPoints: points.filter((p) => p.seeded).length,
+    unreadZonePoints: points.filter((p) => zoneIsDamaged(p.timeZone)).length,
     checkIns: usable.filter(
       (r) => first !== undefined && r.capturedAt >= first.capturedAt && inStretch(r),
     ).length,
@@ -426,6 +434,17 @@ export function trendNotes(trend: Trend): string[] {
             'check-ins before it, and its card says otherwise.'
         : `The line and band are as of the latest check-in. ${trend.disagreeing} other days ` +
             'were compared with the check-ins before them, and their cards say otherwise.',
+    )
+  }
+  // A date the chart shows may be a day out (KV-166): said with the count, as every
+  // note here is.
+  if (trend.unreadZonePoints > 0) {
+    notes.push(
+      trend.unreadZonePoints === 1
+        ? '1 point here is dated in your time zone: the time zone it was taken in could ' +
+            'not be read.'
+        : `${trend.unreadZonePoints} points here are dated in your time zone: the time ` +
+            'zone they were taken in could not be read.',
     )
   }
   if (trend.seededPoints > 0) {

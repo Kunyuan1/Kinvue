@@ -32,6 +32,27 @@ export function knownZone(timeZone: string | undefined): string | undefined {
   }
 }
 
+/**
+ * Whether a record carries a zone that cannot be used: present, but empty or one
+ * `Intl` does not know (KV-166). Not the same as none. A record from before KV-28 has
+ * no zone, and nothing better than the reader's is knowable about it; a damaged one
+ * did have a zone, so showing it in the reader's says something that may be wrong —
+ * another calendar day — and is said so wherever such a date is shown.
+ *
+ * No build writes such a zone (`usableTimeZone` guards the writing end), so this is a
+ * store edited or damaged outside the app.
+ */
+export const zoneIsDamaged = (timeZone: string | undefined): boolean =>
+  timeZone !== undefined && knownZone(timeZone) === undefined
+
+/**
+ * What the card and the chart say when a date is shown in the reader's zone because
+ * the recorded one could not be read (KV-166). Addressed to the caregiver, who is
+ * reading; no error text.
+ */
+export const DAMAGED_ZONE_NOTE =
+  'Shown in your time zone: the time zone this check-in was taken in could not be read.'
+
 /** The `YYYY-MM-DD` the capture happened on, where it happened. */
 export function localDateOf(
   session: Pick<SessionRecord, 'capturedAt' | 'timeZone'>,
